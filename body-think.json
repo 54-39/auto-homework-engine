@@ -1,1 +1,0 @@
-{"model":"doubao-seed-code","messages":[{"role":"user","content":"18. 在数字数据的模拟信号编码中，哪种调制方式抗干扰能力最强？ A. ASK B. FSK C. PSK D. QAM 只输出一个正确选项的字母。"}],"temperature":0.2,"max_tokens":1024,"stream":false}
