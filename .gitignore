@@ -1,13 +1,2 @@
-# 开发调试中间产物（不上传公开仓库）
-.zcode/
-.zcodeignore
-*.expr
-*.cjs
-mem8.txt
-base-tab.json
-body-*.json
-sw-lines.json
-hot-reload.json
-
-# 本地设计预览
+# 本地设计预览（不上传）
 design-preview/

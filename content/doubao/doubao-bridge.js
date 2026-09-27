@@ -162,7 +162,13 @@
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.type === 'BRIDGE_PING') {
-      sendResponse({ ok: true, ready: !!findEditor(), url: location.href });
+      sendResponse({
+        ok: true,
+        ready: !!findEditor(),
+        hasEditor: !!findEditor(),
+        hasSend: !!document.querySelector('button[data-testid="chat_input_send_button"]'),
+        url: location.href,
+      });
       return;
     }
     if (msg?.type === 'BRIDGE_ASK') {

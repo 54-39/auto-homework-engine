@@ -19,24 +19,28 @@ async function ensureDoubaoTab() {
   return tab.id;
 }
 
-/* 探活桥接脚本；没注入（如扩展重载前的旧页面）就用 scripting API 补注入 */
+/* 探活桥接脚本；没注入（如扩展重载前的旧页面）就用 scripting API 补注入。
+   返回 { ok, info }，info 带页面诊断（地址/有无输入框/发送按钮）便于定位问题。 */
 async function pingReady(tabId) {
+  let last = null;
   for (let i = 0; i < 30; i++) {
     try {
       const r = await chrome.tabs.sendMessage(tabId, { type: 'BRIDGE_PING' });
-      if (r?.ok) return true;
+      last = r;
+      if (r?.ok && r.ready) return { ok: true, info: r };
     } catch {
-      if (i === 0 || i === 8) {
-        try {
-          await chrome.scripting.executeScript({ target: { tabId }, files: ['content/doubao/doubao-bridge.js'] });
-        } catch {
-          /* 页面尚不可注入（加载中）时忽略 */
-        }
+      last = { ok: false };
+    }
+    if (i === 0 || i === 8 || i === 20) {
+      try {
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['content/doubao/doubao-bridge.js'] });
+      } catch {
+        /* 页面尚不可注入（加载中）时忽略 */
       }
     }
     await sleep(1000);
   }
-  return false;
+  return { ok: false, info: last };
 }
 
 function flattenPrompt(q) {
@@ -50,8 +54,13 @@ let activatedOnce = false;
 async function askOnce(q, cfg) {
   const tabId = await ensureDoubaoTab();
   const ready = await pingReady(tabId);
-  if (!ready) {
-    throw new Error('豆包页面未就绪：请切到豆包标签页确认能正常显示输入框（如遇登录墙/验证请手动通过一次）');
+  if (!ready.ok) {
+    const info = ready.info || {};
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    const bits = [`地址 ${info.url || tab?.url || '未知'}`];
+    bits.push(`输入框${info.hasEditor ? '有' : '无'}`);
+    bits.push(`发送按钮${info.hasSend ? '有' : '无'}`);
+    throw new Error(`豆包页面未就绪（${bits.join('、')}）：请切到豆包标签页确认能看到输入框（可能需要登录或在豆包页通过一次验证）`);
   }
   let send = chrome.tabs
     .sendMessage(tabId, { type: 'BRIDGE_ASK', payload: { prompt: flattenPrompt(q), newChat: cfg?.newChat !== false } })
