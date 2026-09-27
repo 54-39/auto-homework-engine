@@ -161,7 +161,6 @@
         <div class="row">
           <label>引擎
             <select class="engine">
-              <option value="demo">演示(内置)</option>
               <option value="api">API</option>
               <option value="bridge">豆包桥接(免费)</option>
             </select>
@@ -182,7 +181,7 @@
             <button class="lbtn primary savekey">保存</button>
             <button class="lbtn plain clearkey" title="停用当前 Key（列表记录保留）">停用</button>
           </div>
-          <div class="keywarn hidden">提示：API 引擎还没有填写 Key，粘贴后点「保存」；不想配置可切「演示」引擎</div>
+          <div class="keywarn hidden">提示：API 引擎还没有填写 Key，粘贴后点「保存」</div>
           <div class="keylist"></div>
         </div>
         <div class="modal subjmodal hidden">
@@ -643,7 +642,7 @@
           els.panel.classList.add('apiopen');
           els.keywarn.classList.remove('hidden'); // 红色提醒
           els.panel.classList.remove('hidden');
-          log('API 引擎未配置 Key：请在上方输入框粘贴后点「保存」，或切回「演示」引擎');
+          log('API 引擎未配置 Key：请在上方输入框粘贴后点「保存」');
           return;
         }
         // 简答题策略：ask=开始弹窗询问 / keep=保留跳过 / rewrite=清空重写

@@ -1,11 +1,10 @@
 /* 后台 Service Worker：引擎路由、题目队列、答案缓存、与作业页消息中转、热重载 */
-import { answerWithDemo } from './engines/demo-engine.js';
 import { answerWithAPI, testAPI, sanitizeKey, detectEndpoint } from './engines/api-engine.js';
 import { answerWithBridge } from './engines/bridge-engine.js';
 import { hashKey } from './engines/engine.js';
 
 const DEFAULT_CONFIG = {
-  engine: 'demo', // demo | api | bridge
+  engine: 'api', // api | bridge
   mode: 'semi', // semi 只填写不提交 | auto 填完自动提交
   api: { iface: 'auto', baseURL: '', model: '', apiKey: '' },
   bridge: { newChat: true, delayMin: 3000, delayMax: 8000 },
@@ -67,9 +66,8 @@ chrome.notifications?.onClicked.addListener(async () => {
 });
 
 async function askEngine(cfg, q) {
-  if (cfg.engine === 'api') return answerWithAPI(q, cfg.api);
   if (cfg.engine === 'bridge') return answerWithBridge(q, cfg.bridge);
-  return answerWithDemo(q);
+  return answerWithAPI(q, cfg.api);
 }
 
 function cacheKeyOf(q) {
@@ -113,7 +111,7 @@ async function startRun(questions, tabId) {
         if (!ans) {
           const r = await askEngine(cfg, item.q);
           ans = { answer: r.answer, note: r.note || null };
-          if (cfg.engine !== 'demo') await cacheSet(key, ans); // 演示答案不入缓存
+          await cacheSet(key, ans);
         }
         item.status = 'answered';
         item.answer = ans;
@@ -148,9 +146,7 @@ async function startRun(questions, tabId) {
     const failed = run.items.filter((it) => it.status === 'failed').length;
     const skipped = run.items.filter((it) => it.status === 'skipped').length;
     const conflict = run.items.filter((it) => it.status === 'conflict').length;
-    if (cfg.engine !== 'demo') {
-      notify(failed ? `答题完成：填写 ${filled}、跳过 ${skipped}、冲突 ${conflict}、失败 ${failed} 题` : `处理完成：填写 ${filled}、跳过 ${skipped}${conflict ? '、冲突 ' + conflict : ''}，请检查后手动提交`);
-    }
+    notify(failed ? `答题完成：填写 ${filled}、跳过 ${skipped}、冲突 ${conflict}、失败 ${failed} 题` : `处理完成：填写 ${filled}、跳过 ${skipped}${conflict ? '、冲突 ' + conflict : ''}，请检查后手动提交`);
     sendTab(tabId, { type: 'HW_DONE', payload: { total: run.items.length, filled, failed, skipped, conflict } });
   })();
   return { ok: true, count: questions.length, engine: cfg.engine };
@@ -168,7 +164,7 @@ async function rerunOne(index, tabId) {
     item.status = 'answered';
     item.answer = r.answer;
     // 手动重答视为最新权威答案：覆盖旧缓存（包括之前的错误答案）
-    if (r.answer && cfg.engine !== 'demo') {
+    if (r.answer) {
       const key = await cacheKeyOf(item.q);
       await cacheSet(key, { answer: r.answer, note: r.note || null });
     }

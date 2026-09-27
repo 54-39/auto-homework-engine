@@ -222,7 +222,7 @@ async function run(q, endpoint, maxTokens) {
 
 export async function answerWithAPI(q, cfg) {
   const apiKey = sanitizeKey(cfg?.apiKey);
-  if (!apiKey) throw new Error('API Key 未填写：粘贴后点「保存」，或切回「演示」引擎');
+  if (!apiKey) throw new Error('API Key 未填写：粘贴后点「保存」');
   const tail = apiKey.slice(-4);
   const manual = cfg.iface === 'openai' || cfg.iface === 'anthropic';
 
