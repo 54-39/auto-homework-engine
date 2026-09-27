@@ -64,9 +64,10 @@
     button.act.ghost{background:#fff;color:#374151;border:1px solid #CCD2D9;font-weight:400}
     button.act:disabled{opacity:.45;cursor:not-allowed}
     .summary{background:#F3F4F6;border-radius:6px;padding:4px 10px;min-height:28px;display:flex;align-items:center;gap:8px;font-size:11.5px;color:#4B5563;flex:none}
+    .summary .smsg{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .summary.warn{background:#FEF2F2;color:#DC2626;font-weight:600}
     .summary .shint{margin-left:auto;font-size:10.5px;color:#9AA1A9;flex:none;font-weight:400}
-    .list{flex:1.6 1 0;min-height:70px;overflow:auto;border:1px solid #CCD2D9;background:#fff;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:4px}
+    .list{flex:none;height:clamp(120px,20vh,170px);overflow:auto;border:1px solid #CCD2D9;background:#fff;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:4px}
     .item{display:flex;gap:8px;align-items:center;padding:0 6px;min-height:30px;cursor:pointer;flex:none;border-radius:4px}
     .item:hover{background:#F5F8FF}
     .item .no{color:#9AA1A9;font-size:11px;font-weight:500;width:16px;text-align:right;flex:none}
@@ -88,7 +89,6 @@
     .loghd{font-size:11px;font-weight:500;color:#374151;flex:none}
     .log{font-size:10.5px;color:#7C848C;flex:1 1 0;min-height:60px;overflow:auto;line-height:1.6;white-space:pre-wrap}
     .panel.expanded{left:50%!important;top:3vh!important;transform:translateX(-50%);width:min(640px,94vw);max-height:92vh}
-    .panel.expanded .list{min-height:0}
     .panel.expanded .item{min-height:34px}
     .modal{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:2147483647;display:flex;align-items:center;justify-content:center}
     .mbox{background:#fff;border:1px solid #CCD2D9;border-radius:12px;padding:16px;width:300px;font-size:12px;line-height:1.7;color:#1f2328;box-shadow:0 16px 36px -8px rgba(15,23,42,.2)}
@@ -150,13 +150,12 @@
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = `
       <style>${CSS}</style>
-      <div class="fab" title="点按开合控制面板，按住可拖动位置">⚡</div>
+      <div class="fab" title="点击收起/展开面板，按住可拖动位置">⚡</div>
       <section class="panel hidden">
         <header title="按住拖动移动面板；双击复位位置"><b>作业助手</b><span class="badge"></span><span class="spacer"></span>
           <button class="tbtn expandbtn" title="切换大/小面板（题目多时更清晰）">展开</button>
           <button class="tbtn dbg" title="导出页面结构（适配排障用）">诊断</button>
           <button class="tbtn memclr" title="清除 AI 答题记忆（同一题反复答错时使用）">记忆</button>
-          <button class="tbtn cfg" title="打开设置">设置</button>
           <button class="tbtn btn-collapse" title="收起面板">收起</button>
         </header>
         <div class="row">
@@ -242,7 +241,7 @@
   function wire(root) {
     const $ = (s) => root.querySelector(s);
     const els = {
-      fab: $('.fab'), panel: $('.panel'), badge: $('.badge'), header: $('header'), cfg: $('.cfg'), dbg: $('.dbg'), collapse: $('.btn-collapse'), expandbtn: $('.expandbtn'),
+      fab: $('.fab'), panel: $('.panel'), badge: $('.badge'), header: $('header'), dbg: $('.dbg'), collapse: $('.btn-collapse'), expandbtn: $('.expandbtn'),
       engine: $('.engine'), keyrow: $('.keyrow'), keyinput: $('.keyinput'), keylabel: $('.keylabel'), savekey: $('.savekey'), clearkey: $('.clearkey'),
       keylist: $('.keylist'), keywarn: $('.keywarn'), provrow: $('.provrow'), provider: $('.provider'), psource: $('.psource'),
       apiToggle: $('.apitoggle'), apisec: $('.apisec'),
@@ -391,7 +390,6 @@
     } catch {}
 
     els.collapse.addEventListener('click', () => els.panel.classList.add('hidden'));
-    els.cfg.addEventListener('click', () => chrome.runtime.openOptionsPage());
     els.dbg.addEventListener('click', () => {
       try {
         const blob = new Blob(['<!DOCTYPE html>\n' + document.documentElement.outerHTML], { type: 'text/html' });
@@ -613,7 +611,7 @@
       setSummary(
         qs.length
           ? `检测到 ${qs.length} 题：` + Object.entries(cnt).map(([k, v]) => `${TYPE_NAME[k] || k}${v}`).join('　')
-          : '未检测到题目（该站点可能需要专属适配器，可点标题栏「诊断」导出页面结构）',
+          : '未检测到题目，可点「诊断」导出页面结构',
         false,
       );
       els.shint.classList.toggle('hidden', !qs.length);
@@ -644,7 +642,6 @@
           els.apisec.classList.remove('hidden');
           els.panel.classList.add('apiopen');
           els.keywarn.classList.remove('hidden'); // 红色提醒
-          setSummary('提示：API 引擎缺少 Key，粘贴 Key 后点「保存」再开始', true);
           els.panel.classList.remove('hidden');
           log('API 引擎未配置 Key：请在上方输入框粘贴后点「保存」，或切回「演示」引擎');
           return;
