@@ -1,0 +1,10 @@
+{
+  "mcp": {
+    "servers": {
+      "pixso": {
+        "type": "http",
+        "url": "https://pixso.cn/mcp"
+      }
+    }
+  }
+}

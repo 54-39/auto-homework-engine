@@ -1,0 +1,10 @@
+{
+  "name": "homework-helper-extension",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "serve": "node tools/serve.mjs",
+    "watch": "node tools/watch.mjs"
+  }
+}

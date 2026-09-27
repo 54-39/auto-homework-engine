@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>作业助手 · 设置</title>
+<style>
+  body{font:14px/1.6 system-ui,'Microsoft YaHei',sans-serif;max-width:660px;margin:24px auto;padding:0 16px;color:#1f2328;background:#f7f8fa}
+  h1{font-size:18px}
+  section{border:1px solid #e3e6ea;border-radius:10px;padding:14px 16px;margin:14px 0;background:#fff}
+  section>b{display:block;margin-bottom:6px}
+  label{display:block;margin:10px 0 3px;color:#555;font-size:13px}
+  input,select{width:100%;padding:7px 9px;border:1px solid #ccd2d9;border-radius:7px;box-sizing:border-box;font-size:13px}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  button{padding:7px 18px;border:0;border-radius:7px;background:#2563eb;color:#fff;cursor:pointer}
+  button.ghost{background:#eef1f5;color:#333}
+  .msg{margin-top:10px;font-size:13px;min-height:18px}
+  .ok{color:#059669}.err{color:#dc2626}
+  .hint{color:#888;font-size:12px}
+</style>
+</head>
+<body>
+<h1>作业助手 · 设置</h1>
+
+<section>
+  <b>基本</b>
+  <div class="row2" id="memAckRow" style="display:none">
+    <div>
+      <label>「清除记忆」提示</label>
+      <button id="memAckReset" class="ghost" style="width:100%">恢复：下次清除记忆前重新显示介绍弹窗</button>
+    </div>
+    <div></div>
+  </div>
+  <div class="row2">
+    <div>
+      <label>简答题策略（页面已有内容时）</label>
+      <select id="subjMode">
+        <option value="ask">每次开始弹窗询问（推荐）</option>
+        <option value="keep">保留跳过：不改动已有简答</option>
+        <option value="rewrite">清空重写：删除已有并用 AI 重新生成</option>
+      </select>
+    </div>
+    <div></div>
+  </div>
+  <div class="row2">
+    <div>
+      <label>答题引擎</label>
+      <select id="engine">
+        <option value="demo">演示引擎（内置题库，零配置）</option>
+        <option value="api">API 引擎（OpenAI 兼容）</option>
+        <option value="bridge">豆包网页桥接（免费）</option>
+      </select>
+    </div>
+    <div>
+      <label>填写方式（固定）</label>
+      <input value="只填写不提交，提交永远由用户手动完成" disabled>
+    </div>
+  </div>
+</section>
+
+<section>
+  <b>API 引擎</b>
+  <div class="row2">
+    <div>
+      <label>接口类型（自动识别 = 粘贴 Key 自动匹配）</label>
+      <select id="provider"></select>
+    </div>
+    <div>
+      <label>模型名（可改成控制台里任意模型 / 接入点）</label>
+      <input id="model" placeholder="deepseek-chat">
+    </div>
+  </div>
+  <label>接口地址 baseURL</label>
+  <input id="baseURL" placeholder="https://api.deepseek.com/v1">
+  <label>API Key</label>
+  <input id="apiKey" type="password" placeholder="sk-...">
+  <p class="hint" id="keyStatus"></p>
+  <div style="margin-top:4px"><button id="clearKey" class="ghost" style="padding:5px 12px;font-size:12px">清除已保存的 Key</button></div>
+  <p class="hint" style="margin-top:8px;color:#b45309">⚠ 安全提示：该插件不能完全保证您的 API Key 不被泄露。Key 会明文保存在本机浏览器的插件存储中，任何能读取浏览器插件数据或操作这台电脑的程序/人都可能拿到它（插件不会把它上传到任何服务器）。若您的 Key 有大量余额，建议不要保存，答题时在面板临时粘贴使用。</p>
+  <p class="hint" id="providerHint"></p>
+  <div style="margin-top:10px">
+    <button id="save">保存</button>
+    <button id="test" class="ghost">测试连接</button>
+  </div>
+  <div class="msg" id="msg"></div>
+</section>
+
+<section>
+  <b>豆包网页桥接（免费）</b>
+  <p class="hint">答题时自动控制豆包标签页：未打开豆包会自动新开标签页，免登录可用（如遇豆包风控验证需手动通过一次）。每题约 10~40 秒。</p>
+  <div class="row2">
+    <div>
+      <label>每题间隔下限（毫秒）</label>
+      <input id="delayMin" type="number" min="1000" step="500">
+    </div>
+    <div>
+      <label>每题间隔上限（毫秒）</label>
+      <input id="delayMax" type="number" min="1500" step="500">
+    </div>
+  </div>
+  <label style="display:flex;align-items:center;gap:6px">
+    <input id="newChat" type="checkbox" style="width:auto">每题新开对话（推荐，避免上下文串扰）
+  </label>
+</section>
+
+<script src="options.js"></script>
+</body>
+</html>
