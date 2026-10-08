@@ -1,7 +1,7 @@
-/* 后台 Service Worker：引擎路由、题目队列、答案缓存、与作业页消息中转、热重载 */
+/* 后台 Service Worker：引擎路由、题目队列、答案缓存、与作业页消息中转、热重载、自动更新检查 */
 import { answerWithAPI, testAPI, sanitizeKey, detectEndpoint } from './engines/api-engine.js';
 import { answerWithBridge } from './engines/bridge-engine.js';
-import { hashKey } from './engines/engine.js';
+import { hashKey, compareVersions } from './engines/engine.js';
 
 const DEFAULT_CONFIG = {
   engine: 'api', // api | bridge
@@ -64,6 +64,30 @@ chrome.notifications?.onClicked.addListener(async () => {
     /* 窗口可能已关闭 */
   }
 });
+
+/* —— 自动更新检查：拉取 GitHub 仓库 manifest 版本号与本地比较；结果缓存 1 小时（c: 前缀键）——
+   面板打开时发 CHECK_UPDATE 触发；失败零重试、静默返回 ok:false */
+const UPDATE_SOURCE = 'https://raw.githubusercontent.com/54-39/auto-homework-engine/master/manifest.json';
+const UPDATE_PAGE = 'https://github.com/54-39/auto-homework-engine';
+const UPDATE_TTL = 3600e3;
+async function checkUpdate() {
+  const current = chrome.runtime.getManifest().version;
+  const o = await chrome.storage.local.get('c:upd');
+  const prev = o['c:upd'] || null;
+  if (prev && Date.now() - prev.at < UPDATE_TTL) {
+    return { ok: true, current, latest: prev.latest, hasUpdate: compareVersions(prev.latest, current) > 0, url: UPDATE_PAGE, cached: true };
+  }
+  let latest = '';
+  try {
+    const res = await fetch(UPDATE_SOURCE);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    latest = String((await res.json()).version || '');
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+  await chrome.storage.local.set({ 'c:upd': { latest, at: Date.now() } });
+  return { ok: true, current, latest, hasUpdate: compareVersions(latest, current) > 0, url: UPDATE_PAGE };
+}
 
 async function askEngine(cfg, q) {
   if (cfg.engine === 'bridge') return answerWithBridge(q, cfg.bridge);
@@ -190,6 +214,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const next = deepMerge(await getConfig(), payload);
         await chrome.storage.local.set({ config: next });
         sendResponse({ ok: true, config: next });
+      } else if (type === 'CHECK_UPDATE') {
+        sendResponse(await checkUpdate());
       } else if (type === 'HW_START') {
         sendResponse(await startRun(payload.questions || [], tabId));
       } else if (type === 'HW_FILLED') {

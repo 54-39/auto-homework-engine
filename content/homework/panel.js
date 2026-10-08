@@ -30,6 +30,8 @@
     .row label{display:flex;flex:1;align-items:center;gap:8px;font-size:12px;color:#374151;font-weight:500;min-width:0}
     select{flex:1;min-width:0;height:30px;padding:0 10px;border:1px solid #E3E8EF;border-radius:6px;font-size:12px;font-weight:500;color:#111827;background:#fff}
     .hintline{font-size:11px;color:#9AA1A9;flex:none}
+    .updline{flex:none;font-size:11px;font-weight:500;color:#2563EB;cursor:pointer}
+    .updline:hover{color:#1d4ed8}
     .apitoggle{border:0;background:none;cursor:pointer;font-size:11.5px;color:#374151;font-weight:500;padding:2px 0;text-align:left;flex:none;align-self:flex-start}
     .apitoggle:hover{color:#111827}
     .apisec{display:flex;flex-direction:column;gap:8px;flex:none}
@@ -167,6 +169,7 @@
           </label>
         </div>
         <div class="hintline">只填写不提交，提交请自行操作</div>
+        <div class="updline hidden" title="点击前往 GitHub 查看新版本"></div>
         <button class="apitoggle hidden">▾ 接口 与 API Key</button>
         <div class="apisec hidden">
           <div class="provrow">
@@ -249,6 +252,7 @@
       subjmodal: $('.subjmodal'), subjbody: $('.subjbody'), subjcancel: $('.subjcancel'), subjkeep: $('.subjkeep'), subjrewrite: $('.subjrewrite'),
       detect: $('.detect'), start: $('.start'), stop: $('.stop'),
       summary: $('.summary'), smsg: $('.smsg'), shint: $('.shint'), list: $('.list'), log: $('.log'),
+      updline: $('.updline'),
     };
     let rows = [];
     let stopRequested = false; // 停止后忽略后台迟到的答题消息
@@ -836,6 +840,17 @@
         }
       } catch {
         /* 扩展上下文失效时忽略 */
+      }
+      // 自动更新检查：后台每小时对比 GitHub 版本，发现新版本显示提示行（失败静默，不打扰）
+      try {
+        const r = await send('CHECK_UPDATE');
+        if (r?.ok && r.hasUpdate) {
+          els.updline.textContent = `发现新版本 v${r.latest}（当前 v${r.current}）`;
+          els.updline.classList.remove('hidden');
+          els.updline.addEventListener('click', () => window.open(r.url, '_blank'));
+        }
+      } catch {
+        /* 检查失败静默 */
       }
     })();
   }
