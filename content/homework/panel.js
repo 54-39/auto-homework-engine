@@ -5,8 +5,11 @@
   const HW = (window.HW = window.HW || {});
 
   const CSS = `
-    :host{all:initial}
+    :host{all:initial;color-scheme:light;scrollbar-color:#C7D0DB transparent;scrollbar-width:thin}
     *{box-sizing:border-box;font:12px/1.5 system-ui,'Microsoft YaHei','PingFang SC',sans-serif}
+    /* 浏览器自带表面跟随面板主题：选中态、键盘焦点环、滚动条（原生 Windows 样式与浅色卡片不搭） */
+    ::selection{background:#DBE6FD;color:#111827}
+    :focus-visible:not(input){outline:2px solid #2563EB;outline-offset:2px}
     .fab{position:fixed;right:24px;bottom:24px;width:56px;height:56px;border-radius:50%;background:#2563EB;border:1px solid rgba(255,255,255,.35);color:#fff;
       display:flex;align-items:center;justify-content:center;font-size:24px;cursor:pointer;user-select:none;
       box-shadow:0 6px 14px -2px rgba(15,23,42,.16);z-index:2147483646}
@@ -19,6 +22,8 @@
         linear-gradient(180deg,#FFFFFF 0%,#F6F8FD 50%,#EAEFF8 100%);
       box-shadow:0 16px 36px -8px rgba(15,23,42,.08),0 2px 6px -2px rgba(15,23,42,.06),inset 0 0 0 1px rgba(255,255,255,.9)}
     .hidden{display:none!important}
+    .tip{position:fixed;z-index:2147483647;max-width:230px;padding:6px 9px;border-radius:8px;background:#fff;border:1px solid #E3E8EF;color:#374151;font-size:11px;line-height:1.5;
+      box-shadow:0 10px 24px -8px rgba(15,23,42,.22),0 2px 6px -2px rgba(15,23,42,.08);pointer-events:none}
     .panel.apiopen{height:min(calc(72vh + 190px), calc(100vh - 108px))}
     header{display:flex;align-items:center;gap:6px;cursor:move;user-select:none;flex:none;min-height:22px}
     header b{font-size:15px;font-weight:700;color:#111827}
@@ -41,10 +46,11 @@
     .psource{font-size:11px;color:#9AA1A9}
     .keyrow{display:flex;gap:8px;align-items:center;flex:none}
     .inputGroup{flex:1;min-width:0;position:relative}
-    .inputGroup input{width:100%;height:36px;padding:0 14px;outline:none;border:2px solid rgb(200,200,200);border-radius:20px;background:#fff;color:#111827;font-size:12px;transition:border-color .3s ease}
+    .inputGroup input{width:100%;height:36px;padding:0 14px;outline:none;caret-color:#2563EB;border:2px solid rgb(200,200,200);border-radius:20px;background:#fff;color:#111827;font-size:12px;transition:border-color .18s ease,box-shadow .18s ease}
     .inputGroup input::placeholder{color:transparent}
     .inputGroup :is(input:focus,input:valid){border-color:rgb(150,150,200)}
-    .inputGroup label{position:absolute;left:0;top:50%;transform:translateY(-50%);margin-left:14px;padding:0 6px;pointer-events:none;transition:all .3s ease;color:#646464;font-size:12px;white-space:nowrap;background:transparent}
+    .inputGroup input:focus{border-color:#2563EB;box-shadow:0 0 0 3px rgba(37,99,235,.16)}
+    .inputGroup label{position:absolute;left:0;top:50%;transform:translateY(-50%);margin-left:14px;padding:0 6px;pointer-events:none;transition:top .18s ease,transform .18s ease,background-color .18s ease,color .18s ease;color:#646464;font-size:12px;white-space:nowrap;background:transparent}
     .inputGroup :is(input:focus,input:valid)~label{top:0;transform:translateY(-50%) scale(.82);margin-left:16px;padding:0 6px;background:#fff}
     .lbtn{border:0;background:none;cursor:pointer;font-size:12px;padding:0 2px;flex:none}
     .lbtn.primary{color:#2563EB;font-weight:500}
@@ -98,7 +104,8 @@
     .mbtns{display:flex;gap:8px;margin-top:12px}
     .mbtns .act{padding:6px}
     .mcheck{display:flex;align-items:center;gap:5px;font-size:11px;color:#6B7280;margin-top:8px;cursor:pointer}
-    .mcheck input{width:auto;margin:0}
+    .mcheck input{width:auto;margin:0;accent-color:#2563EB}
+    .subjhint{color:#98A2B3;margin-top:8px}
   `;
 
   const TYPE_NAME = { choice: '单选', multi: '多选', judge: '判断', blank: '填空', subjective: '简答' };
@@ -152,12 +159,13 @@
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = `
       <style>${CSS}</style>
-      <div class="fab" title="点击收起/展开面板，按住可拖动位置">⚡</div>
+      <div class="fab" data-tip="点击收起/展开面板，按住可拖动位置">⚡</div>
+      <div class="tip hidden" role="tooltip"></div>
       <section class="panel hidden">
-        <header title="按住拖动移动面板；双击复位位置"><b>作业助手</b><span class="badge"></span><span class="spacer"></span>
-          <button class="tbtn expandbtn" title="切换大/小面板（题目多时更清晰）">展开</button>
-          <button class="tbtn settingsbtn" title="打开设置页（记忆 / 诊断 / 检测更新）">设置</button>
-          <button class="tbtn btn-collapse" title="收起面板">收起</button>
+        <header data-tip="按住拖动移动面板；双击复位位置"><b>作业助手</b><span class="badge"></span><span class="spacer"></span>
+          <button class="tbtn expandbtn" data-tip="切换大/小面板（题目多时更清晰）">展开</button>
+          <button class="tbtn settingsbtn" data-tip="打开设置页（记忆 / 诊断 / 检测更新）">设置</button>
+          <button class="tbtn btn-collapse" data-tip="收起面板">收起</button>
         </header>
         <div class="row">
           <label>引擎
@@ -168,7 +176,7 @@
           </label>
         </div>
         <div class="hintline">只填写不提交，提交请自行操作</div>
-        <div class="updline hidden" title="点击前往 GitHub 查看新版本"></div>
+        <div class="updline hidden" data-tip="点击前往 GitHub 查看新版本"></div>
         <button class="apitoggle hidden">▾ 接口 与 API Key</button>
         <div class="apisec hidden">
           <div class="provrow">
@@ -181,7 +189,7 @@
               <label for="hw-keyinput" class="keylabel">粘贴 API Key</label>
             </div>
             <button class="lbtn primary savekey">保存</button>
-            <button class="lbtn plain clearkey" title="停用当前 Key（列表记录保留）">停用</button>
+            <button class="lbtn plain clearkey" data-tip="停用当前 Key（列表记录保留）">停用</button>
           </div>
           <div class="keywarn hidden">提示：API 引擎还没有填写 Key，粘贴后点「保存」</div>
           <div class="keylist"></div>
@@ -196,7 +204,7 @@
               <button class="act ghost subjkeep">保留跳过</button>
               <button class="act subjrewrite">清空重写</button>
             </div>
-            <p style="color:#98a2b3;margin-top:8px">每次开始都会询问；想固定策略可在设置页改「简答题策略」。</p>
+            <p class="subjhint">每次开始都会询问；想固定策略可在设置页改「简答题策略」。</p>
           </div>
         </div>
         <div class="modal keymodal hidden">
@@ -236,6 +244,32 @@
       summary: $('.summary'), smsg: $('.smsg'), shint: $('.shint'), list: $('.list'), log: $('.log'),
       updline: $('.updline'),
     };
+    /* 原生 title 提示在 Windows 上是系统气泡框（字体/圆角/箭头都不受控），改成本面板内的文字气泡：
+       鼠标悬停与键盘聚焦都显示；事件委托在 Shadow 根上，动态生成的列表行（答题记录/Key 列表）同样生效。 */
+    const tip = $('.tip');
+    const tipHit = (e) => (e.target && e.target.closest ? e.target.closest('[data-tip]') : null);
+    const showTip = (el) => {
+      const text = el.dataset.tip;
+      if (!text) return;
+      tip.textContent = text;
+      tip.classList.remove('hidden');
+      const r = el.getBoundingClientRect();
+      const tr = tip.getBoundingClientRect();
+      tip.style.left = Math.max(8, Math.min(r.left + r.width / 2 - tr.width / 2, window.innerWidth - tr.width - 8)) + 'px';
+      tip.style.top = (r.top > tr.height + 12 ? r.top - tr.height - 8 : r.bottom + 8) + 'px';
+    };
+    const hideTip = () => tip.classList.add('hidden');
+    const onLeave = (e) => {
+      const next = tipHit({ target: e.relatedTarget });
+      next ? showTip(next) : hideTip();
+    };
+    root.addEventListener('mouseover', (e) => {
+      const el = tipHit(e);
+      if (el && el !== tipHit({ target: e.relatedTarget })) showTip(el);
+    });
+    root.addEventListener('mouseout', onLeave);
+    root.addEventListener('focusin', (e) => { const el = tipHit(e); if (el) showTip(el); });
+    root.addEventListener('focusout', onLeave);
     let rows = [];
     let stopRequested = false; // 停止后忽略后台迟到的答题消息
     // 所有后台通信失败都转成可见的错误（插件更新后旧页面会报 Extension context invalidated）
@@ -354,7 +388,7 @@
     const setExpanded = (on) => {
       els.panel.classList.toggle('expanded', on);
       els.expandbtn.textContent = on ? '收起面板' : '展开';
-      els.expandbtn.title = on ? '恢复小面板（可拖动）' : '切换大面板（题目多时更清晰）';
+      els.expandbtn.dataset.tip = on ? '恢复小面板（可拖动）' : '切换大面板（题目多时更清晰）';
       if (on) {
         els.panel.style.left = '';
         els.panel.style.top = '';
@@ -427,7 +461,7 @@
         const delBtn = document.createElement('button');
         delBtn.className = 'kbtn del';
         delBtn.textContent = '删除';
-        delBtn.title = '删除这条记录';
+        delBtn.dataset.tip = '删除这条记录';
         delBtn.addEventListener('click', async () => {
           const r = await send('KEY_REMOVE', { id: rec.id, key: rec.key });
           if (r?.ok) {
@@ -566,7 +600,7 @@
         r.innerHTML = `<span class="no">${i + 1}</span><span class="type t-${q.meta.type}"></span><span class="stem"></span><span class="st">待机</span>`;
         r.querySelector('.type').textContent = TYPE_NAME[q.meta.type] || q.meta.type;
         r.querySelector('.stem').textContent = q.meta.stem.replace(/_{2,}/g, '＿＿').slice(0, 60);
-        r.title = '点击可重新询问本题';
+        r.dataset.tip = '点击可重新询问本题';
         r.addEventListener('click', () => {
           if (['answered', 'filled', 'failed', 'skipped', 'conflict'].includes(q._status)) rerun(i);
         });
@@ -686,7 +720,7 @@
       const st = r.querySelector('.st');
       st.textContent = STATUS_TEXT[status] || '·';
       st.className = 'st s-' + status;
-      st.title = tip || status;
+      st.dataset.tip = tip || status;
     }
 
     async function rerun(i) {
@@ -728,7 +762,7 @@
               verified = HW.Filler.verify(q, payload.answer);
             }
             setRow(i, verified === false ? 'failed' : payload.kind === 'rewrite' ? 'fixed' : 'filled', '答案：' + payload.answer);
-            rows[i] && (rows[i].title = '答案：' + payload.answer);
+            rows[i] && (rows[i].dataset.tip = '答案：' + payload.answer);
             const vTip = verified === 'unknown' ? '｜（页面不暴露选中状态，按点击成功处理）' : verified === false ? '｜校验未通过，将自动重试' : '';
             log(`第 ${i + 1} 题已填写${payload.fromCache ? '（缓存命中）' : ''}${payload.note ? '｜' + payload.note : ''}${vTip}`);
             chrome.runtime.sendMessage({

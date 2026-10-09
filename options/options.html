@@ -4,18 +4,33 @@
 <meta charset="UTF-8">
 <title>作业助手 · 设置</title>
 <style>
-  body{font:14px/1.6 system-ui,'Microsoft YaHei',sans-serif;max-width:660px;margin:24px auto;padding:0 16px;color:#1f2328;background:#f7f8fa}
+  :root{color-scheme:light}
+  html{scrollbar-color:#cbd2da transparent}
+  body{font:14px/1.6 system-ui,'Microsoft YaHei',sans-serif;max-width:660px;margin:24px auto;padding:0 16px;color:#1f2328;background:#f7f8fa;caret-color:#2563eb}
+  ::selection{background:#dbe6ff;color:#101828}
+  :focus-visible{outline:2px solid #2563eb;outline-offset:2px}
   h1{font-size:18px}
   section{border:1px solid #e3e6ea;border-radius:10px;padding:14px 16px;margin:14px 0;background:#fff}
   section>b{display:block;margin-bottom:6px}
   label{display:block;margin:10px 0 3px;color:#555;font-size:13px}
-  input,select{width:100%;padding:7px 9px;border:1px solid #ccd2d9;border-radius:7px;box-sizing:border-box;font-size:13px}
+  input,select{width:100%;padding:7px 9px;border:1px solid #ccd2d9;border-radius:7px;box-sizing:border-box;font-size:13px;background:#fff;color:#1f2328}
+  input:not([type=checkbox]):focus,select:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.12);outline:none}
+  input:disabled{background:#f3f4f6;color:#6b7280;cursor:not-allowed}
+  input[type=checkbox]{width:auto;accent-color:#2563eb}
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .row2[hidden]{display:none}
   button{padding:7px 18px;border:0;border-radius:7px;background:#2563eb;color:#fff;cursor:pointer}
   button.ghost{background:#eef1f5;color:#333}
+  button:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+  button.sm{padding:5px 12px;font-size:12px}
+  .wide{width:100%}
+  .mt4{margin-top:4px}
+  .mt10{margin-top:10px}
+  .inline{display:flex;align-items:center;gap:6px}
+  .warnhint{margin-top:8px;color:#b45309}
   .msg{margin-top:10px;font-size:13px;min-height:18px}
-  .ok{color:#059669}.err{color:#dc2626}
-  .hint{color:#888;font-size:12px}
+  .ok{color:#047857}.err{color:#b91c1c}
+  .hint{color:#5f6b7a;font-size:12px}
 </style>
 </head>
 <body>
@@ -23,10 +38,10 @@
 
 <section>
   <b>基本</b>
-  <div class="row2" id="memAckRow" style="display:none">
+  <div class="row2" id="memAckRow" hidden>
     <div>
       <label>「清除记忆」提示</label>
-      <button id="memAckReset" class="ghost" style="width:100%">恢复：下次清除记忆前重新显示介绍弹窗</button>
+      <button id="memAckReset" class="ghost wide">恢复：下次清除记忆前重新显示介绍弹窗</button>
     </div>
     <div></div>
   </div>
@@ -73,10 +88,10 @@
   <label>API Key</label>
   <input id="apiKey" type="password" placeholder="sk-...">
   <p class="hint" id="keyStatus"></p>
-  <div style="margin-top:4px"><button id="clearKey" class="ghost" style="padding:5px 12px;font-size:12px">清除已保存的 Key</button></div>
-  <p class="hint" style="margin-top:8px;color:#b45309">⚠ 安全提示：该插件不能完全保证您的 API Key 不被泄露。Key 会明文保存在本机浏览器的插件存储中，任何能读取浏览器插件数据或操作这台电脑的程序/人都可能拿到它（插件不会把它上传到任何服务器）。若您的 Key 有大量余额，建议不要保存，答题时在面板临时粘贴使用。</p>
+  <div class="mt4"><button id="clearKey" class="ghost sm">清除已保存的 Key</button></div>
+  <p class="hint warnhint">⚠ 安全提示：该插件不能完全保证您的 API Key 不被泄露。Key 会明文保存在本机浏览器的插件存储中，任何能读取浏览器插件数据或操作这台电脑的程序/人都可能拿到它（插件不会把它上传到任何服务器）。若您的 Key 有大量余额，建议不要保存，答题时在面板临时粘贴使用。</p>
   <p class="hint" id="providerHint"></p>
-  <div style="margin-top:10px">
+  <div class="mt10">
     <button id="save">保存</button>
     <button id="test" class="ghost">测试连接</button>
   </div>
@@ -96,8 +111,8 @@
       <input id="delayMax" type="number" min="1500" step="500">
     </div>
   </div>
-  <label style="display:flex;align-items:center;gap:6px">
-    <input id="newChat" type="checkbox" style="width:auto">每题新开对话（推荐，避免上下文串扰）
+  <label class="inline">
+    <input id="newChat" type="checkbox">每题新开对话（推荐，避免上下文串扰）
   </label>
 </section>
 

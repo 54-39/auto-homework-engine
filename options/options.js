@@ -85,8 +85,8 @@ $('test').addEventListener('click', async () => {
 $('memAckReset').addEventListener('click', async () => {
   const res = await chrome.runtime.sendMessage({ type: 'SET_CONFIG', payload: { clearAck: false } });
   if (res?.ok) {
-    $('memAckRow').style.display = 'none';
-    msg('已恢复：下次点击面板 🧹 会先显示介绍弹窗');
+    $('memAckRow').hidden = true;
+    msg('已恢复：下次在设置页清除记忆会先显示确认');
     setCls('ok');
   }
 });
@@ -115,7 +115,7 @@ $('clearKey').addEventListener('click', async () => {
     ? `当前已保存（尾号 ${api.apiKey.slice(-4)}），下方输入框输入新值可覆盖`
     : '当前未保存 Key';
   $('providerHint').textContent = IFACES[providerSel.value].hint || '';
-  $('memAckRow').style.display = cfg.clearAck ? '' : 'none';
+  $('memAckRow').hidden = !cfg.clearAck;
   const bridge = cfg.bridge || {};
   $('delayMin').value = bridge.delayMin ?? 3000;
   $('delayMax').value = bridge.delayMax ?? 8000;
