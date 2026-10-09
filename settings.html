@@ -4,60 +4,149 @@
 <meta charset="UTF-8">
 <title>作业助手 · 工具设置</title>
 <style>
-  body{font:14px/1.6 system-ui,'Microsoft YaHei',sans-serif;margin:0;color:#1f2328;background:#f7f8fa}
-  .wrap{display:flex;min-height:100vh;max-width:860px;margin:0 auto}
-  .side{flex:none;width:150px;background:#fff;border-right:1px solid #e3e6ea;padding:18px 8px}
-  .side b{display:block;font-size:15px;padding:0 10px 10px}
-  .side button{display:block;width:100%;text-align:left;padding:8px 10px;margin:2px 0;border:0;border-radius:7px;background:none;font-size:13px;color:#444;cursor:pointer}
-  .side button:hover{background:#eef1f5}
-  .side button.cur{background:#2563eb;color:#fff}
-  .content{flex:1;padding:18px 22px}
-  section{border:1px solid #e3e6ea;border-radius:10px;padding:14px 16px;margin:14px 0;background:#fff}
-  section>b{display:block;margin-bottom:6px}
-  button{padding:7px 18px;border:0;border-radius:7px;background:#2563eb;color:#fff;cursor:pointer}
-  button.ghost{background:#eef1f5;color:#333}
-  .msg{margin-top:10px;font-size:13px;min-height:18px}
-  .ok{color:#059669}.err{color:#dc2626}
-  .hint{color:#888;font-size:12px}
-  .hidden{display:none}
+  :root{
+    color-scheme:light;
+    --bg:#f6f7f9; --surface:#fff; --side:#fbfbfd;
+    --line:#e4e7ec; --line-soft:#eef1f5;
+    --text:#16191d; --text-2:#5b6472; --muted:#6b7480;
+    --accent:#2563eb; --accent-hover:#1d4ed8; --accent-active:#1e40af;
+    --danger:#dc2626; --danger-hover:#b91c1c;
+    --ok:#047857; --err:#b91c1c;
+    --ghost:#eef1f5; --ghost-hover:#e4e8ee;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  html{scrollbar-color:#cbd2da transparent}
+  body{margin:0;background:var(--bg);color:var(--text);font:13px/1.65 system-ui,'Microsoft YaHei',sans-serif;caret-color:var(--accent);-webkit-font-smoothing:antialiased}
+  ::selection{background:#dbe6ff;color:#101828}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  .skip{position:absolute;left:-9999px;top:8px;z-index:9;background:var(--surface);color:var(--text);padding:8px 12px;border:1px solid var(--line);border-radius:8px}
+  .skip:focus{left:12px}
+
+  .app{display:grid;grid-template-columns:212px 1fr;min-height:100vh}
+  .side{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:2px;padding:22px 12px;background:var(--side);border-right:1px solid var(--line)}
+  .brand{padding:0 10px 16px}
+  .brand h1{margin:0;font-size:14px;font-weight:650;letter-spacing:-.01em}
+  .brand p{margin:2px 0 0;font-size:12px;color:var(--muted)}
+  .side button{appearance:none;border:0;background:none;font:inherit;text-align:left;padding:8px 10px;border-radius:8px;color:var(--text-2);cursor:pointer;touch-action:manipulation;
+    transition:background-color .15s ease,color .15s ease}
+  .side button:hover{background:var(--ghost);color:var(--text)}
+  .side button[aria-current="true"]{background:var(--accent);color:#fff;font-weight:500}
+  .side button[aria-current="true"]:hover{background:var(--accent-hover)}
+
+  .main{padding:32px 36px 56px}
+  .content{max-width:680px}
+  section[hidden]{display:none}
+  h2{margin:0 0 16px;font-size:18px;font-weight:650;letter-spacing:-.015em;line-height:1.35;text-wrap:balance}
+  .card{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:20px 22px}
+  .hint{margin:0 0 10px;color:var(--text-2);text-wrap:pretty}
+  .hint:last-of-type{margin-bottom:16px}
+
+  .count{margin:0 0 14px;color:var(--text);font-variant-numeric:tabular-nums}
+  .check{display:flex;align-items:flex-start;gap:8px;margin:0 0 4px;cursor:pointer;color:var(--text-2)}
+  .check input{margin:3px 0 0;accent-color:var(--accent);cursor:pointer}
+
+  .kv{margin:0 0 18px;padding:0}
+  .kv>div{display:flex;gap:14px;padding:4px 0}
+  .kv dt{margin:0;width:72px;color:var(--text-2)}
+  .kv dd{margin:0;font-weight:550;font-variant-numeric:tabular-nums}
+
+  .actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:14px}
+  .confirm .actions{margin-top:0}
+  button{font:inherit;padding:7px 16px;border:1px solid transparent;border-radius:8px;background:var(--accent);color:#fff;cursor:pointer;touch-action:manipulation;
+    transition:background-color .15s ease,border-color .15s ease,color .15s ease}
+  button:hover{background:var(--accent-hover)}
+  button:active{background:var(--accent-active)}
+  button:disabled{opacity:.55;cursor:not-allowed}
+  button:disabled:hover{background:var(--accent)}
+  button.ghost{background:var(--ghost);color:var(--text)}
+  button.ghost:hover{background:var(--ghost-hover)}
+  button.ghost:active{background:#dbe0e7}
+  button.ghost:disabled:hover{background:var(--ghost)}
+  button.danger{background:var(--danger)}
+  button.danger:hover{background:var(--danger-hover)}
+  button.danger:active{background:#991b1b}
+  button.danger:disabled:hover{background:var(--danger)}
+  a{color:var(--accent);text-underline-offset:2px;border-radius:4px}
+  a:hover{color:var(--accent-hover)}
+
+  .msg{margin-top:12px;min-height:20px;color:var(--text-2)}
+  .msg.ok{color:var(--ok)}
+  .msg.err{color:var(--err)}
+  .confirm{margin-top:16px;border:1px solid var(--line);border-radius:var(--radius);background:#fbfcfe;padding:14px 16px}
+  .confirm[hidden]{display:none}
+  .confirm p{margin:0 0 12px;color:var(--text-2)}
+
+  @media (prefers-reduced-motion:reduce){
+    .side button,button{transition:none}
+  }
+  @media (max-width:720px){
+    .app{grid-template-columns:1fr}
+    .side{position:static;height:auto;flex-direction:row;align-items:center;gap:4px;padding:10px 12px;border-right:0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+    .brand{padding:0 10px 0 2px}
+    .brand p{display:none}
+    .main{padding:20px 16px 40px}
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <nav class="side">
-    <b>作业助手</b>
-    <button data-sec="mem" class="cur">记忆</button>
-    <button data-sec="diag">诊断</button>
-    <button data-sec="upd">检测更新</button>
+<a class="skip" href="#main">跳到主内容</a>
+<div class="app">
+  <nav class="side" aria-label="设置分区">
+    <div class="brand">
+      <h1>作业助手</h1>
+      <p>工具设置</p>
+    </div>
+    <button type="button" data-sec="mem" aria-controls="sec-mem" aria-current="true">记忆</button>
+    <button type="button" data-sec="diag" aria-controls="sec-diag">诊断</button>
+    <button type="button" data-sec="upd" aria-controls="sec-upd">检测更新</button>
   </nav>
-  <main class="content">
-    <section id="sec-mem">
-      <b>记忆</b>
-      <p class="hint">插件会把每道题的 AI 答案记在本机（答题记忆），同一题再次作答时直接使用。若某道题 AI 一直答错，清除后重新作答。</p>
-      <p class="hint">清除后：下次点「开始」所有题目会重新问 AI（会重新消耗额度）；不会改动页面上已填写的答案；不影响 API Key 和接口配置。</p>
-      <label style="display:flex;align-items:center;gap:6px"><input id="memNever" type="checkbox"> 以后不再提示（下次点「清除记忆」直接清除，不显示确认）</label>
-      <div style="margin-top:10px"><button id="memClear">清除答题记忆</button></div>
-      <div class="msg" id="memMsg"></div>
-      <div class="hidden" id="memConfirm" style="border:1px solid #e3e6ea;border-radius:8px;padding:10px 12px;margin-top:10px;background:#fbfcfe">
-        <p id="memConfirmBody" style="margin:0 0 8px"></p>
-        <button id="memCancel" class="ghost">取消</button>
-        <button id="memGo">立即清除</button>
-      </div>
-    </section>
-    <section id="sec-diag" class="hidden">
-      <b>诊断</b>
-      <p class="hint">把最近打开的作业页面结构导出为 HTML 文件。站点适配失败时，把导出文件发给开发者即可排查适配问题。</p>
-      <div style="margin-top:10px"><button id="diagExport">导出页面结构</button></div>
-      <div class="msg" id="diagMsg"></div>
-    </section>
-    <section id="sec-upd" class="hidden">
-      <b>检测更新</b>
-      <p class="hint">对比 GitHub 上发布的最新版本。检测到新版后需手动下载并重新加载扩展（解压版无法自动更新）。</p>
-      <p>当前版本：<span id="updCurrent">…</span></p>
-      <p>最新版本：<span id="updLatest">尚未检查</span></p>
-      <div style="margin-top:10px"><button id="updCheck">立即检查</button> <a id="updLink" class="hidden" target="_blank" rel="noopener">前往 GitHub 下载新版</a></div>
-      <div class="msg" id="updMsg"></div>
-    </section>
+  <main class="main" id="main">
+    <div class="content">
+      <section id="sec-mem" class="card" aria-labelledby="h-mem">
+        <h2 id="h-mem">记忆</h2>
+        <p class="hint">插件会把每道题的 AI 答案记在本机（答题记忆），同一题再次作答时直接使用；某道题一直答错时，清除后重新作答。</p>
+        <p class="hint">清除只删答题记忆，不改动页面上已填写的答案，也不影响 API Key 与接口配置。</p>
+        <p class="count" id="memCount" role="status" aria-live="polite">正在读取记忆条数…</p>
+        <label class="check"><input id="memNever" type="checkbox"> 以后不再提示（点「清除答题记忆」直接清除，不显示确认）</label>
+        <div class="actions">
+          <button type="button" id="memClear">清除答题记忆</button>
+        </div>
+        <div class="msg" id="memMsg" role="status" aria-live="polite"></div>
+        <div class="confirm" id="memConfirm" hidden>
+          <p id="memConfirmBody"></p>
+          <div class="actions">
+            <button type="button" class="ghost" id="memCancel">取消</button>
+            <button type="button" class="danger" id="memGo">立即清除</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-diag" class="card" aria-labelledby="h-diag" hidden>
+        <h2 id="h-diag">诊断</h2>
+        <p class="hint">把最近打开的作业页面结构导出为 HTML 文件；站点适配失败时，把这个文件发给开发者即可排查。</p>
+        <p class="hint">导出读取的是已打开的网页，所以请先打开作业页面，再回到这里导出。</p>
+        <div class="actions">
+          <button type="button" id="diagExport">导出页面结构</button>
+        </div>
+        <div class="msg" id="diagMsg" role="status" aria-live="polite"></div>
+      </section>
+
+      <section id="sec-upd" class="card" aria-labelledby="h-upd" hidden>
+        <h2 id="h-upd">检测更新</h2>
+        <p class="hint">对比 GitHub 上发布的最新版本；发现新版后需手动下载并重新加载扩展（解压版无法自动更新）。</p>
+        <dl class="kv">
+          <div><dt>当前版本</dt><dd id="updCurrent">…</dd></div>
+          <div><dt>最新版本</dt><dd id="updLatest">尚未检查</dd></div>
+        </dl>
+        <div class="actions">
+          <button type="button" id="updCheck">立即检查</button>
+          <a id="updLink" href="#" target="_blank" rel="noopener" hidden>前往 GitHub 下载新版</a>
+        </div>
+        <div class="msg" id="updMsg" role="status" aria-live="polite"></div>
+      </section>
+    </div>
   </main>
 </div>
 <script src="settings.js"></script>
