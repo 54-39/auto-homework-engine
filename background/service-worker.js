@@ -216,6 +216,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, config: next });
       } else if (type === 'CHECK_UPDATE') {
         sendResponse(await checkUpdate(payload && payload.force));
+      } else if (type === 'OPEN_SETTINGS') {
+        // 面板是 content script，没有 chrome.tabs 权限，由后台代开设置页
+        await chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') });
+        sendResponse({ ok: true });
       } else if (type === 'HW_START') {
         sendResponse(await startRun(payload.questions || [], tabId));
       } else if (type === 'HW_FILLED') {
@@ -282,7 +286,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // 清除答题记忆（AI 历史答案缓存，c: 前缀键）；dryRun 只计数不删除。
         // 不触碰：config（引擎/Key/提示标志）、savedKeys、apiEndpoint、面板位置。
         const all = await chrome.storage.local.get(null);
-        const keys = Object.keys(all).filter((k) => k.startsWith('c:'));
+        // c:upd 是更新检查缓存（非答题记忆），不计入条数也不删
+        const keys = Object.keys(all).filter((k) => k.startsWith('c:') && k !== 'c:upd');
         if (!payload.dryRun && keys.length) await chrome.storage.local.remove(keys);
         sendResponse({ ok: true, count: keys.length });
       } else {

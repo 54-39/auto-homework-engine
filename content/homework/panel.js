@@ -375,8 +375,12 @@
     } catch {}
 
     els.collapse.addEventListener('click', () => els.panel.classList.add('hidden'));
-    // 设置页（记忆 / 诊断 / 检测更新）在独立标签页打开，见 settings.html
-    els.settingsbtn.addEventListener('click', () => chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') }));
+    // 设置页（记忆 / 诊断 / 检测更新）在独立标签页打开，见 settings.html；
+    // 注意：content script 没有 chrome.tabs，必须让后台代开
+    els.settingsbtn.addEventListener('click', async () => {
+      const r = await send('OPEN_SETTINGS');
+      if (!r?.ok) log('设置页打开失败：' + (r?.error || '未知错误'));
+    });
     const fmtTime = (t) => {
       const d = new Date(t);
       const p = (n) => String(n).padStart(2, '0');
