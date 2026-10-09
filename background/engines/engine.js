@@ -130,3 +130,11 @@ export function compareVersions(a, b) {
   }
   return 0;
 }
+
+/* 是否功能更新（更新提示分级用）：主版本号或次版本号不同才算（如 0.4.x → 0.5.0），只动末位补丁号的修复更新不算。 */
+export function isMajorUpdate(a, b) {
+  const seg = (v) => String(v).split('.').map((n) => parseInt(n, 10) || 0);
+  const pa = seg(a);
+  const pb = seg(b);
+  return (pa[0] || 0) !== (pb[0] || 0) || (pa[1] || 0) !== (pb[1] || 0);
+}

@@ -15,12 +15,14 @@
   /* 侧边栏：切换分区，并把当前分区同步到 URL hash（刷新、前进后退都停在原分区） */
   const navBtns = [...document.querySelectorAll('.side button')];
   const secs = { mem: $('#sec-mem'), diag: $('#sec-diag'), upd: $('#sec-upd') };
+  let onSection = () => {};
   const goto = (id, push) => {
     const key = secs[id] ? id : 'mem';
     navBtns.forEach((b) => b.setAttribute('aria-current', String(b.dataset.sec === key)));
     Object.entries(secs).forEach(([k, el]) => (el.hidden = k !== key));
     if (push) location.hash = key;
     else history.replaceState(null, '', '#' + key);
+    onSection(key);
   };
   navBtns.forEach((b) => b.addEventListener('click', () => goto(b.dataset.sec, true)));
   window.addEventListener('hashchange', () => goto(location.hash.slice(1), false));
@@ -114,7 +116,8 @@
     }
   });
 
-  /* 检测更新：手动检查（force 绕过 1 小时缓存），有新版本给 GitHub 下载入口 */
+  /* 检测更新：打开「检测更新」分区自动检查一次（走 1 小时缓存），「立即检查」绕过缓存；
+     更新永不强制——只提示，不自动安装、不阻断使用 */
   const updCurrent = $('#updCurrent');
   const updLatest = $('#updLatest');
   const updLink = $('#updLink');
@@ -129,21 +132,34 @@
     updLink.hidden = !r.hasUpdate;
     if (r.hasUpdate) {
       updLink.href = r.url;
-      out(updMsg, `发现新版本 v${r.latest}（当前 v${r.current}）`, 'ok');
+      out(updMsg, `${r.major ? '发现功能更新' : '发现修复更新'} v${r.latest}（当前 v${r.current}）：可继续使用当前版本，需要时再手动下载新版`, 'ok');
     } else out(updMsg, '已是最新版本', 'ok');
   };
-  updBtn.addEventListener('click', async () => {
-    updBtn.disabled = true;
-    updBtn.textContent = '检查中…';
+  const check = async (force) => {
     updLatest.textContent = '检查中…';
     updLink.hidden = true;
-    out(updMsg, '');
-    try {
-      renderUpdate(await send('CHECK_UPDATE', { force: true }));
-    } finally {
-      updBtn.disabled = false;
-      updBtn.textContent = '立即检查';
+    if (force) {
+      updBtn.disabled = true;
+      updBtn.textContent = '检查中…';
+      out(updMsg, '');
     }
-  });
+    try {
+      renderUpdate(await send('CHECK_UPDATE', { force }));
+    } finally {
+      if (force) {
+        updBtn.disabled = false;
+        updBtn.textContent = '立即检查';
+      }
+    }
+  };
+  updBtn.addEventListener('click', () => check(true));
+  let autoChecked = false;
+  onSection = (key) => {
+    if (key === 'upd' && !autoChecked) {
+      autoChecked = true;
+      check(false);
+    }
+  };
+  if (!secs.upd.hidden) onSection('upd'); // 直接以 #upd 打开时也要自动检查
   updCurrent.textContent = 'v' + chrome.runtime.getManifest().version;
 })();

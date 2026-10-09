@@ -176,7 +176,7 @@
           </label>
         </div>
         <div class="hintline">只填写不提交，提交请自行操作</div>
-        <div class="updline hidden" data-tip="点击前往 GitHub 查看新版本"></div>
+        <div class="updline hidden" data-tip="点击前往 GitHub 查看新版本（不会自动安装，可继续用当前版本）"></div>
         <button class="apitoggle hidden">▾ 接口 与 API Key</button>
         <div class="apisec hidden">
           <div class="provrow">
@@ -816,16 +816,16 @@
       } catch {
         /* 扩展上下文失效时忽略 */
       }
-      // 自动更新检查：后台每小时对比 GitHub 版本，发现新版本显示提示行（失败静默，不打扰）
+      // 更新提示：只读后台缓存（不联网，自动检查在设置页），且只有功能更新（次版本号变化）才提示
       try {
-        const r = await send('CHECK_UPDATE');
-        if (r?.ok && r.hasUpdate) {
+        const r = await send('CHECK_UPDATE', { cacheOnly: true });
+        if (r?.ok && r.major) {
           els.updline.textContent = `发现新版本 v${r.latest}（当前 v${r.current}）`;
           els.updline.classList.remove('hidden');
           els.updline.addEventListener('click', () => window.open(r.url, '_blank'));
         }
       } catch {
-        /* 检查失败静默 */
+        /* 未检查过或读取失败：静默 */
       }
     })();
   }
