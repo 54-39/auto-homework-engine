@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>作业助手 · 工具设置</title>
+<style>
+  body{font:14px/1.6 system-ui,'Microsoft YaHei',sans-serif;margin:0;color:#1f2328;background:#f7f8fa}
+  .wrap{display:flex;min-height:100vh;max-width:860px;margin:0 auto}
+  .side{flex:none;width:150px;background:#fff;border-right:1px solid #e3e6ea;padding:18px 8px}
+  .side b{display:block;font-size:15px;padding:0 10px 10px}
+  .side button{display:block;width:100%;text-align:left;padding:8px 10px;margin:2px 0;border:0;border-radius:7px;background:none;font-size:13px;color:#444;cursor:pointer}
+  .side button:hover{background:#eef1f5}
+  .side button.cur{background:#2563eb;color:#fff}
+  .content{flex:1;padding:18px 22px}
+  section{border:1px solid #e3e6ea;border-radius:10px;padding:14px 16px;margin:14px 0;background:#fff}
+  section>b{display:block;margin-bottom:6px}
+  button{padding:7px 18px;border:0;border-radius:7px;background:#2563eb;color:#fff;cursor:pointer}
+  button.ghost{background:#eef1f5;color:#333}
+  .msg{margin-top:10px;font-size:13px;min-height:18px}
+  .ok{color:#059669}.err{color:#dc2626}
+  .hint{color:#888;font-size:12px}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="side">
+    <b>作业助手</b>
+    <button data-sec="mem" class="cur">记忆</button>
+    <button data-sec="diag">诊断</button>
+    <button data-sec="upd">检测更新</button>
+  </nav>
+  <main class="content">
+    <section id="sec-mem">
+      <b>记忆</b>
+      <p class="hint">插件会把每道题的 AI 答案记在本机（答题记忆），同一题再次作答时直接使用。若某道题 AI 一直答错，清除后重新作答。</p>
+      <p class="hint">清除后：下次点「开始」所有题目会重新问 AI（会重新消耗额度）；不会改动页面上已填写的答案；不影响 API Key 和接口配置。</p>
+      <label style="display:flex;align-items:center;gap:6px"><input id="memNever" type="checkbox"> 以后不再提示（下次点「清除记忆」直接清除，不显示确认）</label>
+      <div style="margin-top:10px"><button id="memClear">清除答题记忆</button></div>
+      <div class="msg" id="memMsg"></div>
+      <div class="hidden" id="memConfirm" style="border:1px solid #e3e6ea;border-radius:8px;padding:10px 12px;margin-top:10px;background:#fbfcfe">
+        <p id="memConfirmBody" style="margin:0 0 8px"></p>
+        <button id="memCancel" class="ghost">取消</button>
+        <button id="memGo">立即清除</button>
+      </div>
+    </section>
+    <section id="sec-diag" class="hidden">
+      <b>诊断</b>
+      <p class="hint">把最近打开的作业页面结构导出为 HTML 文件。站点适配失败时，把导出文件发给开发者即可排查适配问题。</p>
+      <div style="margin-top:10px"><button id="diagExport">导出页面结构</button></div>
+      <div class="msg" id="diagMsg"></div>
+    </section>
+    <section id="sec-upd" class="hidden">
+      <b>检测更新</b>
+      <p class="hint">对比 GitHub 上发布的最新版本。检测到新版后需手动下载并重新加载扩展（解压版无法自动更新）。</p>
+      <p>当前版本：<span id="updCurrent">…</span></p>
+      <p>最新版本：<span id="updLatest">尚未检查</span></p>
+      <div style="margin-top:10px"><button id="updCheck">立即检查</button> <a id="updLink" class="hidden" target="_blank" rel="noopener">前往 GitHub 下载新版</a></div>
+      <div class="msg" id="updMsg"></div>
+    </section>
+  </main>
+</div>
+<script src="settings.js"></script>
+</body>
+</html>

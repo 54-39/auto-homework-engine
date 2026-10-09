@@ -156,8 +156,7 @@
       <section class="panel hidden">
         <header title="按住拖动移动面板；双击复位位置"><b>作业助手</b><span class="badge"></span><span class="spacer"></span>
           <button class="tbtn expandbtn" title="切换大/小面板（题目多时更清晰）">展开</button>
-          <button class="tbtn dbg" title="导出页面结构（适配排障用）">诊断</button>
-          <button class="tbtn memclr" title="清除 AI 答题记忆（同一题反复答错时使用）">记忆</button>
+          <button class="tbtn settingsbtn" title="打开设置页（记忆 / 诊断 / 检测更新）">设置</button>
           <button class="tbtn btn-collapse" title="收起面板">收起</button>
         </header>
         <div class="row">
@@ -212,22 +211,6 @@
             </div>
           </div>
         </div>
-        <div class="modal memmodal hidden">
-          <div class="mbox">
-            <b>清除记忆（AI 答题记录）</b>
-            <p class="membody"></p>
-            <p>清除后：
-            <br>· 下次点「开始」，所有题目会<b>重新问 AI</b>（会重新消耗额度）
-            <br>· 不会改动页面上<b>已填写的答案</b>
-            <br>· 不影响已保存的 <b>API Key</b> 和接口配置</p>
-            <p>适用场景：某道题 AI 一直答错——错误答案也被记住了，越跑越错，清除后重新作答。</p>
-            <label class="mcheck"><input type="checkbox" class="memnever"> 以后不再提示（下次点「记忆」直接清除）</label>
-            <div class="mbtns">
-              <button class="act ghost memcancel">取消</button>
-              <button class="act memgo">立即清除</button>
-            </div>
-          </div>
-        </div>
         <div class="btnrow">
           <button class="act ghost detect">检测题目</button>
           <button class="act start" disabled>开始</button>
@@ -243,12 +226,11 @@
   function wire(root) {
     const $ = (s) => root.querySelector(s);
     const els = {
-      fab: $('.fab'), panel: $('.panel'), badge: $('.badge'), header: $('header'), dbg: $('.dbg'), collapse: $('.btn-collapse'), expandbtn: $('.expandbtn'),
+      fab: $('.fab'), panel: $('.panel'), badge: $('.badge'), header: $('header'), settingsbtn: $('.settingsbtn'), collapse: $('.btn-collapse'), expandbtn: $('.expandbtn'),
       engine: $('.engine'), keyrow: $('.keyrow'), keyinput: $('.keyinput'), keylabel: $('.keylabel'), savekey: $('.savekey'), clearkey: $('.clearkey'),
       keylist: $('.keylist'), keywarn: $('.keywarn'), provrow: $('.provrow'), provider: $('.provider'), psource: $('.psource'),
       apiToggle: $('.apitoggle'), apisec: $('.apisec'),
       modal: $('.keymodal'), msave: $('.msave'), mtemp: $('.mtemp'), mcancel: $('.mcancel'),
-      memclr: $('.memclr'), memmodal: $('.memmodal'), membody: $('.membody'), memnever: $('.memnever'), memcancel: $('.memcancel'), memgo: $('.memgo'),
       subjmodal: $('.subjmodal'), subjbody: $('.subjbody'), subjcancel: $('.subjcancel'), subjkeep: $('.subjkeep'), subjrewrite: $('.subjrewrite'),
       detect: $('.detect'), start: $('.start'), stop: $('.stop'),
       summary: $('.summary'), smsg: $('.smsg'), shint: $('.shint'), list: $('.list'), log: $('.log'),
@@ -393,21 +375,8 @@
     } catch {}
 
     els.collapse.addEventListener('click', () => els.panel.classList.add('hidden'));
-    els.dbg.addEventListener('click', () => {
-      try {
-        const blob = new Blob(['<!DOCTYPE html>\n' + document.documentElement.outerHTML], { type: 'text/html' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `hw-debug-${location.hostname.replace(/[^a-z0-9.-]/gi, '_')}-${Date.now()}.html`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-        log('页面结构已导出为下载文件（发给开发者即可适配该站点）');
-      } catch (e) {
-        log('导出失败：' + (e.message || e));
-      }
-    });
+    // 设置页（记忆 / 诊断 / 检测更新）在独立标签页打开，见 settings.html
+    els.settingsbtn.addEventListener('click', () => chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') }));
     const fmtTime = (t) => {
       const d = new Date(t);
       const p = (n) => String(n).padStart(2, '0');
@@ -487,38 +456,6 @@
         els.subjrewrite.addEventListener('click', onRew);
       });
     }
-
-    /* 清除记忆：dryRun 取条数 → 未确认过弹介绍窗 → 清除并报告 */
-    async function doClearMemory(ack) {
-      const res = await send('CACHE_CLEAR', {});
-      if (res?.ok) {
-        log('已清除 ' + res.count + ' 条答题记忆，下次点「开始」所有题目会重新问 AI');
-        if (ack) await send('SET_CONFIG', { clearAck: true });
-      } else log('清除失败：' + (res?.error || '未知错误'));
-    }
-    function askClearMemory(count) {
-      return new Promise((resolve) => {
-        els.membody.textContent = count > 0 ? ('当前共记住 ' + count + ' 条 AI 答案。') : '当前没有已记住的答案（无需清除）。';
-        els.memmodal.classList.remove('hidden');
-        const close = () => {
-          els.memmodal.classList.add('hidden');
-          els.memcancel.removeEventListener('click', onCancel);
-          els.memgo.removeEventListener('click', onGo);
-        };
-        const onCancel = () => { close(); resolve(null); };
-        const onGo = () => { const never = els.memnever.checked; els.memnever.checked = false; close(); resolve(never ? 'never' : 'go'); };
-        els.memcancel.addEventListener('click', onCancel);
-        els.memgo.addEventListener('click', onGo);
-      });
-    }
-    els.memclr.addEventListener('click', async () => {
-      const cfg = (await send('GET_CONFIG'))?.config || {};
-      if (cfg.clearAck) return doClearMemory(false); // 已确认过：直接清除
-      const dry = await send('CACHE_CLEAR', { dryRun: true });
-      const mode = await askClearMemory(dry?.count ?? 0);
-      if (mode === 'go') doClearMemory(false);
-      else if (mode === 'never') doClearMemory(true);
-    });
 
     const apiSecOpen = () => { try { return localStorage.getItem('hwApiOpen') !== '0'; } catch { return true; } };
     const refreshKeyRow = async () => {
@@ -614,7 +551,7 @@
       setSummary(
         qs.length
           ? `检测到 ${qs.length} 题：` + Object.entries(cnt).map(([k, v]) => `${TYPE_NAME[k] || k}${v}`).join('　')
-          : '未检测到题目，可点「诊断」导出页面结构',
+          : '未检测到题目，可到设置页「诊断」导出页面结构',
         false,
       );
       els.shint.classList.toggle('hidden', !qs.length);

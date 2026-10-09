@@ -66,15 +66,15 @@ chrome.notifications?.onClicked.addListener(async () => {
 });
 
 /* —— 自动更新检查：拉取 GitHub 仓库 manifest 版本号与本地比较；结果缓存 1 小时（c: 前缀键）——
-   面板打开时发 CHECK_UPDATE 触发；失败零重试、静默返回 ok:false */
+   面板打开时发 CHECK_UPDATE 触发；失败零重试、静默返回 ok:false；payload.force=true 强制重新拉取（设置页用） */
 const UPDATE_SOURCE = 'https://raw.githubusercontent.com/54-39/auto-homework-engine/master/manifest.json';
 const UPDATE_PAGE = 'https://github.com/54-39/auto-homework-engine';
 const UPDATE_TTL = 3600e3;
-async function checkUpdate() {
+async function checkUpdate(force) {
   const current = chrome.runtime.getManifest().version;
   const o = await chrome.storage.local.get('c:upd');
   const prev = o['c:upd'] || null;
-  if (prev && Date.now() - prev.at < UPDATE_TTL) {
+  if (!force && prev && Date.now() - prev.at < UPDATE_TTL) {
     return { ok: true, current, latest: prev.latest, hasUpdate: compareVersions(prev.latest, current) > 0, url: UPDATE_PAGE, cached: true };
   }
   let latest = '';
@@ -215,7 +215,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await chrome.storage.local.set({ config: next });
         sendResponse({ ok: true, config: next });
       } else if (type === 'CHECK_UPDATE') {
-        sendResponse(await checkUpdate());
+        sendResponse(await checkUpdate(payload && payload.force));
       } else if (type === 'HW_START') {
         sendResponse(await startRun(payload.questions || [], tabId));
       } else if (type === 'HW_FILLED') {
