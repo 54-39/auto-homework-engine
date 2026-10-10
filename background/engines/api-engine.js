@@ -178,8 +178,9 @@ export async function detectEndpoint(rawKey, ifaceFilter, exclude) {
 }
 
 function maxTokensFor(q) {
-  // 推理模型（doubao-seed-code/kimi-k2-thinking 等）思考也消耗 token，预算给足
-  return q.type === 'subjective' ? 2048 : 1024;
+  // 推理模型（doubao-seed-code/kimi-k2-thinking 等）思考也消耗 token，预算给足；
+  // 写作题要整篇作文，4096（其余主观题 2048、客观题 1024）
+  return q.writing ? 4096 : q.type === 'subjective' ? 2048 : 1024;
 }
 
 async function callIface(cfg, messages, maxTokens) {

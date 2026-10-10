@@ -22,7 +22,7 @@
         linear-gradient(180deg,#FFFFFF 0%,#F6F8FD 50%,#EAEFF8 100%);
       box-shadow:0 16px 36px -8px rgba(15,23,42,.08),0 2px 6px -2px rgba(15,23,42,.06),inset 0 0 0 1px rgba(255,255,255,.9)}
     .hidden{display:none!important}
-    .tip{position:fixed;z-index:2147483647;max-width:230px;padding:6px 9px;border-radius:8px;background:#fff;border:1px solid #E3E8EF;color:#374151;font-size:11px;line-height:1.5;
+    .tip{position:fixed;z-index:2147483647;max-width:230px;padding:6px 9px;border-radius:8px;background:#fff;border:1px solid #E3E8EF;color:#374151;font-size:11px;line-height:1.5;white-space:pre-wrap;
       box-shadow:0 10px 24px -8px rgba(15,23,42,.22),0 2px 6px -2px rgba(15,23,42,.08);pointer-events:none}
     .panel.apiopen{height:min(calc(72vh + 190px), calc(100vh - 108px))}
     header{display:flex;align-items:center;gap:6px;cursor:move;user-select:none;flex:none;min-height:22px}

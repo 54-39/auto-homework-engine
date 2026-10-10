@@ -25,7 +25,7 @@
           const ta = q.querySelector('textarea');
           const iframe = q.querySelector('iframe');
           return {
-            meta: { index: i, type, stem },
+            meta: { index: i, type, stem, writing: type === 'subjective' && q.getAttribute('typename') === '写作题' },
             el: { inputs: ta ? [ta] : [], iframe: type === 'subjective' && iframe ? iframe : null, labels: [], stateInput },
           };
         }

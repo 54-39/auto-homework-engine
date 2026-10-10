@@ -127,8 +127,12 @@
 
   async function fill(q, answer) {
     const type = q.meta.type;
-    const ans = norm(String(answer ?? ''));
-    if (!ans) throw new Error('答案为空');
+    /* 主观题（含写作题）保留换行与行首空格——分段与标题近似居中全靠它们；
+       只统一 CRLF，不做 norm()（那会把作文压成一行，0.4.6 及以前的第二个压平点）。
+       Markdown 已由引擎 parseAnswer 清掉；这里不重复处理，保证所见即所写。 */
+    const ans =
+      type === 'subjective' ? String(answer ?? '').replace(/\r\n?/g, '\n') : norm(String(answer ?? ''));
+    if (!ans.trim()) throw new Error('答案为空');
 
     // 超星：以"可见标记"为准做"点击 → 等待 → 复查"纠偏循环（最多 3 轮）。
     // 超星点击后可能异步重绘覆盖我们此前的直写，同步比对会误判；循环结束后

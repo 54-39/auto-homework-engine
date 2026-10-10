@@ -16,8 +16,10 @@ export function buildMessages(q) {
     user = `【判断题】\n${q.stem}\n\n只回答一个字："对"或"错"。`;
   } else if (q.type === 'blank') {
     user = `【填空题】${q.blanks > 1 ? `（共${q.blanks}个空）` : ''}\n${q.stem}\n\n只输出要填的内容；若有多个空，按顺序用分号(;)分隔。不要解释。`;
+  } else if (q.writing) {
+    user = `【写作题】\n${q.stem}\n\n按题干要求写一篇可直接提交的作文/答案正文：\n1. 纯文本输出——禁止使用任何 Markdown 或标记符号（如 **、__、#、*、>），星号井号会原样显示在答题框里；\n2. 第一行写标题（题目指定了标题就照用），标题独占一行，行首用约 24 个半角空格使其大致居中；\n3. 标题与正文之间空一行，正文分段，段与段之间空一行；\n4. 字数严格按题干要求；题干没给就英文 120~150 词、中文 400~600 字；\n5. 不要"答："等前缀、不要题号、不要任何解释。`;
   } else {
-    user = `【简答题】\n${q.stem}\n\n直接输出可提交的答案正文，简明扼要、条理清晰，约80~200字。不要"答："等前缀，不要解释。`;
+    user = `【简答题】\n${q.stem}\n\n直接输出可提交的答案正文，简明扼要、条理清晰，约80~200字。不要"答："等前缀，不要解释。不要使用 Markdown 或任何标记符号（如 **、#）。`;
   }
   return [
     { role: 'system', content: sys },
@@ -88,6 +90,21 @@ function parseMulti(up) {
 }
 
 export function parseAnswer(q, raw) {
+  /* subjective（含写作题）提前处理：保留换行与行首空格——正文要分段、标题靠行首空格近似居中；
+     只做无害清理（统一换行、去行尾空白、3+ 连续空行压成一个空行、去 ** __ 与行首 #、去首尾空行）。
+     不能先过 norm()：它把换行与行首空格全部压掉（0.4.6 及以前作文被压成一行的根因）。 */
+  if (q.type === 'subjective') {
+    const body = String(raw ?? '')
+      .replace(/\r\n?/g, '\n')
+      .split('\n')
+      .map((line) => line.replace(/[ \t]+$/, ''))
+      .join('\n')
+      .replace(/\*\*|__/g, '')
+      .replace(/^[ \t]*#{1,6}[ \t]+/gm, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/^\n+|\n+$/g, '');
+    return body;
+  }
   const t = norm(String(raw ?? ''));
   if (!t) return '';
   if (q.type === 'choice') {
