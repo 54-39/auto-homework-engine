@@ -94,7 +94,8 @@
     try {
       const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
       if (!tabs.length) return out(diagMsg, '没有找到已打开的网页，请先打开作业页面，再回到这里导出', 'err');
-      const tab = tabs[tabs.length - 1];
+      // 取最近访问过的那个网页（＝打开设置页之前停留的作业页）：tabs.query 按标签栏顺序返回，最后一个未必是作业页
+      const tab = tabs.reduce((a, b) => ((b.lastAccessed || 0) >= (a.lastAccessed || 0) ? b : a));
       const [res] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: () => '<!DOCTYPE html>\n' + document.documentElement.outerHTML,
