@@ -66,10 +66,13 @@ chrome.notifications?.onClicked.addListener(async () => {
 });
 
 /* —— 更新检查：拉取仓库 manifest 版本号与本地比较；结果缓存 1 小时（c: 前缀键）——
-   更新源优先 jsDelivr CDN 镜像（大陆网络可直达），失败再回退 GitHub raw（海外保底）；每个源只试一次、不重试；
+   更新源按序尝试：① GitHub API（实时、无 CDN 缓存，刚发的版立刻能看到；匿名配额 60 次/小时/IP，
+   超了会 403）② jsDelivr CDN 镜像（大陆可达，但 @master 最长缓存 12h，发版当天可能读到旧号）
+   ③ GitHub raw（海外保底）；每个源只试一次、不重试；GitHub API 返回的是 base64 内容，只取其中 version；
    自动检查只发生在设置页「检测更新」分区；面板用 cacheOnly 只读上次结果、不联网（只提示功能更新）；
    失败静默返回 ok:false；force=true 绕过缓存（设置页「立即检查」）；任何情况下都不自动安装、不阻断使用 */
 const UPDATE_SOURCES = [
+  'https://api.github.com/repos/54-39/auto-homework-engine/contents/manifest.json?ref=master',
   'https://cdn.jsdelivr.net/gh/54-39/auto-homework-engine@master/manifest.json',
   'https://raw.githubusercontent.com/54-39/auto-homework-engine/master/manifest.json',
 ];
@@ -91,10 +94,12 @@ async function checkUpdate(force, cacheOnly) {
     try {
       const res = await fetch(src);
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      latest = String((await res.json()).version || '');
+      const data = await res.json();
+      const text = data.content ? atob(String(data.content).replace(/\s/g, '')) : ''; // GitHub API 给的是 base64 内容
+      latest = String((text ? JSON.parse(text) : data).version || '');
       if (latest) break;
     } catch (e) {
-      lastErr = String(e.message || e); // 两个源都失败时返回最后一个源的错误
+      lastErr = String(e.message || e); // 所有源都失败时返回最后一个源的错误
     }
   }
   if (!latest) return { ok: false, error: lastErr || '更新源未返回版本号' };

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "作业助手",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "自动完成网页作业：提取题目 → AI 答题 → 自动填写。支持豆包网页桥接（免费）/ OpenAI 兼容 API。",
   "permissions": ["storage", "tabs", "scripting", "notifications"],
   "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
