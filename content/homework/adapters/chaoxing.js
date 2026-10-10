@@ -1,14 +1,14 @@
 /* 超星学习通专用适配器（真实 DOM 结构于 2026-09-26 在 mooc2 作业页实测确认）：
-   - 题块 .questionLi[id=question{id}][typename=单选题/多选题/判断题/填空题/简答题]
-   - 答案状态载体 = 隐藏 input[name="answer{id}"] 的 value（"A"/"ABC"/对错，""=未答，提交读它）
-   - 题型另有隐藏 input[name="answertype{id}"]（0 单选 1 多选 2 填空 3 判断 4 简答）
+   - 题块 .questionLi[id=question{id}][typename=单选题/多选题/判断题/填空题/简答题/写作题]
+   - 答案状态载体 = 隐藏 input[name="answer{id}"] 的 value（"A"/"ABC"/对错，写作题存 JSON；""=未答，提交读它）
+   - 题型另有隐藏 input[name="answertype{id}"]（0 单选 1 多选 2 填空 3 判断 4 简答；2026-10-11 实测写作题 = 26）
    - 可见选项 = .answerBg 行，点击行即写入状态；选中标记 = 字母圈 span 的 check_answer 类
-   - 简答 = textarea / UEditor iframe */
+   - 简答 = textarea / UEditor iframe；写作题 = 可见 textarea（.textarea26，页面 input 事件把正文写进隐藏 input） */
 (function () {
   'use strict';
   window.HW = window.HW || {}; // 必须先建命名空间（适配器是第一个加载的内容脚本）
   if (window.HW.CXAdapter) return;
-  const TYPE_MAP = { '单选题': 'choice', '多选题': 'multi', '判断题': 'judge', '填空题': 'blank', '简答题': 'subjective' };
+  const TYPE_MAP = { '单选题': 'choice', '多选题': 'multi', '判断题': 'judge', '填空题': 'blank', '简答题': 'subjective', '写作题': 'subjective' };
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
 
   const CX = {
