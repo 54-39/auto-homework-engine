@@ -38,37 +38,35 @@ export async function syncOnce({ root = process.cwd(), fetchImpl = fetch, log = 
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
-  /* api.github.com 在国内常连不上，连不上一次就本轮全程只走 CDN：否则 18 个文件各赔一次
-     10 秒连接超时，会撞穿后台等待上限（service-worker.js 里 65 秒） */
-  let apiDown = false;
-  async function ghJson(url) {
-    if (apiDown) throw new Error('api.github.com 不可用（本轮已跳过）');
-    try {
-      return await apiJson(url);
-    } catch (e) {
-      if (!/^HTTP /.test(String(e.message || e))) apiDown = true; // 只对连不上降级；HTTP 404 不算
-      throw e;
-    }
-  }
+  /* 一轮更新只用一个源：版本从哪读到，全部文件就整轮从哪读。逐文件回退会混源——GitHub API 配额
+     中途用尽时后半程落到 jsDelivr 的旧缓存（@master 每文件独立缓存，最长滞后 12 小时），
+     装出来是半新半旧的版本，还会照报「已更新到 vX」。api.github.com 连不上也只需赔一次超时：
+     读版本那步失败就整轮改走 CDN（否则 19 个文件各赔一次 10 秒，会撞穿后台 65 秒等待上限）。 */
+  let source = 'cdn';
   const apiFile = async (p) =>
-    Buffer.from((await ghJson(`${API}/contents/${p}?ref=master`)).content.replace(/\s/g, ''), 'base64');
+    Buffer.from((await apiJson(`${API}/contents/${p}?ref=master`)).content.replace(/\s/g, ''), 'base64');
   async function cdnFile(p) {
     const r = await fetchImpl(CDN + p);
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return Buffer.from(await r.arrayBuffer());
   }
+  const fileOf = (p) => (source === 'api' ? apiFile(p) : cdnFile(p));
   const remoteVersion = async () => {
     try {
+      source = 'api';
       return JSON.parse((await apiFile('manifest.json')).toString('utf8')).version;
     } catch {
+      source = 'cdn';
       return JSON.parse((await cdnFile('manifest.json')).toString('utf8')).version;
     }
   };
   const remoteFiles = async () => {
-    try {
-      const j = await ghJson(`${API}/git/trees/master?recursive=1`);
-      return j.tree.filter((t) => t.type === 'blob' && isPayload(t.path)).map((t) => t.path);
-    } catch { /* 换源：api.github.com 在国内常连不上，没有这一步时首次更新必然失败 */ }
+    if (source === 'api') {
+      try {
+        const j = await apiJson(`${API}/git/trees/master?recursive=1`);
+        return j.tree.filter((t) => t.type === 'blob' && isPayload(t.path)).map((t) => t.path);
+      } catch { /* 换源：api.github.com 在国内常连不上，没有这一步时首次更新必然失败 */ }
+    }
     try {
       const j = await apiJson(CDN_LIST);
       return j.files.map((f) => f.name.replace(/^\//, '')).filter(isPayload);
@@ -87,10 +85,7 @@ export async function syncOnce({ root = process.cwd(), fetchImpl = fetch, log = 
   try {
     for (const p of files) { // 先全部暂存，任一失败立即放弃（旧文件不动，下一轮重试）
       let buf = null, why = '';
-      try { buf = await apiFile(p); } catch (e) { why = String(e.message || e); }
-      if (!buf) {
-        try { buf = await cdnFile(p); } catch (e) { why += ' / ' + String(e.message || e); }
-      }
+      try { buf = await fileOf(p); } catch (e) { why = String(e.message || e); }
       if (!buf) throw new Error(p + ' 下载失败（' + why + '）');
       const dst = path.join(stage, p);
       fs.mkdirSync(path.dirname(dst), { recursive: true });
@@ -99,6 +94,26 @@ export async function syncOnce({ root = process.cwd(), fetchImpl = fetch, log = 
   } catch (e) {
     rmrf(stage);
     return { ok: false, updated: false, current, latest, error: String(e.message || e) };
+  }
+  /* 装之前先看暂存下来的 manifest 是不是自己要装的那版：CDN（@master）按文件各自缓存、最长滞后
+     12 小时，混进旧文件时宁可整轮放弃，也不能装出半新半旧还照报「已更新到 vX」的版本 */
+  const stagedManifest = JSON.parse(fs.readFileSync(path.join(stage, 'manifest.json'), 'utf8'));
+  const staged = stagedManifest.version;
+  if (staged !== latest) {
+    rmrf(stage);
+    return { ok: false, updated: false, current, latest, error: `下载到的文件是 v${staged}，不是要更新的 v${latest}（更新源缓存不一致），本轮放弃，请稍后重试` };
+  }
+  /* 完整性：这一版 manifest 声明的脚本/样式必须都下齐了。文件清单和文件本身可能来自不同快照
+     （文件树接口挂了就退回 CDN 清单），少了新增文件（例如某版新增的 dropdown.js）装出来
+     插件直接加载失败，比「没更新」严重得多。 */
+  const declared = [
+    stagedManifest.background?.service_worker,
+    ...(stagedManifest.content_scripts || []).flatMap((c) => [...(c.js || []), ...(c.css || [])]),
+  ].filter(Boolean);
+  const missing = declared.filter((p) => !files.includes(p) || !fs.existsSync(path.join(stage, p)));
+  if (missing.length) {
+    rmrf(stage);
+    return { ok: false, updated: false, current, latest, error: `下载到的文件不完整，缺少 ${missing.join('、')}（文件清单与版本不一致），本轮放弃，请稍后重试` };
   }
 
   const prevList = fs.existsSync(path.join(root, LIST)) ? JSON.parse(fs.readFileSync(path.join(root, LIST), 'utf8')) : [];

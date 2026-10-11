@@ -127,6 +127,10 @@ function runUpdateViaHost() {
     port.onDisconnect.addListener(() => {
       clearTimeout(timer);
       const err = chrome.runtime.lastError?.message || '';
+      // 浏览器找不到这个宿主（没跑过 install-native-host.mjs）或不允许它（注册表指向的清单已失效）：给可操作的中文提示
+      if (/native messaging host/i.test(err)) {
+        return done({ ok: false, error: '更新宿主未安装或已失效。请在该电脑的插件目录运行 node tools/install-native-host.mjs <插件目录>，再重开浏览器' });
+      }
       done({ ok: false, error: '宿主提前退出' + (err ? '：' + err : '') });
     });
     port.postMessage({ type: 'run_update' }); // 插件目录由宿主自己定位（它就在插件根的 tools/ 下）
