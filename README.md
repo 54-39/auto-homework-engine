@@ -68,11 +68,11 @@
 
 浏览器沙箱里的插件不能改写自身文件，自动替换由**本机脚本**完成，且**只在用户点了「更新」之后才执行**——不点不装、不常驻、不自动定时：
 
-1. 首次安装（每台机器一次）：在插件目录运行 `node tools/install-native-host.mjs <插件目录>`（Edge 加第二个参数 `edge`）。脚本会写好原生消息宿主清单与注册表；如果目录里没有 `.crinfo`，需要把清单里 `allowed_origins` 的 `PASTE_EXTENSION_ID_HERE` 换成扩展 ID（`chrome://extensions` 开发者模式复制，格式 `chrome-extension://<32位ID>/`）。
-2. 日常使用：设置页「检测更新」发现新版 → 出现「更新」按钮 → 点它。浏览器经原生消息宿主拉起 `tools/native-host.mjs` → 调用 `tools/autoupdate.mjs` 同步一轮：对比 GitHub 最新版本（GitHub API 实时优先、jsDelivr 兜底）→ 把扩展文件全部下载到 `.update-stage/` 暂存（任何一个下载失败就整轮放弃、旧文件原封不动）→ 全部成功后覆盖/新增文件、删除远端已移除的文件 → 写 `hot-reload.json` 触发插件后台自动重载。
+1. 首次安装（每台机器一次）：在插件目录运行 `node tools/install-native-host.mjs <插件目录>`（Edge 加第二个参数 `edge`）。脚本会写好原生消息宿主清单与注册表；扩展 ID 按插件目录自动推算并写进 `.crinfo`（未打包扩展的 ID 由目录路径决定），若与 `chrome://extensions` 里显示的不一致，把那个 ID 填进 `.crinfo` 后重跑一次即可。
+2. 日常使用：设置页「检测更新」发现新版 → 出现「更新」按钮 → 点它。浏览器经原生消息宿主拉起 `tools/native-host.mjs` → 调用 `tools/autoupdate.mjs` 同步一轮：对比 GitHub 最新版本（GitHub API 实时优先、jsDelivr 兜底）→ 取远端文件清单（GitHub 文件树优先，连不上时走 jsDelivr 的清单接口，再回退上次更新记下的清单）→ 把扩展文件全部下载到 `.update-stage/` 暂存（任何一个下载失败就整轮放弃、旧文件原封不动）→ 全部成功后覆盖/新增文件、删除远端已移除的文件 → 写 `hot-reload.json` 触发插件后台自动重载。插件目录由宿主自己定位（它就在插件根的 tools/ 下），所以换电脑、换目录都不用改代码。
 3. 更新完成后插件自动重载，**作业页面仍需 F5** 让内容脚本生效；面板提示行同样只在功能更新（次版本号变化）时出现「更新」按钮。
 
-脚本只更新扩展实际加载的文件（manifest.json、background/、content/、options/、icons/、settings.html、settings.js），README、LICENSE、tools 等不受影响。宿主只接受已注册的那个扩展的请求，不监听端口。也可以手动同步一轮（不经过浏览器）：`node tools/autoupdate.mjs <插件目录>`。
+脚本只更新扩展实际加载的文件（manifest.json、background/、content/、options/、icons/、settings.html、settings.js），README、LICENSE、tools 等不受影响。**自动更新不会更新 tools/ 自己**：若某一版的更新逻辑改过（例如换电脑/换目录的支持），那台机器要重新拉取仓库、重跑一次 `install-native-host.mjs` 才会生效。宿主只接受已注册的那个扩展的请求，不监听端口。也可以手动同步一轮（不经过浏览器）：`node tools/autoupdate.mjs <插件目录>`。
 
 ## 设置页
 

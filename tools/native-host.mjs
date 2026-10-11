@@ -1,5 +1,5 @@
 /* Chrome 原生消息宿主：浏览器通过 stdin/stdout 与本进程通信（4 字节小端长度前缀 + UTF-8 JSON）。
-   职责单一：收到 {type:'run_update', root} → 调用 tools/autoupdate.mjs 的 syncOnce 同步一轮 → 回传结果。
+   职责单一：收到 {type:'run_update'} → 调用 tools/autoupdate.mjs 的 syncOnce 同步一轮 → 回传结果。
    只允许扩展访问（install-native-host.mjs 写入注册表 allowed_origins），不监听端口、不接受其他输入。 */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -36,18 +36,19 @@ const readMessage = () => new Promise((resolve) => {
 });
 
 const msg = await readMessage();
-if (!msg || msg.type !== 'run_update' || typeof msg.root !== 'string') {
+if (!msg || msg.type !== 'run_update') {
   send({ ok: false, error: '无效请求' });
   process.exit(1);
 }
-const root = path.resolve(msg.root);
-if (!fs.existsSync(path.join(root, 'manifest.json'))) {
-  send({ ok: false, error: '目标目录不是插件根目录（缺 manifest.json）' });
+/* 插件目录由宿主自己定位（本文件与 exe 都在插件根的 tools/ 下）：不碰请求里的路径，
+   换电脑、换目录都不用改代码，插件侧也就不必知道自己在磁盘上的位置 */
+if (!fs.existsSync(path.join(ROOT, 'manifest.json'))) {
+  send({ ok: false, error: '插件目录不是有效根目录（缺 manifest.json）：' + ROOT });
   process.exit(1);
 }
 try {
   const mod = await import(url.pathToFileURL(AUTOUPDATE).href);
-  const r = await mod.syncOnce({ root, log: () => {} }); // 日志走文件，管道只传协议消息
+  const r = await mod.syncOnce({ root: ROOT, log: () => {} }); // 日志走文件，管道只传协议消息
   send({ ok: r.ok, updated: r.updated, current: r.current, latest: r.latest, error: r.error });
 } catch (e) {
   send({ ok: false, error: String(e.message || e) });

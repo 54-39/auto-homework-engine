@@ -5,6 +5,7 @@
    ③ 写注册表 HKCU\...\NativeMessagingHosts ④ 把扩展 ID 记进 .crinfo。
    安装后：设置页/面板点「更新」→ 浏览器拉起启动器 → node 同步 GitHub 新版 → 热重载。
    重复运行会覆盖旧配置。卸载：删 .native-host.json + 删注册表键。 */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -34,17 +35,23 @@ if (!fs.existsSync(path.join(HERE, 'native-host.mjs'))) {
   process.exit(1);
 }
 
-/* ① 扩展 ID：.crinfo 记过就用；否则提示用户从 chrome://extensions 复制（未打包扩展的 ID 由路径决定，换路径才会变） */
+/* ① 扩展 ID：未打包扩展的 ID 由插件目录路径算出（Chrome: sha256(路径 UTF-16LE) 前 16 字节，每个半字节映射 a..p），
+   所以新机器不用手填；.crinfo 里记过就优先用记的（那是从 chrome://extensions 抄来的真实值） */
+function deriveId(dir) {
+  let real = dir;
+  try { real = fs.realpathSync.native(dir); } catch { /* 用原样路径 */ }
+  const h = crypto.createHash('sha256').update(Buffer.from(real, 'utf16le')).digest('hex');
+  return [...h.slice(0, 32)].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join('');
+}
 const crinfoPath = path.join(extRoot, '.crinfo');
 let extId = '';
 try { extId = JSON.parse(fs.readFileSync(crinfoPath, 'utf8')).id || ''; } catch { /* 没有 */ }
+let derivedId = false;
 if (!/^[a-p]{32}$/.test(extId)) {
-  console.error('未找到有效的扩展 ID。chrome://extensions → 开发者模式 → 复制「作业助手」的 ID（32 个字母），');
-  console.error('然后重跑本脚本（或手动把 ' + ROOT + '\\.native-host.json 里 allowed_origins 的占位符替换成 chrome-extension://<ID>/）。');
-  extId = 'PASTE_EXTENSION_ID_HERE';
-} else {
-  fs.writeFileSync(crinfoPath, JSON.stringify({ id: extId }, null, 2));
+  extId = deriveId(extRoot);
+  derivedId = true;
 }
+fs.writeFileSync(crinfoPath, JSON.stringify({ id: extId }, null, 2));
 
 /* ② 启动器 exe：Chrome/Edge 只认 exe（2025 年起 .bat/.cmd 宿主被禁），csc.exe 是 Windows 自带的 */
 function findCsc() {
@@ -147,8 +154,7 @@ console.log('  Node:     ' + nodeExe);
 console.log('  宿主清单: ' + manifestPath);
 console.log('  注册表:   HKCU\\' + HOSTS[browser]);
 console.log('  允许来源: chrome-extension://' + extId + '/');
-if (extId === 'PASTE_EXTENSION_ID_HERE') {
-  console.log('\n下一步（必做）：把 .native-host.json 里 PASTE_EXTENSION_ID_HERE 换成扩展 ID 后重开浏览器。');
-} else {
-  console.log('\n完成。验证：设置页 → 检测更新 → 点「更新」。失败会显示具体错误（重开浏览器后生效）。');
+if (derivedId) {
+  console.log('\n扩展 ID 按插件目录推算并写入 .crinfo；若与 chrome://extensions 里显示的不一致，把那里的 ID 填进 .crinfo 后重跑本脚本。');
 }
+console.log('\n完成。验证：设置页 → 检测更新 → 点「更新」。失败会显示具体错误（重开浏览器后生效）。');

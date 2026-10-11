@@ -11,6 +11,7 @@ import { pathToFileURL } from 'node:url';
 const REPO = '54-39/auto-homework-engine';
 const API = `https://api.github.com/repos/${REPO}`;
 const CDN = `https://cdn.jsdelivr.net/gh/${REPO}@master/`;
+const CDN_LIST = `https://data.jsdelivr.com/v1/packages/gh/${REPO}@master?structure=flat`; // CDN 的文件清单接口
 const STAGE = '.update-stage';
 const LIST = '.update-files.json';
 
@@ -37,8 +38,20 @@ export async function syncOnce({ root = process.cwd(), fetchImpl = fetch, log = 
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
+  /* api.github.com 在国内常连不上，连不上一次就本轮全程只走 CDN：否则 18 个文件各赔一次
+     10 秒连接超时，会撞穿后台等待上限（service-worker.js 里 65 秒） */
+  let apiDown = false;
+  async function ghJson(url) {
+    if (apiDown) throw new Error('api.github.com 不可用（本轮已跳过）');
+    try {
+      return await apiJson(url);
+    } catch (e) {
+      if (!/^HTTP /.test(String(e.message || e))) apiDown = true; // 只对连不上降级；HTTP 404 不算
+      throw e;
+    }
+  }
   const apiFile = async (p) =>
-    Buffer.from((await apiJson(`${API}/contents/${p}?ref=master`)).content.replace(/\s/g, ''), 'base64');
+    Buffer.from((await ghJson(`${API}/contents/${p}?ref=master`)).content.replace(/\s/g, ''), 'base64');
   async function cdnFile(p) {
     const r = await fetchImpl(CDN + p);
     if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -53,12 +66,15 @@ export async function syncOnce({ root = process.cwd(), fetchImpl = fetch, log = 
   };
   const remoteFiles = async () => {
     try {
-      const j = await apiJson(`${API}/git/trees/master?recursive=1`);
+      const j = await ghJson(`${API}/git/trees/master?recursive=1`);
       return j.tree.filter((t) => t.type === 'blob' && isPayload(t.path)).map((t) => t.path);
-    } catch {
-      log('文件树接口不可用，按上次更新的文件清单继续');
-      return JSON.parse(fs.readFileSync(path.join(root, LIST), 'utf8'));
-    }
+    } catch { /* 换源：api.github.com 在国内常连不上，没有这一步时首次更新必然失败 */ }
+    try {
+      const j = await apiJson(CDN_LIST);
+      return j.files.map((f) => f.name.replace(/^\//, '')).filter(isPayload);
+    } catch { /* 换源 */ }
+    log('两个文件清单源都不可用，按上次更新的文件清单继续');
+    return JSON.parse(fs.readFileSync(path.join(root, LIST), 'utf8'));
   };
 
   const latest = await remoteVersion();

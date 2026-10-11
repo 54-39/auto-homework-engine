@@ -77,7 +77,6 @@ const UPDATE_SOURCES = [
 ];
 const UPDATE_PAGE = 'https://github.com/54-39/auto-homework-engine';
 const UPDATE_TTL = 3600e3;
-const UPDATER_ROOT = 'E:\\vibe work\\DSH work\\auto-homework-engine-master'; // 本机加载的插件目录（install-native-host.mjs 校验过）
 function updResult(current, latest, cached) {
   const hasUpdate = compareVersions(latest, current) > 0;
   return { ok: true, current, latest, hasUpdate, major: hasUpdate && isMajorUpdate(latest, current), url: UPDATE_PAGE, cached };
@@ -130,7 +129,7 @@ function runUpdateViaHost() {
       const err = chrome.runtime.lastError?.message || '';
       done({ ok: false, error: '宿主提前退出' + (err ? '：' + err : '') });
     });
-    port.postMessage({ type: 'run_update', root: UPDATER_ROOT });
+    port.postMessage({ type: 'run_update' }); // 插件目录由宿主自己定位（它就在插件根的 tools/ 下）
   });
 }
 
