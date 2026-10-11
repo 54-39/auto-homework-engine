@@ -3,15 +3,19 @@
    插件运行在浏览器沙箱里不能改写自身文件，本脚本在插件外对该目录做等效更新：
    检查远端版本 → 有更新把扩展载荷全部下载到 .update-stage/ 暂存（任一失败整轮放弃、旧文件不动）
    → 全部成功后覆盖/新增、删除远端已移除的载荷文件 → 写 hot-reload.json 触发后台自动重载。
-   更新源与扩展一致：GitHub API 实时优先、jsDelivr 兜底；tools/、README、LICENSE 等非载荷文件永不改动。 */
+   更新源：先把 master 钉到当前 commit（atom 订阅源，不占 API 配额），整轮都从那个不可变快照读，
+   清单里每个文件还带 sha256 可逐字节校验；钉不住才退回 GitHub API / jsDelivr @master。
+   tools/、README、LICENSE 等非载荷文件永不改动。 */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const REPO = '54-39/auto-homework-engine';
 const API = `https://api.github.com/repos/${REPO}`;
-const CDN = `https://cdn.jsdelivr.net/gh/${REPO}@master/`;
-const CDN_LIST = `https://data.jsdelivr.com/v1/packages/gh/${REPO}@master?structure=flat`; // CDN 的文件清单接口
+const ATOM = `https://github.com/${REPO}/commits/master.atom`; // 不占 GitHub API 配额，能看到 master 当前指着哪个 sha
+const CDN = (rev) => `https://cdn.jsdelivr.net/gh/${REPO}@${rev}/`;
+const CDN_LIST = (rev) => `https://data.jsdelivr.com/v1/packages/gh/${REPO}@${rev}?structure=flat`; // 钉了 sha 时每项还带 sha256，可逐文件校验
 const STAGE = '.update-stage';
 const LIST = '.update-files.json';
 
@@ -43,15 +47,31 @@ export async function syncOnce({ root = process.cwd(), fetchImpl = fetch, log = 
      装出来是半新半旧的版本，还会照报「已更新到 vX」。api.github.com 连不上也只需赔一次超时：
      读版本那步失败就整轮改走 CDN（否则 19 个文件各赔一次 10 秒，会撞穿后台 65 秒等待上限）。 */
   let source = 'cdn';
+  let rev = 'master'; // 钉住的 commit；'master' 表示没钉住、走分支（可能撞上 CDN 滞后缓存）
+  let fileHash = null; // 钉住时清单给的 sha256，用来逐文件校验
   const apiFile = async (p) =>
     Buffer.from((await apiJson(`${API}/contents/${p}?ref=master`)).content.replace(/\s/g, ''), 'base64');
   async function cdnFile(p) {
-    const r = await fetchImpl(CDN + p);
+    const r = await fetchImpl(CDN(rev) + p);
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return Buffer.from(await r.arrayBuffer());
   }
   const fileOf = (p) => (source === 'api' ? apiFile(p) : cdnFile(p));
+  /* 先把 master 钉到当前 commit：atom 订阅源是网页、不占 GitHub API 配额。jsDelivr 的 @master 按
+     文件各自缓存（最长滞后 12 小时），不钉住就可能拿到「manifest 是新的、某个脚本还是旧的」的
+     半新半旧；钉住 sha 后版本、清单、文件字节都出自同一个不可变快照，而且钉住的清单每项还带
+     sha256，可以逐字节校验。钉不住就退回 @master，靠下面装前两道校验兜底。 */
+  try {
+    const r = await fetchImpl(ATOM);
+    const m = r && r.ok ? (await r.text()).match(/Grit::Commit\/([0-9a-f]{40})/) : null;
+    if (m) rev = m[1];
+  } catch { /* 钉不住 */ }
   const remoteVersion = async () => {
+    if (rev !== 'master') { // 钉住了：版本也从那个不可变快照读，不碰 API 配额
+      try {
+        return JSON.parse((await cdnFile('manifest.json')).toString('utf8')).version;
+      } catch { rev = 'master'; } // 这个 sha 在 CDN 上还没就绪 → 退回 @master
+    }
     try {
       source = 'api';
       return JSON.parse((await apiFile('manifest.json')).toString('utf8')).version;
@@ -61,6 +81,13 @@ export async function syncOnce({ root = process.cwd(), fetchImpl = fetch, log = 
     }
   };
   const remoteFiles = async () => {
+    if (rev !== 'master') {
+      try {
+        const j = await apiJson(CDN_LIST(rev)); // 钉住 sha 的清单：每项带 sha256（就是我们下载后要比对的字节）
+        fileHash = new Map(j.files.map((f) => [f.name.replace(/^\//, ''), f.hash]));
+        return j.files.map((f) => f.name.replace(/^\//, '')).filter(isPayload);
+      } catch { fileHash = null; }
+    }
     if (source === 'api') {
       try {
         const j = await apiJson(`${API}/git/trees/master?recursive=1`);
@@ -68,7 +95,7 @@ export async function syncOnce({ root = process.cwd(), fetchImpl = fetch, log = 
       } catch { /* 换源：api.github.com 在国内常连不上，没有这一步时首次更新必然失败 */ }
     }
     try {
-      const j = await apiJson(CDN_LIST);
+      const j = await apiJson(CDN_LIST('master'));
       return j.files.map((f) => f.name.replace(/^\//, '')).filter(isPayload);
     } catch { /* 换源 */ }
     log('两个文件清单源都不可用，按上次更新的文件清单继续');
@@ -87,6 +114,10 @@ export async function syncOnce({ root = process.cwd(), fetchImpl = fetch, log = 
       let buf = null, why = '';
       try { buf = await fileOf(p); } catch (e) { why = String(e.message || e); }
       if (!buf) throw new Error(p + ' 下载失败（' + why + '）');
+      if (fileHash?.has(p)) { // 钉住的清单给了这一版该有的字节摘要，对不上说明 CDN 缓存串了版本
+        const got = crypto.createHash('sha256').update(buf).digest('base64');
+        if (got !== fileHash.get(p)) throw new Error(p + ' 内容校验不符（下载到的不是这一版的文件）');
+      }
       const dst = path.join(stage, p);
       fs.mkdirSync(path.dirname(dst), { recursive: true });
       fs.writeFileSync(dst, buf);
