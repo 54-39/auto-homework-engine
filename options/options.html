@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <title>作业助手 · 设置</title>
 <style>
-  :root{color-scheme:light}
+  :root{color-scheme:light;--dd-h:34px;--dd-font:13px;--dd-radius:7px;--dd-line:#ccd2d9}
   html{scrollbar-color:#cbd2da transparent}
   body{font:14px/1.6 system-ui,'Microsoft YaHei',sans-serif;max-width:660px;margin:24px auto;padding:0 16px;color:#1f2328;background:#f7f8fa;caret-color:#2563eb}
   ::selection{background:#dbe6ff;color:#101828}
@@ -59,10 +59,7 @@
   <div class="row2">
     <div>
       <label>答题引擎</label>
-      <select id="engine">
-        <option value="api">API 引擎（OpenAI 兼容）</option>
-        <option value="bridge">豆包网页桥接（免费）</option>
-      </select>
+      <div class="dd" id="engine"></div>
     </div>
     <div>
       <label>填写方式（固定）</label>
@@ -76,7 +73,7 @@
   <div class="row2">
     <div>
       <label>接口类型（自动识别 = 粘贴 Key 自动匹配）</label>
-      <select id="provider"></select>
+      <div class="dd" id="provider"></div>
     </div>
     <div>
       <label>模型名（可改成控制台里任意模型 / 接入点）</label>
@@ -116,6 +113,7 @@
   </label>
 </section>
 
+<script src="../content/homework/dropdown.js"></script>
 <script src="options.js"></script>
 </body>
 </html>

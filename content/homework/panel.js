@@ -32,8 +32,7 @@
     .tbtn{border:0;background:none;cursor:pointer;font-size:12px;color:#6B7280;padding:0 2px;flex:none}
     .tbtn:hover{color:#111827}
     .row{display:flex;gap:8px;align-items:center;flex:none}
-    .row label{display:flex;flex:1;align-items:center;gap:8px;font-size:12px;color:#374151;font-weight:500;min-width:0}
-    select{flex:1;min-width:0;height:30px;padding:0 10px;border:1px solid #E3E8EF;border-radius:6px;font-size:12px;font-weight:500;color:#111827;background:#fff}
+    .row label{flex:none;font-size:12px;color:#374151;font-weight:500}
     .hintline{font-size:11px;color:#9AA1A9;flex:none}
     .updline{flex:none;font-size:11px;font-weight:500;color:#2563EB;cursor:pointer}
     .updline:hover{color:#1d4ed8}
@@ -47,14 +46,16 @@
     .provtop{display:flex;align-items:center;gap:8px}
     .provtop label{font-size:12px;color:#374151;font-weight:500;flex:none}
     .psource{font-size:11px;color:#9AA1A9}
-    .keyrow{display:flex;gap:8px;align-items:center;flex:none}
+    .keyrow{display:flex;gap:8px;align-items:center;flex:none;padding-top:14px} /* 顶部留白：浮起后的标签占这里，写死以免聚焦时布局跳 */
     .inputGroup{flex:1;min-width:0;position:relative}
     .inputGroup input{width:100%;height:36px;padding:0 14px;outline:none;caret-color:#2563EB;border:2px solid rgb(200,200,200);border-radius:20px;background:#fff;color:#111827;font-size:12px;transition:border-color .18s ease,box-shadow .18s ease}
     .inputGroup input::placeholder{color:transparent}
     .inputGroup :is(input:focus,input:valid){border-color:rgb(150,150,200)}
     .inputGroup input:focus{border-color:#2563EB;box-shadow:0 0 0 3px rgba(37,99,235,.16)}
-    .inputGroup label{position:absolute;left:0;top:50%;transform:translateY(-50%);margin-left:14px;padding:0 6px;pointer-events:none;transition:top .18s ease,transform .18s ease,background-color .18s ease,color .18s ease;color:#646464;font-size:12px;white-space:nowrap;background:transparent}
-    .inputGroup :is(input:focus,input:valid)~label{top:0;transform:translateY(-50%) scale(.82);margin-left:16px;padding:0 6px;background:#fff}
+    .inputGroup label{position:absolute;left:0;top:50%;transform:translateY(-50%);margin-left:14px;pointer-events:none;transition:top .18s ease,transform .18s ease,color .18s ease;color:#646464;font-size:12px;white-space:nowrap;background:transparent}
+    /* 聚焦/已填时标签浮到输入框上方：底边正好贴上边缘，不压边框、不带任何背景（用户明确要求去掉原来的白底） */
+    .inputGroup :is(input:focus,input:valid)~label{top:0;transform:translateY(-100%) scale(.9);transform-origin:0 100%;margin-left:12px;max-width:calc(100% - 24px);overflow:hidden;text-overflow:ellipsis}
+    .inputGroup input:focus~label{color:#2563EB}
     .lbtn{border:0;background:none;cursor:pointer;font-size:12px;padding:0 2px;flex:none}
     .lbtn.primary{color:#2563EB;font-weight:500}
     .lbtn.plain{color:#6B7280}
@@ -150,6 +151,12 @@
     { id: 'anthropic', label: 'Anthropic', source: 'Claude 系 /v1/messages' },
   ];
 
+  /* 引擎下拉的两行文案（面板用短名，设置页同名同说明，见 options/options.js） */
+  const ENGINES = [
+    { id: 'api', label: 'API', desc: '自带 Key 直连，按量计费' },
+    { id: 'bridge', label: '豆包桥接(免费)', desc: '自动打开豆包标签页，免费但较慢' },
+  ];
+
   function init() {
     if (document.getElementById('hw-panel-host')) return;
     const host = document.createElement('div');
@@ -167,19 +174,15 @@
           <button class="tbtn btn-collapse" data-tip="收起面板">收起</button>
         </header>
         <div class="row">
-          <label>引擎
-            <select class="engine">
-              <option value="api">API</option>
-              <option value="bridge">豆包桥接(免费)</option>
-            </select>
-          </label>
+          <label>引擎</label>
+          <div class="dd engineslot"></div>
         </div>
         <div class="hintline">只填写不提交，提交请自行操作</div>
         <div class="updline hidden" data-tip="点击「更新」自动下载替换到最新版，成功后本插件自动重载（页面需 F5）"></div>
         <button class="apitoggle hidden">▾ 接口 与 API Key</button>
         <div class="apisec hidden">
           <div class="provrow">
-            <div class="provtop"><label>接口类型</label><select class="provider"></select></div>
+            <div class="provtop"><label>接口类型</label><div class="dd providerslot"></div></div>
             <div class="psource"></div>
           </div>
           <div class="keyrow">
@@ -234,8 +237,8 @@
     const $ = (s) => root.querySelector(s);
     const els = {
       fab: $('.fab'), panel: $('.panel'), badge: $('.badge'), header: $('header'), settingsbtn: $('.settingsbtn'), collapse: $('.btn-collapse'), expandbtn: $('.expandbtn'),
-      engine: $('.engine'), keyinput: $('.keyinput'), keylabel: $('.keylabel'), savekey: $('.savekey'), clearkey: $('.clearkey'),
-      keylist: $('.keylist'), keywarn: $('.keywarn'), provider: $('.provider'), psource: $('.psource'),
+      keyinput: $('.keyinput'), keylabel: $('.keylabel'), savekey: $('.savekey'), clearkey: $('.clearkey'),
+      keylist: $('.keylist'), keywarn: $('.keywarn'), psource: $('.psource'),
       apiToggle: $('.apitoggle'), apisec: $('.apisec'),
       modal: $('.keymodal'), msave: $('.msave'), mtemp: $('.mtemp'), mcancel: $('.mcancel'),
       subjmodal: $('.subjmodal'), subjbody: $('.subjbody'), subjcancel: $('.subjcancel'), subjkeep: $('.subjkeep'), subjrewrite: $('.subjrewrite'),
@@ -243,6 +246,38 @@
       summary: $('.summary'), smsg: $('.smsg'), shint: $('.shint'), list: $('.list'), log: $('.log'),
       updline: $('.updline'),
     };
+    /* 引擎 / 接口类型改用自绘下拉（原生 select 的展开层是系统窗口，样式改不到）。
+       控件接口模仿 select：els.engine.value / els.provider.value 读写照旧。 */
+    els.engine = HW.Dropdown.create({
+      into: $('.engineslot'),
+      items: ENGINES.map((e) => ({ id: e.id, label: e.label, desc: e.desc })),
+      value: 'api',
+      onChange: async (engine) => {
+        const r = await send('SET_CONFIG', { engine });
+        if (!r?.ok) {
+          log('引擎切换失败：' + (r?.error || '未知错误'));
+          return;
+        }
+        refreshBadge();
+        refreshKeyRow();
+        log('引擎已切换：' + engineName() + (engine === 'bridge' ? '（将自动打开豆包标签页答题）' : ''));
+      },
+    });
+    els.provider = HW.Dropdown.create({
+      into: $('.providerslot'),
+      items: IFACES.map((p) => ({ id: p.id, label: p.label, desc: p.source })),
+      value: 'auto',
+      onChange: async (iface) => {
+        const r = await send('SET_CONFIG', { api: { iface } });
+        if (!r?.ok) {
+          log('接口类型切换失败：' + (r?.error || '未知错误'));
+          return;
+        }
+        const p = IFACES.find((x) => x.id === iface) || IFACES[0];
+        els.psource.textContent = p.source;
+        log('接口类型已切换：' + p.label + '（粘贴 Key 保存后会自动探测匹配）');
+      },
+    });
     /* 原生 title 提示在 Windows 上是系统气泡框（字体/圆角/箭头都不受控），改成本面板内的文字气泡：
        鼠标悬停与键盘聚焦都显示；事件委托在 Shadow 根上，动态生成的列表行（答题记录/Key 列表）同样生效。 */
     const tip = $('.tip');
@@ -288,7 +323,7 @@
       els.smsg.textContent = text;
       els.summary.classList.toggle('warn', !!warn);
     };
-    const engineName = () => els.engine.selectedOptions[0]?.textContent || '';
+    const engineName = () => els.engine.label;
     const refreshBadge = () => (els.badge.textContent = engineName());
 
     /* 可拖动：面板按标题栏拖、悬浮球直接拖（移动 ≥4px 判定为拖动，否则算点击）。
@@ -357,24 +392,6 @@
       els.panel.style.right = '';
       els.panel.style.bottom = '';
       log('面板位置已复位（右下角默认）');
-    });
-
-    // 接口类型下拉：填充选项
-    IFACES.forEach((p) => {
-      const o = document.createElement('option');
-      o.value = p.id;
-      o.textContent = p.label;
-      els.provider.appendChild(o);
-    });
-    els.provider.addEventListener('change', async () => {
-      const r = await send('SET_CONFIG', { api: { iface: els.provider.value } });
-      if (!r?.ok) {
-        log('接口类型切换失败：' + (r?.error || '未知错误'));
-        return;
-      }
-      const p = IFACES.find((x) => x.id === els.provider.value) || IFACES[0];
-      els.psource.textContent = p.source;
-      log('接口类型已切换：' + p.label + '（粘贴 Key 保存后会自动探测匹配）');
     });
 
     els.apiToggle.addEventListener('click', () => {
@@ -569,16 +586,6 @@
         log('已停用当前 Key（列表记录保留，可随时点「使用」恢复）');
         refreshKeyRow();
       }
-    });
-    els.engine.addEventListener('change', async () => {
-      const r = await send('SET_CONFIG', { engine: els.engine.value });
-      if (!r?.ok) {
-        log('引擎切换失败：' + (r?.error || '未知错误'));
-        return;
-      }
-      refreshBadge();
-      refreshKeyRow();
-      log('引擎已切换：' + engineName() + (els.engine.value === 'bridge' ? '（将自动打开豆包标签页答题）' : ''));
     });
     els.detect.addEventListener('click', () => {
       const qs = HW.Extractor.extract();

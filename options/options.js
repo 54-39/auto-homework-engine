@@ -6,29 +6,37 @@ const IFACES = {
 };
 
 const $ = (id) => document.getElementById(id);
-const providerSel = $('provider');
-Object.entries(IFACES).forEach(([k, v]) => {
-  const o = document.createElement('option');
-  o.value = k;
-  o.textContent = v.label;
-  providerSel.appendChild(o);
+
+/* 引擎 / 接口类型与面板共用同一份自绘下拉（原生 select 的展开层是系统窗口，样式改不到）；
+   尺寸差异由 options.html 的 :root 变量覆盖。控件接口模仿 select：.value 读写照旧。 */
+const engineCtl = HW.Dropdown.create({
+  into: $('engine'),
+  items: [
+    { id: 'api', label: 'API 引擎（OpenAI 兼容）', desc: '自带 Key 直连，按量计费' },
+    { id: 'bridge', label: '豆包网页桥接（免费）', desc: '自动打开豆包标签页，免费但较慢' },
+  ],
+  value: 'api',
+});
+const providerCtl = HW.Dropdown.create({
+  into: $('provider'),
+  items: Object.entries(IFACES).map(([id, v]) => ({ id, label: v.label, desc: v.hint })),
+  value: 'auto',
+  onChange: (iface) => {
+    const p = IFACES[iface];
+    $('baseURL').value = p.baseURL;
+    $('model').value = p.model;
+    $('providerHint').textContent = p.hint || '';
+  },
 });
 
 function currentAPIConfig() {
   return {
-    iface: providerSel.value,
+    iface: providerCtl.value,
     baseURL: $('baseURL').value.trim(),
     model: $('model').value.trim(),
     apiKey: $('apiKey').value.trim(),
   };
 }
-
-providerSel.addEventListener('change', () => {
-  const p = IFACES[providerSel.value];
-  $('baseURL').value = p.baseURL;
-  $('model').value = p.model;
-  $('providerHint').textContent = p.hint || '';
-});
 
 const msg = (text, cls = '') => ($('msg').textContent = text), setCls = (cls) => ($('msg').className = 'msg ' + cls);
 
@@ -44,7 +52,7 @@ $('save').addEventListener('click', async () => {
     $('apiKey').value = cleanKey;
   }
   const payload = {
-    engine: $('engine').value,
+    engine: engineCtl.value,
     subjMode: $('subjMode').value,
     api: currentAPIConfig(),
     bridge: {
@@ -104,17 +112,17 @@ $('clearKey').addEventListener('click', async () => {
   const res = await chrome.runtime.sendMessage({ type: 'GET_CONFIG' });
   const cfg = res?.config;
   if (!cfg) return;
-  $('engine').value = cfg.engine;
+  engineCtl.value = cfg.engine;
   if (cfg.subjMode) $('subjMode').value = cfg.subjMode;
   const api = cfg.api || {};
-  providerSel.value = IFACES[api.iface] ? api.iface : (api.baseURL ? 'openai' : 'auto');
+  providerCtl.value = IFACES[api.iface] ? api.iface : (api.baseURL ? 'openai' : 'auto');
   $('baseURL').value = api.baseURL || '';
   $('model').value = api.model || '';
   $('apiKey').value = api.apiKey || '';
   $('keyStatus').textContent = api.apiKey
     ? `当前已保存（尾号 ${api.apiKey.slice(-4)}），下方输入框输入新值可覆盖`
     : '当前未保存 Key';
-  $('providerHint').textContent = IFACES[providerSel.value].hint || '';
+  $('providerHint').textContent = IFACES[providerCtl.value].hint || '';
   $('memAckRow').hidden = !cfg.clearAck;
   const bridge = cfg.bridge || {};
   $('delayMin').value = bridge.delayMin ?? 3000;
