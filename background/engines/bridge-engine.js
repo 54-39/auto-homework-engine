@@ -62,9 +62,10 @@ async function askOnce(q, cfg) {
     bits.push(`发送按钮${info.hasSend ? '有' : '无'}`);
     throw new Error(`豆包页面未就绪（${bits.join('、')}）：请切到豆包标签页确认能看到输入框（可能需要登录或在豆包页通过一次验证）`);
   }
-  let send = chrome.tabs
-    .sendMessage(tabId, { type: 'BRIDGE_ASK', payload: { prompt: flattenPrompt(q), newChat: cfg?.newChat !== false } })
-    .then((r) => r);
+  const send = chrome.tabs.sendMessage(tabId, {
+    type: 'BRIDGE_ASK',
+    payload: { prompt: flattenPrompt(q), newChat: cfg?.newChat !== false },
+  });
   let timer;
   const timeout = new Promise((_, rej) => {
     timer = setTimeout(() => rej(new Error('豆包回答超时（150 秒）')), 150000);

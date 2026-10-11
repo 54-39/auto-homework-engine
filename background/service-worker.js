@@ -5,13 +5,12 @@ import { hashKey, compareVersions, isMajorUpdate } from './engines/engine.js';
 
 const DEFAULT_CONFIG = {
   engine: 'api', // api | bridge
-  mode: 'semi', // semi 只填写不提交 | auto 填完自动提交
   api: { iface: 'auto', baseURL: '', model: '', apiKey: '' },
   bridge: { newChat: true, delayMin: 3000, delayMax: 8000 },
   subjMode: 'ask', // 简答题策略：ask=每次弹窗询问 | keep=保留跳过 | rewrite=清空重写
 };
 
-let run = null; // { tabId, cancelled, fails, items: [{ q, status, answer, error }] }
+let run = null; // { tabId, cancelled, items: [{ q, status, answer, error }] }
 
 /* 暂停当前队列（风控/多次失败共用），发通知 + 面板红字 */
 function pauseRun(tabId, reason) {
@@ -181,9 +180,7 @@ async function startRun(questions, tabId) {
         item.status = 'answered';
         item.answer = ans;
         sendTab(tabId, { type: 'HW_ANSWER', payload: { index: i, answer: ans.answer, fromCache, note: ans.note } });
-        run.fails = 0;
       } catch (e) {
-        run.fails++;
         item.status = 'failed';
         item.error = String(e.message || e);
         sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error } });
@@ -210,9 +207,8 @@ async function startRun(questions, tabId) {
     const filled = run.items.filter((it) => it.status === 'filled').length;
     const failed = run.items.filter((it) => it.status === 'failed').length;
     const skipped = run.items.filter((it) => it.status === 'skipped').length;
-    const conflict = run.items.filter((it) => it.status === 'conflict').length;
-    notify(failed ? `答题完成：填写 ${filled}、跳过 ${skipped}、冲突 ${conflict}、失败 ${failed} 题` : `处理完成：填写 ${filled}、跳过 ${skipped}${conflict ? '、冲突 ' + conflict : ''}，请检查后手动提交`);
-    sendTab(tabId, { type: 'HW_DONE', payload: { total: run.items.length, filled, failed, skipped, conflict } });
+    notify(failed ? `答题完成：填写 ${filled}、跳过 ${skipped}、失败 ${failed} 题` : `处理完成：填写 ${filled}、跳过 ${skipped}，请检查后手动提交`);
+    sendTab(tabId, { type: 'HW_DONE', payload: { total: run.items.length, filled, failed, skipped } });
   })();
   return { ok: true, count: questions.length, engine: cfg.engine };
 }
@@ -272,7 +268,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!it) return sendResponse({ ok: true });
         if (payload.ok) {
           it.status = 'filled';
-          if (run) run.fails = 0;
           return sendResponse({ ok: true });
         }
         // 填写失败：立即暂停（用户要求不重试）

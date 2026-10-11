@@ -265,35 +265,6 @@
     return !!(l.input && l.input.checked) || learnedHit(l.clickEl) || learnedHit(l.input && l.input.closest('label'));
   }
 
-  /* 已作答检测：页面上这道题是否已有答案（重跑时跳过已完成的题） */
-  function isAnswered(q) {
-    // 超星：可见选中标记优先（用户看到的即真相）
-    if (q.el.stateInput && Array.isArray(q.el.labels) && q.el.labels.some((l) => l.clickEl && l.clickEl.querySelector('[class*="num_option"]'))) {
-      return !!markerKeys(q);
-    }
-    // 其余：隐藏 answer input 的 value
-    if (q.el.stateInput) return !!String(q.el.stateInput.value || '').trim();
-    const t = q.meta.type;
-    try {
-      if (t === 'choice' || t === 'multi' || t === 'judge') {
-        return q.el.labels.some(labelState);
-      }
-      if (t === 'blank') {
-        return q.el.inputs.length > 0 && q.el.inputs.every((i) => norm(i.value));
-      }
-      if (t === 'subjective') {
-        if (q.el.iframe) {
-          const b = q.el.iframe.contentDocument && q.el.iframe.contentDocument.body;
-          return !!b && norm(b.textContent).length > 0;
-        }
-        return !!norm(q.el.inputs[0] && q.el.inputs[0].value);
-      }
-    } catch {
-      return false;
-    }
-    return false;
-  }
-
   /* 超星：读取可见选中标记（字母圈上的 check_answer 类）——比隐藏 input 可靠（后者可能异步/陈旧） */
   function markerKeys(q) {
     const keys = [];
@@ -344,10 +315,5 @@
     return '';
   }
 
-  /* 题目签名：跨运行稳定（会话记录"本页已填过什么"用的键） */
-  function sig(q) {
-    return [q.meta.type, (q.el.inputs[0] && q.el.inputs[0].name) || '', q.meta.stem.slice(0, 40)].join('|');
-  }
-
-  HW.Extractor = { extract, isAnswered, currentAnswer, sig };
+  HW.Extractor = { extract, currentAnswer };
 })();

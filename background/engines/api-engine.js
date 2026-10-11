@@ -45,7 +45,7 @@ async function chatOpenAI(cfg, messages, maxTokens) {
   // 服务端不认该参数（400 提到 thinking）时自动去掉重试
   const isVolc = /volces\.com/.test(url);
   const mkBody = (withThinking) => {
-    const b = { model: cfg.model, messages, temperature: cfg.temperature ?? 0, max_tokens: maxTokens, stream: false };
+    const b = { model: cfg.model, messages, temperature: 0, max_tokens: maxTokens, stream: false };
     if (withThinking) b.thinking = { type: 'disabled' };
     return b;
   };
@@ -69,8 +69,6 @@ async function chatOpenAI(cfg, messages, maxTokens) {
         const txt = await res.text().catch(() => '');
         const err = new Error(`HTTP ${res.status} ${txt.slice(0, 120)}（接口: ${hostOf(cfg.baseURL)}，模型: ${cfg.model}）`);
         err.status = res.status;
-        err.body = txt;
-        err.fatal = true;
         throw err;
       }
       const data = await res.json();
@@ -104,7 +102,7 @@ async function chatAnthropic(cfg, userMsg, maxTokens, system) {
       res = await fetch(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: cfg.model, max_tokens: maxTokens, system, messages: userMsg, temperature: cfg.temperature ?? 0 }),
+        body: JSON.stringify({ model: cfg.model, max_tokens: maxTokens, system, messages: userMsg, temperature: 0 }),
         signal: ctl.signal,
       });
     } catch (e) {
@@ -115,7 +113,6 @@ async function chatAnthropic(cfg, userMsg, maxTokens, system) {
       const txt = await res.text().catch(() => '');
       const err = new Error(`HTTP ${res.status} ${txt.slice(0, 120)}（接口: ${hostOf(cfg.baseURL)}/v1/messages，模型: ${cfg.model}）`);
       err.status = res.status;
-      err.fatal = true;
       throw err;
     }
     const data = await res.json();

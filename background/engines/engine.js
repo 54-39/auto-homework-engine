@@ -1,6 +1,6 @@
 /* 引擎共享：Prompt 构建 + 答案解析 + 缓存键哈希（API 引擎与豆包桥接引擎共用） */
 
-export const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
 
 export function buildMessages(q) {
   const sys = '你是严谨的答题助手，严格按照用户要求的格式输出，不输出任何解释、前缀或多余内容。';

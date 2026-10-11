@@ -42,10 +42,6 @@
         };
       });
     },
-    /* 当前页面答案（权威来源：隐藏 answer input 的 value） */
-    answerOf(q) {
-      return q.el.stateInput ? String(q.el.stateInput.value || '').trim() : null;
-    },
   };
   window.HW.CXAdapter = CX;
 })();

@@ -59,7 +59,6 @@
     .lbtn.primary{color:#2563EB;font-weight:500}
     .lbtn.plain{color:#6B7280}
     .keylist{display:flex;flex-direction:column;gap:6px;max-height:100px;overflow:auto;flex:none}
-    .keylist.off{opacity:.55;pointer-events:none}
     .krow{display:flex;align-items:center;gap:8px;border-radius:6px;border:1px solid #CCD2D9;background:#fff;padding:6px 10px;min-height:46px}
     .krow.active{background:#ECFDF5;border-color:#A7F3D0}
     .kmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
@@ -94,7 +93,6 @@
     .item .st.s-filled{color:#2563EB}
     .item .st.s-fixed{color:#7C3AED}
     .item .st.s-skipped{color:#059669}
-    .item .st.s-conflict{color:#D97706}
     .item .st.s-failed{color:#DC2626}
     .logwrap{display:flex;flex-direction:column;gap:2px;flex:1 1 0;min-height:96px}
     .loghd{font-size:11px;font-weight:500;color:#374151;flex:none}
@@ -106,15 +104,13 @@
     .mbox b{font-size:13px;display:block;margin-bottom:6px}
     .mbtns{display:flex;gap:8px;margin-top:12px}
     .mbtns .act{padding:6px}
-    .mcheck{display:flex;align-items:center;gap:5px;font-size:11px;color:#6B7280;margin-top:8px;cursor:pointer}
-    .mcheck input{width:auto;margin:0;accent-color:#2563EB}
     .subjhint{color:#98A2B3;margin-top:8px}
   `;
 
   const TYPE_NAME = { choice: '单选', multi: '多选', judge: '判断', blank: '填空', subjective: '简答' };
 
   /* 行尾纯文字状态（设计稿无图标方案） */
-  const STATUS_TEXT = { queued: '待机', asking: '获取中', answered: '获取中', filled: '填入', fixed: '改对', skipped: '保留', conflict: '冲突', failed: '失败' };
+  const STATUS_TEXT = { asking: '获取中', filled: '填入', fixed: '改对', skipped: '保留', failed: '失败' };
 
   /* 答案归一化比对（跳过/改写判断用） */
   const normAns = (t, v) => {
@@ -238,8 +234,8 @@
     const $ = (s) => root.querySelector(s);
     const els = {
       fab: $('.fab'), panel: $('.panel'), badge: $('.badge'), header: $('header'), settingsbtn: $('.settingsbtn'), collapse: $('.btn-collapse'), expandbtn: $('.expandbtn'),
-      engine: $('.engine'), keyrow: $('.keyrow'), keyinput: $('.keyinput'), keylabel: $('.keylabel'), savekey: $('.savekey'), clearkey: $('.clearkey'),
-      keylist: $('.keylist'), keywarn: $('.keywarn'), provrow: $('.provrow'), provider: $('.provider'), psource: $('.psource'),
+      engine: $('.engine'), keyinput: $('.keyinput'), keylabel: $('.keylabel'), savekey: $('.savekey'), clearkey: $('.clearkey'),
+      keylist: $('.keylist'), keywarn: $('.keywarn'), provider: $('.provider'), psource: $('.psource'),
       apiToggle: $('.apitoggle'), apisec: $('.apisec'),
       modal: $('.keymodal'), msave: $('.msave'), mtemp: $('.mtemp'), mcancel: $('.mcancel'),
       subjmodal: $('.subjmodal'), subjbody: $('.subjbody'), subjcancel: $('.subjcancel'), subjkeep: $('.subjkeep'), subjrewrite: $('.subjrewrite'),
@@ -605,7 +601,7 @@
         r.querySelector('.stem').textContent = q.meta.stem.replace(/_{2,}/g, '＿＿').slice(0, 60);
         r.dataset.tip = '点击可重新询问本题';
         r.addEventListener('click', () => {
-          if (['answered', 'filled', 'failed', 'skipped', 'conflict'].includes(q._status)) rerun(i);
+          if (['filled', 'failed', 'skipped'].includes(q._status)) rerun(i);
         });
         els.list.appendChild(r);
         return r;
@@ -619,10 +615,7 @@
         const cfg = (await send('GET_CONFIG'))?.config || {};
         if (cfg.engine === 'api' && !cfg.api?.apiKey) {
           try { localStorage.setItem('hwApiOpen', '1'); } catch {}
-          els.apiToggle.textContent = '▾ 接口 与 API Key';
-          els.apisec.classList.remove('hidden');
-          els.panel.classList.add('apiopen');
-          els.keywarn.classList.remove('hidden'); // 红色提醒
+          await refreshKeyRow(); // 展开抽屉并显示红色提醒
           els.panel.classList.remove('hidden');
           log('API 引擎未配置 Key：请在上方输入框粘贴后点「保存」');
           return;
@@ -740,7 +733,6 @@
         setRow(payload.index, payload.status, payload.error || payload.note || '');
         if (payload.status === 'failed') log(`第 ${payload.index + 1} 题获取答案失败：${payload.error}`);
         if (payload.status === 'skipped') log(`第 ${payload.index + 1} 题：${payload.note || '已作答，跳过'}`);
-        if (payload.status === 'conflict') log(`第 ${payload.index + 1} 题：${payload.note}（点击该行会用参考答案重答）`);
       } else if (type === 'HW_ANSWER') {
         if (stopRequested) return; // 已停止：丢弃迟到的回答
         (async () => {
