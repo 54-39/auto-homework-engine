@@ -78,6 +78,7 @@ const UPDATE_SOURCES = [
 ];
 const UPDATE_PAGE = 'https://github.com/54-39/auto-homework-engine';
 const UPDATE_TTL = 3600e3;
+const UPDATER_ROOT = 'E:\\vibe work\\DSH work\\auto-homework-engine-master'; // 本机加载的插件目录（install-native-host.mjs 校验过）
 function updResult(current, latest, cached) {
   const hasUpdate = compareVersions(latest, current) > 0;
   return { ok: true, current, latest, hasUpdate, major: hasUpdate && isMajorUpdate(latest, current), url: UPDATE_PAGE, cached };
@@ -110,6 +111,28 @@ async function checkUpdate(force, cacheOnly) {
 async function askEngine(cfg, q) {
   if (cfg.engine === 'bridge') return answerWithBridge(q, cfg.bridge);
   return answerWithAPI(q, cfg.api);
+}
+
+/* 用户点「更新」：connectNative 拉起已安装的原生宿主（tools/install-native-host.mjs 注册），
+   宿主进程调用 autoupdate.mjs 同步一轮后回传结果；重载由宿主写的 hot-reload.json 轮询触发 */
+function runUpdateViaHost() {
+  return new Promise((resolve) => {
+    let port;
+    try {
+      port = chrome.runtime.connectNative('com.homeworkhelper.autoupdate');
+    } catch (e) {
+      return resolve({ ok: false, error: '原生宿主未安装：' + String(e.message || e) });
+    }
+    const done = (r) => { try { port.disconnect(); } catch { /* 已断开 */ } resolve(r); };
+    const timer = setTimeout(() => done({ ok: false, error: '更新超时（宿主 60 秒无响应）' }), 65000);
+    port.onMessage.addListener((m) => { clearTimeout(timer); done(m || { ok: false, error: '宿主返回空结果' }); });
+    port.onDisconnect.addListener(() => {
+      clearTimeout(timer);
+      const err = chrome.runtime.lastError?.message || '';
+      done({ ok: false, error: '宿主提前退出' + (err ? '：' + err : '') });
+    });
+    port.postMessage({ type: 'run_update', root: UPDATER_ROOT });
+  });
 }
 
 function cacheKeyOf(q) {
@@ -234,6 +257,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, config: next });
       } else if (type === 'CHECK_UPDATE') {
         sendResponse(await checkUpdate(payload.force, payload.cacheOnly));
+      } else if (type === 'HW_RUN_UPDATE') {
+        /* 用户点了「更新」才执行：经原生消息宿主拉起 tools/native-host.mjs → autoupdate.mjs
+           同步一轮（下载→暂存→替换→热重载标记）。需要先跑 tools/install-native-host.mjs 安装宿主。 */
+        sendResponse(await runUpdateViaHost());
       } else if (type === 'OPEN_SETTINGS') {
         // 面板是 content script，没有 chrome.tabs 权限，由后台代开设置页
         await chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') });
@@ -317,6 +344,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })();
   return true;
 });
+
+/* —— 更新完成通知：tools/autoupdate.mjs 在外部替换文件后触发重载，SW 启动发现版本变了就提醒（内容脚本需页面 F5 生效）—— */
+(async () => {
+  const cur = chrome.runtime.getManifest().version;
+  const { v: prev } = await chrome.storage.local.get('v');
+  if (prev && prev !== cur) notify(`已自动更新到 v${cur}，作业页面请刷新(F5)生效`);
+  await chrome.storage.local.set({ v: cur });
+})();
 
 /* —— 热重载：tools/watch.mjs 检测到文件变化会更新 hot-reload.json 时间戳，这里轮询到变化即自动重载 —— */
 let lastStamp = null;

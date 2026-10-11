@@ -118,27 +118,32 @@
   });
 
   /* 检测更新：打开「检测更新」分区自动检查一次（走 1 小时缓存），「立即检查」绕过缓存；
-     更新永不强制——只提示，不自动安装、不阻断使用 */
+     发现新版出现「更新」按钮——用户点了才执行（后台经原生宿主拉起本机脚本同步 GitHub），
+     更新永不强制——不点不装、不阻断使用 */
   const updCurrent = $('#updCurrent');
   const updLatest = $('#updLatest');
   const updLink = $('#updLink');
   const updMsg = $('#updMsg');
   const updBtn = $('#updCheck');
+  const updRun = $('#updRun');
   const renderUpdate = (r) => {
     if (!r?.ok) {
       updLatest.textContent = '未获取到';
+      updRun.hidden = true;
       return out(updMsg, '检查失败：' + (r?.error || '未知错误') + '，请检查网络后重试', 'err');
     }
     updLatest.textContent = 'v' + r.latest;
     updLink.hidden = !r.hasUpdate;
+    updRun.hidden = !r.hasUpdate; // 有新版才出现「更新」，点了才真正执行
     if (r.hasUpdate) {
       updLink.href = r.url;
-      out(updMsg, `${r.major ? '发现功能更新' : '发现修复更新'} v${r.latest}（当前 v${r.current}）：可继续使用当前版本，需要时再手动下载新版`, 'ok');
+      out(updMsg, `${r.major ? '发现功能更新' : '发现修复更新'} v${r.latest}（当前 v${r.current}）：点「更新」自动下载替换，或继续用当前版本`, 'ok');
     } else out(updMsg, '已是最新版本', 'ok');
   };
   const check = async (force) => {
     updLatest.textContent = '检查中…';
     updLink.hidden = true;
+    updRun.hidden = true;
     if (force) {
       updBtn.disabled = true;
       updBtn.textContent = '检查中…';
@@ -153,7 +158,30 @@
       }
     }
   };
+  const runUpdate = async () => {
+    updRun.disabled = true;
+    updRun.textContent = '更新中…';
+    out(updMsg, '正在从 GitHub 下载并替换文件…', 'ok');
+    try {
+      const r = await send('HW_RUN_UPDATE');
+      if (r?.ok && r.updated) {
+        updRun.hidden = true;
+        out(updMsg, `已更新到 v${r.latest}，插件即将自动重载；本页与作业页面请刷新(F5)后使用新版`, 'ok');
+      } else if (r?.ok) {
+        updRun.hidden = true;
+        out(updMsg, '已是最新版本', 'ok');
+      } else {
+        out(updMsg, '更新失败：' + (r?.error || '未知错误'), 'err');
+      }
+    } finally {
+      if (!updRun.hidden) {
+        updRun.disabled = false;
+        updRun.textContent = '更新';
+      }
+    }
+  };
   updBtn.addEventListener('click', () => check(true));
+  updRun.addEventListener('click', () => runUpdate());
   let autoChecked = false;
   onSection = (key) => {
     if (key === 'upd' && !autoChecked) {

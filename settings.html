@@ -135,14 +135,15 @@
 
       <section id="sec-upd" class="card" aria-labelledby="h-upd" hidden>
         <h2 id="h-upd">检测更新</h2>
-        <p class="hint">打开本分区会自动检查一次（1 小时内不重复联网）；发现新版后需手动下载并重新加载扩展（解压版无法自动更新）。更新不会强制：不自动安装、不影响使用，可继续用当前版本。</p>
+        <p class="hint">打开本分区会自动检查一次（1 小时内不重复联网）。发现新版后点「更新」：本机脚本自动从 GitHub 下载并替换文件，成功后插件自动重载（作业页面仍需 F5 让内容脚本生效）。更新不强制：可继续用当前版本。首次使用需先在插件目录运行 <code>node tools/install-native-host.mjs &lt;插件目录&gt;</code> 安装更新宿主。</p>
         <dl class="kv">
           <div><dt>当前版本</dt><dd id="updCurrent">…</dd></div>
           <div><dt>最新版本</dt><dd id="updLatest">尚未检查</dd></div>
         </dl>
         <div class="actions">
           <button type="button" id="updCheck">立即检查</button>
-          <a id="updLink" href="#" target="_blank" rel="noopener" hidden>前往 GitHub 下载新版</a>
+          <button type="button" id="updRun" hidden>更新</button>
+          <a id="updLink" href="#" target="_blank" rel="noopener" hidden>前往 GitHub 查看新版</a>
         </div>
         <div class="msg" id="updMsg" role="status" aria-live="polite"></div>
       </section>

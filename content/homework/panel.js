@@ -37,6 +37,9 @@
     .hintline{font-size:11px;color:#9AA1A9;flex:none}
     .updline{flex:none;font-size:11px;font-weight:500;color:#2563EB;cursor:pointer}
     .updline:hover{color:#1d4ed8}
+    .updline .updgo{margin-left:2px;padding:1px 10px;font-size:11px;font-weight:500;color:#fff;background:#2563EB;border:none;border-radius:6px;cursor:pointer}
+    .updline .updgo:hover{background:#1d4ed8}
+    .updline .updgo:disabled{opacity:.6;cursor:default}
     .apitoggle{border:0;background:none;cursor:pointer;font-size:11.5px;color:#374151;font-weight:500;padding:2px 0;text-align:left;flex:none;align-self:flex-start}
     .apitoggle:hover{color:#111827}
     .apisec{display:flex;flex-direction:column;gap:8px;flex:none}
@@ -176,7 +179,7 @@
           </label>
         </div>
         <div class="hintline">只填写不提交，提交请自行操作</div>
-        <div class="updline hidden" data-tip="点击前往 GitHub 查看新版本（不会自动安装，可继续用当前版本）"></div>
+        <div class="updline hidden" data-tip="点击「更新」自动下载替换到最新版，成功后本插件自动重载（页面需 F5）"></div>
         <button class="apitoggle hidden">▾ 接口 与 API Key</button>
         <div class="apisec hidden">
           <div class="provrow">
@@ -820,9 +823,25 @@
       try {
         const r = await send('CHECK_UPDATE', { cacheOnly: true });
         if (r?.ok && r.major) {
-          els.updline.textContent = `发现新版本 v${r.latest}（当前 v${r.current}）`;
+          els.updline.textContent = '';
+          els.updline.append(`发现新版本 v${r.latest}（当前 v${r.current}）`, '　');
+          const btn = document.createElement('button');
+          btn.textContent = '更新';
+          btn.className = 'updgo';
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            btn.disabled = true;
+            btn.textContent = '更新中…';
+            send('HW_RUN_UPDATE').then((res) => {
+              els.updline.textContent = res?.ok
+                ? (res.updated ? '已更新到 v' + res.latest + '，插件已重载，请刷新页面(F5)' : '已是最新版本')
+                : '更新失败：' + (res?.error || '未知错误') + '（详情见设置页「检测更新」）';
+              if (res?.ok && res.updated) setTimeout(() => els.updline.classList.add('hidden'), 8000);
+              else { btn.disabled = false; btn.textContent = '更新'; }
+            });
+          });
+          els.updline.append(btn);
           els.updline.classList.remove('hidden');
-          els.updline.addEventListener('click', () => window.open(r.url, '_blank'));
         }
       } catch {
         /* 未检查过或读取失败：静默 */
