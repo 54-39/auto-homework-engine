@@ -126,6 +126,24 @@
   const updMsg = $('#updMsg');
   const updBtn = $('#updCheck');
   const updRun = $('#updRun');
+  const updSetupDialog = $('#updSetupDialog');
+  const setupReminderKey = 'hwUpdaterSetupReminderShown';
+  let setupReminderShown = false;
+  const showSetupReminderOnce = async () => {
+    if (setupReminderShown) return false;
+    try {
+      const saved = await chrome.storage.local.get(setupReminderKey);
+      if (saved?.[setupReminderKey]) {
+        setupReminderShown = true;
+        return false;
+      }
+    } catch { /* still show once for this page session */ }
+    setupReminderShown = true;
+    try { await chrome.storage.local.set({ [setupReminderKey]: true }); } catch { /* storage is optional for this reminder */ }
+    if (!updSetupDialog.open) updSetupDialog.showModal();
+    return true;
+  };
+  const isUpdaterHostMissing = (error) => /更新宿主未安装|原生宿主未安装|specified native messaging host|native messaging host.*(?:not found|does not exist|forbidden)/i.test(error);
   const updateHost = `com.homeworkhelper.autoupdate.${chrome.runtime.id}`;
   const nativeUpdateRequest = (message, timeoutMs = 10000) => new Promise((resolve) => {
     let port;
@@ -234,7 +252,13 @@
       } else {
         updRun.disabled = false;
         updRun.textContent = '更新';
-        out(updMsg, '更新失败：' + (r?.error || '未知错误'), 'err');
+        const error = String(r?.error || '未知错误');
+        if (isUpdaterHostMissing(error)) {
+          const firstReminder = await showSetupReminderOnce();
+          out(updMsg, firstReminder
+            ? '请按弹窗步骤完成一次安装，再点“更新”。'
+            : '更新组件还没安装。请在插件文件夹双击 install-updater.cmd，再回来点“更新”。', 'err');
+        } else out(updMsg, '更新失败：' + error, 'err');
       }
     } catch (error) {
       updRun.disabled = false;

@@ -77,6 +77,13 @@
   .confirm{margin-top:16px;border:1px solid var(--line);border-radius:var(--radius);background:#fbfcfe;padding:14px 16px}
   .confirm[hidden]{display:none}
   .confirm p{margin:0 0 12px;color:var(--text-2)}
+  #updSetupDialog{width:min(420px,calc(100% - 32px));padding:22px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);color:var(--text)}
+  #updSetupDialog::backdrop{background:#10182866}
+  #updSetupDialog h2{margin-bottom:8px}
+  #updSetupDialog p{margin:0 0 12px;color:var(--text-2)}
+  #updSetupDialog ol{margin:0 0 18px;padding-left:22px}
+  #updSetupDialog li{padding:2px 0}
+  #updSetupDialog form{display:flex;justify-content:flex-end}
 
   @media (prefers-reduced-motion:reduce){
     .side button,button{transition:none}
@@ -151,6 +158,16 @@
     </div>
   </main>
 </div>
+<dialog id="updSetupDialog" aria-labelledby="updSetupTitle" aria-describedby="updSetupDescription">
+  <h2 id="updSetupTitle">首次更新，先安装一次</h2>
+  <p id="updSetupDescription">只需做这一次，以后直接点“更新”就可以。</p>
+  <ol>
+    <li>打开你安装作业助手时选的那个文件夹。</li>
+    <li>双击 <code>install-updater.cmd</code>，按窗口提示操作。</li>
+    <li>浏览器打开验证页后，回到这里再点“更新”。</li>
+  </ol>
+  <form method="dialog"><button type="submit">知道了</button></form>
+</dialog>
 <script src="settings.js"></script>
 </body>
 </html>
