@@ -111,60 +111,98 @@ async function askEngine(cfg, q) {
   return answerWithAPI(q, cfg.api);
 }
 
-/* 用户点「更新」：connectNative 拉起已安装的原生宿主（tools/install-native-host.mjs 注册），
-   宿主进程调用 autoupdate.mjs 同步一轮后回传结果；重载由宿主写的 hot-reload.json 轮询触发 */
-function runUpdateViaHost() {
+const UPDATE_HOST = `com.homeworkhelper.autoupdate.${chrome.runtime.id}`;
+function nativeRequest(message, timeoutMs = 15000) {
   return new Promise((resolve) => {
     let port;
     try {
-      port = chrome.runtime.connectNative('com.homeworkhelper.autoupdate');
+      port = chrome.runtime.connectNative(UPDATE_HOST);
     } catch (e) {
       return resolve({ ok: false, error: '原生宿主未安装：' + String(e.message || e) });
     }
-    const done = (r) => { try { port.disconnect(); } catch { /* 已断开 */ } resolve(r); };
-    const timer = setTimeout(() => done({ ok: false, error: '更新超时（宿主 300 秒无响应，可能是网络太慢或卡住）' }), 310000);
+    let settled = false;
+    const done = (r) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { port.disconnect(); } catch { /* 已断开 */ }
+      resolve(r);
+    };
+    const timer = setTimeout(() => done({ ok: false, error: '宿主请求超时' }), timeoutMs);
     port.onMessage.addListener((m) => { clearTimeout(timer); done(m || { ok: false, error: '宿主返回空结果' }); });
     port.onDisconnect.addListener(() => {
-      clearTimeout(timer);
       const err = chrome.runtime.lastError?.message || '';
-      // 浏览器找不到这个宿主（没跑过 install-native-host.mjs）或不允许它（注册表指向的清单已失效）：给可操作的中文提示
       if (/native messaging host/i.test(err)) {
-        return done({ ok: false, error: '更新宿主未安装或已失效。请在该电脑的插件目录运行 node tools/install-native-host.mjs <插件目录>，再重开浏览器' });
+        return done({ ok: false, error: '更新宿主未安装或已失效。请双击插件目录中的 install-updater.cmd，然后重试' });
       }
       done({ ok: false, error: '宿主提前退出' + (err ? '：' + err : '') });
     });
-    port.postMessage({ type: 'run_update' }); // 插件目录由宿主自己定位（它就在插件根的 tools/ 下）
+    port.postMessage({ ...message, extensionId: chrome.runtime.id });
   });
+}
+
+function runUpdateViaHost() {
+  const transactionId = crypto.randomUUID();
+  return chrome.storage.local.set({ updateTransactionId: transactionId })
+    .then(() => nativeRequest({ type: 'run_update', transactionId }, 15000))
+    .then(async (result) => {
+      if (!result?.started) await chrome.storage.local.remove(['updateTransactionId']);
+      return { ...result, transactionId };
+    });
+}
+
+function updateStatus(transactionId) {
+  return nativeRequest({ type: 'update_status', transactionId }, 10000);
+}
+
+async function confirmUpdatePage(transactionId, sender) {
+  if (!sender?.url?.startsWith(chrome.runtime.getURL('settings.html'))) return { ok: false, error: '健康页来源不匹配' };
+  let pageTransaction = '';
+  try { pageTransaction = new URL(sender.url).searchParams.get('updateHealth') || ''; } catch { /* invalid URL */ }
+  if (!transactionId || pageTransaction !== transactionId) return { ok: false, error: '健康页事务 ID 不匹配' };
+  const result = await updateStatus(transactionId);
+  const state = result?.state;
+  if (!result?.ok || state?.phase !== 'awaiting_health' || state?.latest !== chrome.runtime.getManifest().version) {
+    return { ok: false, error: '后台或设置页尚未通过本轮版本检查' };
+  }
+  const ack = await nativeRequest({
+    type: 'confirm_update', transactionId, targetVersion: state.latest,
+    revision: state.revision, settingsReady: true,
+  }, 10000);
+  if (ack?.accepted) {
+    await chrome.storage.local.remove(['updateTransactionId']);
+    return { ok: true, accepted: true };
+  }
+  return ack;
+}
+
+let healthPageCheck = false;
+async function openUpdateHealthPage() {
+  if (healthPageCheck) return;
+  healthPageCheck = true;
+  try {
+    const { updateTransactionId } = await chrome.storage.local.get('updateTransactionId');
+    if (!updateTransactionId) return;
+    const result = await updateStatus(updateTransactionId);
+    const state = result?.state;
+    if (!result?.ok || state?.phase !== 'awaiting_health' || state.latest !== chrome.runtime.getManifest().version) return;
+    const url = chrome.runtime.getURL(`settings.html?updateHealth=${encodeURIComponent(updateTransactionId)}#upd`);
+    const existing = await chrome.tabs.query({ url: chrome.runtime.getURL('settings.html') + '*' });
+    if (existing.some((tab) => {
+      try { return new URL(tab.url).searchParams.get('updateHealth') === updateTransactionId; }
+      catch { return false; }
+    })) return;
+    await chrome.tabs.create({ url, active: false });
+  } catch { /* 后续轮询或设置页重试 */ }
+  finally { healthPageCheck = false; }
 }
 
 /* 诊断更新宿主：设置页「诊断更新」用。只 ping 不执行更新，返回本机环境信息，
    方便定位是「宿主没装」「ID 对不上」还是「node/目录」的问题 */
 function diagUpdateHost() {
-  return new Promise((resolve) => {
-    let port;
-    try {
-      port = chrome.runtime.connectNative('com.homeworkhelper.autoupdate');
-    } catch (e) {
-      return resolve({ ok: false, stage: 'connect', error: '原生宿主未安装：' + String(e.message || e) });
-    }
-    const done = (r) => { try { port.disconnect(); } catch { /* 已断开 */ } resolve(r); };
-    const timer = setTimeout(() => done({ ok: false, stage: 'ping', error: '宿主 10 秒无响应（可能 node 被杀或启动器损坏）' }), 10000);
-    port.onMessage.addListener((m) => {
-      clearTimeout(timer);
-      if (m?.pong) return done({ ok: true, node: m.node, root: m.root, manifestVersion: m.manifestVersion });
-      done({ ok: false, stage: 'ping', error: '宿主返回异常：' + JSON.stringify(m).slice(0, 120) });
-    });
-    port.onDisconnect.addListener(() => {
-      clearTimeout(timer);
-      const err = chrome.runtime.lastError?.message || '';
-      // 浏览器找不到这个宿主（没跑过 install-native-host.mjs）或不允许它（注册表指向的清单已失效/扩展 ID 对不上）：给可操作的中文提示
-      if (/native messaging host/i.test(err)) {
-        return done({ ok: false, stage: 'connect', error: '更新宿主未安装或已失效（扩展 ID 可能对不上）。请在该电脑的插件目录运行 node tools/install-native-host.mjs <插件目录> edge，再重开浏览器' });
-      }
-      done({ ok: false, stage: 'connect', error: '宿主提前退出' + (err ? '：' + err : '') });
-    });
-    port.postMessage({ type: 'ping' });
-  });
+  return nativeRequest({ type: 'ping' }, 10000).then((r) => r?.pong
+    ? { ok: true, node: r.node, root: r.root, manifestVersion: r.manifestVersion, extensionId: r.extensionId }
+    : { ok: false, stage: 'connect', error: r?.error || '宿主返回异常' });
 }
 
 function cacheKeyOf(q) {
@@ -287,12 +325,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (type === 'CHECK_UPDATE') {
         sendResponse(await checkUpdate(payload.force, payload.cacheOnly));
       } else if (type === 'HW_RUN_UPDATE') {
-        /* 用户点了「更新」才执行：经原生消息宿主拉起 tools/native-host.mjs → autoupdate.mjs
-           同步一轮（下载→暂存→替换→热重载标记）。需要先跑 tools/install-native-host.mjs 安装宿主。 */
         sendResponse(await runUpdateViaHost());
       } else if (type === 'DIAG_UPDATE_HOST') {
         /* 设置页「诊断更新」：只 ping 宿主不上报更新，返回本机环境信息 */
         sendResponse(await diagUpdateHost());
+      } else if (type === 'UPDATE_PAGE_READY') {
+        sendResponse(await confirmUpdatePage(payload.transactionId, sender));
       } else if (type === 'OPEN_SETTINGS') {
         // 面板是 content script，没有 chrome.tabs 权限，由后台代开设置页
         await chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') });
@@ -376,13 +414,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;
 });
 
-/* —— 更新完成通知：tools/autoupdate.mjs 在外部替换文件后触发重载，SW 启动发现版本变了就提醒（内容脚本需页面 F5 生效）—— */
+/* 保存当前版本供其他诊断使用；更新成功提示由设置页等到事务健康确认后显示。 */
 (async () => {
   const cur = chrome.runtime.getManifest().version;
-  const { v: prev } = await chrome.storage.local.get('v');
-  if (prev && prev !== cur) notify(`已自动更新到 v${cur}，作业页面请刷新(F5)生效`);
   await chrome.storage.local.set({ v: cur });
 })();
+
+openUpdateHealthPage();
+setInterval(openUpdateHealthPage, 1500);
 
 /* —— 热重载：tools/watch.mjs 检测到文件变化会更新 hot-reload.json 时间戳，这里轮询到变化即自动重载 —— */
 let lastStamp = null;

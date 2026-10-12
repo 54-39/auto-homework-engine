@@ -178,7 +178,7 @@
           <div class="dd engineslot"></div>
         </div>
         <div class="hintline">只填写不提交，提交请自行操作</div>
-        <div class="updline hidden" data-tip="点击「更新」自动下载替换到最新版，成功后本插件自动重载（页面需 F5）"></div>
+        <div class="updline hidden" data-tip="点击「更新」启动更新事务；下载、验证与回滚状态请在设置页查看，成功后作业页面需 F5"></div>
         <button class="apitoggle hidden">接口 与 API Key</button>
         <div class="apisec hidden">
           <div class="provrow">
@@ -832,11 +832,9 @@
             btn.disabled = true;
             btn.textContent = '更新中…';
             send('HW_RUN_UPDATE').then((res) => {
-              els.updline.textContent = res?.ok
-                ? (res.updated ? '已更新到 v' + res.latest + '，插件已重载，请刷新页面(F5)' : '已是最新版本')
-                : '更新失败：' + (res?.error || '未知错误') + '（详情见设置页「检测更新」）';
-              if (res?.ok && res.updated) setTimeout(() => els.updline.classList.add('hidden'), 8000);
-              else { btn.disabled = false; btn.textContent = '更新'; }
+              els.updline.textContent = res?.ok && res.started
+                ? '更新事务已启动；下载、验证与回滚状态请查看设置页「检测更新」'
+                : '更新未启动：' + (res?.error || '未知错误') + '（详情见设置页「检测更新」）';
             });
           });
           els.updline.append(btn);

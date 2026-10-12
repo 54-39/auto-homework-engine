@@ -126,6 +126,70 @@
   const updMsg = $('#updMsg');
   const updBtn = $('#updCheck');
   const updRun = $('#updRun');
+  const updateHost = `com.homeworkhelper.autoupdate.${chrome.runtime.id}`;
+  const nativeUpdateRequest = (message, timeoutMs = 10000) => new Promise((resolve) => {
+    let port;
+    try { port = chrome.runtime.connectNative(updateHost); }
+    catch (e) { return resolve({ ok: false, error: String(e.message || e) }); }
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { port.disconnect(); } catch { /* already disconnected */ }
+      resolve(value);
+    };
+    const timer = setTimeout(() => done({ ok: false, error: '宿主请求超时' }), timeoutMs);
+    port.onMessage.addListener(done);
+    port.onDisconnect.addListener(() => done({ ok: false, error: chrome.runtime.lastError?.message || '宿主提前退出' }));
+    port.postMessage({ ...message, extensionId: chrome.runtime.id });
+  });
+  const transactionKey = `hw-update-transaction:${chrome.runtime.id}`;
+  const phaseText = {
+    checking: '正在锁定本轮更新提交…',
+    downloading: '正在下载并校验固定提交…',
+    replacing: '文件已校验，正在替换；旧版备份仍保留…',
+    awaiting_reload: '正在请求浏览器重载…',
+    awaiting_health: '新后台已启动，正在验证设置页和关键资源…',
+    retrying: '本轮失败，正在从同一提交完整重拉一次…',
+  };
+  let transactionTimer = 0;
+  const pollUpdate = async (transactionId, startedAt = Date.now()) => {
+    if (transactionTimer) clearTimeout(transactionTimer);
+    if (Date.now() - startedAt > 12 * 60 * 1000) {
+      out(updMsg, '等待更新状态超时。请重新打开设置页检查更新状态。', 'err');
+      updRun.disabled = false;
+      updRun.textContent = '更新';
+      return;
+    }
+    const response = await nativeUpdateRequest({ type: 'update_status', transactionId });
+    const state = response?.state;
+    if (!response?.ok || state?.transactionId !== transactionId) {
+      out(updMsg, `更新进程正在启动或浏览器重载中…${response?.error ? `（${response.error}）` : ''}`, 'ok');
+      transactionTimer = setTimeout(() => pollUpdate(transactionId, startedAt), 1200);
+      return;
+    }
+    if (phaseText[state.phase]) {
+      out(updMsg, phaseText[state.phase], 'ok');
+      transactionTimer = setTimeout(() => pollUpdate(transactionId, startedAt), 1200);
+      return;
+    }
+    localStorage.removeItem(transactionKey);
+    updRun.disabled = false;
+    updRun.textContent = '更新';
+    if (state.phase === 'complete') {
+      updRun.hidden = true;
+      out(updMsg, state.updated
+        ? `已更新并通过运行验证到 v${state.latest}；作业页面请刷新(F5)后使用新版`
+        : `已是最新版本 v${state.latest}`, 'ok');
+    } else if (state.phase === 'rolled_back') {
+      out(updMsg, `新版连续两次未通过运行验证，已恢复 v${state.latest}。若插件未自动恢复，请到扩展管理页手动重载一次。${state.error ? ` 原因：${state.error}` : ''}`, 'err');
+    } else if (state.phase === 'recovery_required') {
+      out(updMsg, `恢复旧版时遇到错误：${state.error || '未知错误'}。请到扩展管理页手动重载一次。`, 'err');
+    } else {
+      out(updMsg, `更新失败：${state.error || '未知错误'}`, 'err');
+    }
+  };
   const renderUpdate = (r) => {
     if (!r?.ok) {
       updLatest.textContent = '未获取到';
@@ -161,23 +225,21 @@
   const runUpdate = async () => {
     updRun.disabled = true;
     updRun.textContent = '更新中…';
-    out(updMsg, '正在从 GitHub 下载并替换文件…', 'ok');
+    out(updMsg, '正在启动独立更新进程…', 'ok');
     try {
       const r = await send('HW_RUN_UPDATE');
-      if (r?.ok && r.updated) {
-        updRun.hidden = true;
-        out(updMsg, `已更新到 v${r.latest}，插件即将自动重载；本页与作业页面请刷新(F5)后使用新版`, 'ok');
-      } else if (r?.ok) {
-        updRun.hidden = true;
-        out(updMsg, '已是最新版本', 'ok');
+      if (r?.ok && r.started && r.transactionId) {
+        localStorage.setItem(transactionKey, r.transactionId);
+        await pollUpdate(r.transactionId);
       } else {
-        out(updMsg, '更新失败：' + (r?.error || '未知错误'), 'err');
-      }
-    } finally {
-      if (!updRun.hidden) {
         updRun.disabled = false;
         updRun.textContent = '更新';
+        out(updMsg, '更新失败：' + (r?.error || '未知错误'), 'err');
       }
+    } catch (error) {
+      updRun.disabled = false;
+      updRun.textContent = '更新';
+      out(updMsg, '更新失败：' + String(error?.message || error), 'err');
     }
   };
   updBtn.addEventListener('click', () => check(true));
@@ -193,9 +255,10 @@
     try {
       const r = await send('DIAG_UPDATE_HOST');
       if (r?.ok) {
-        out(updDiagMsg, `宿主正常：node ${r.node}，插件目录 ${r.root}，目录内版本 v${r.manifestVersion}。点「更新」即可一键下载替换`, 'ok');
+        const matches = r.extensionId === chrome.runtime.id && r.manifestVersion === chrome.runtime.getManifest().version;
+        out(updDiagMsg, `${matches ? '浏览器 ping 自检通过' : '宿主响应与当前扩展不匹配'}：node ${r.node}，扩展 ID ${r.extensionId}，插件目录 ${r.root}，目录内版本 v${r.manifestVersion}`, matches ? 'ok' : 'err');
       } else if (r?.stage === 'connect') {
-        out(updDiagMsg, '宿主连不上：' + (r.error || '未知错误') + '。请在插件目录运行 node tools/install-native-host.mjs <插件目录> edge，装完重开浏览器再试', 'err');
+        out(updDiagMsg, '宿主连不上：' + (r.error || '未知错误') + '。请双击插件目录中的 install-updater.cmd 后重试', 'err');
       } else {
         out(updDiagMsg, '诊断失败：' + (r?.error || '未知错误'), 'err');
       }
@@ -203,6 +266,7 @@
       updDiagBtn.disabled = false;
     }
   });
+  if (new URLSearchParams(location.search).get('setupCheck') === '1') updDiagBtn.click();
   let autoChecked = false;
   onSection = (key) => {
     if (key === 'upd' && !autoChecked) {
@@ -212,4 +276,19 @@
   };
   if (!secs.upd.hidden) onSection('upd'); // 直接以 #upd 打开时也要自动检查
   updCurrent.textContent = 'v' + chrome.runtime.getManifest().version;
+  const healthTransaction = new URLSearchParams(location.search).get('updateHealth');
+  if (healthTransaction) {
+    out(updMsg, '设置页已加载，正在等待后台确认本轮版本…', 'ok');
+    const acknowledge = async () => {
+      const result = await send('UPDATE_PAGE_READY', { transactionId: healthTransaction });
+      if (!result?.accepted) setTimeout(acknowledge, 1000);
+    };
+    acknowledge();
+  }
+  const activeTransaction = localStorage.getItem(transactionKey);
+  if (activeTransaction && !healthTransaction) {
+    updRun.disabled = true;
+    updRun.textContent = '更新中…';
+    pollUpdate(activeTransaction);
+  }
 })();
