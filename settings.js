@@ -182,6 +182,27 @@
   };
   updBtn.addEventListener('click', () => check(true));
   updRun.addEventListener('click', () => runUpdate());
+  /* 诊断更新：ping 一下本机更新宿主，把链路状态打出来（宿主装没装、node 在不在、目录对不对），
+     更新失败时先点这个，看一眼就知道该修哪一环 */
+  const updDiagBtn = $('#updDiag');
+  const updDiagMsg = $('#updDiagMsg');
+  updDiagBtn.addEventListener('click', async () => {
+    updDiagBtn.disabled = true;
+    updDiagMsg.hidden = false;
+    out(updDiagMsg, '正在诊断更新链路…');
+    try {
+      const r = await send('DIAG_UPDATE_HOST');
+      if (r?.ok) {
+        out(updDiagMsg, `宿主正常：node ${r.node}，插件目录 ${r.root}，目录内版本 v${r.manifestVersion}。点「更新」即可一键下载替换`, 'ok');
+      } else if (r?.stage === 'connect') {
+        out(updDiagMsg, '宿主连不上：' + (r.error || '未知错误') + '。请在插件目录运行 node tools/install-native-host.mjs <插件目录> edge，装完重开浏览器再试', 'err');
+      } else {
+        out(updDiagMsg, '诊断失败：' + (r?.error || '未知错误'), 'err');
+      }
+    } finally {
+      updDiagBtn.disabled = false;
+    }
+  });
   let autoChecked = false;
   onSection = (key) => {
     if (key === 'upd' && !autoChecked) {

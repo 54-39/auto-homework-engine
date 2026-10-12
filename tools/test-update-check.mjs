@@ -1,6 +1,9 @@
 /* 更新检查 mock 测试：桩 chrome + fetch，导入真实 service-worker.js，
    走真实 onMessage 监听器验证 CHECK_UPDATE 全链路（含 1 小时缓存节流、force 强制刷新、
    面板用的 cacheOnly 只读模式、功能更新/修复更新分级、三个更新源按序回退）。用法: node tools/test-update-check.mjs */
+import path from 'node:path';
+import url from 'node:url';
+const HERE = path.dirname(url.fileURLToPath(import.meta.url));
 const store = {};
 const opened = []; // OPEN_SETTINGS 记录：验证后台代开设置页
 let updFetches = 0;
@@ -31,7 +34,7 @@ globalThis.chrome = {
 // connectNative 不 mock：宿主没装时 Chrome 会直接抛错，正好覆盖「宿主未安装静默失败」分支
 delete globalThis.chrome.runtime.connectNative;
 
-await import('file:///E:/vibe work/DSH work/auto-homework-engine-master/background/service-worker.js');
+await import(url.pathToFileURL(path.join(HERE, '..', 'background', 'service-worker.js')).href);
 const handler = globalThis.__hwListener;
 if (!handler) { console.error('FAIL: 监听器未注册'); process.exit(1); }
 

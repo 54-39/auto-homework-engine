@@ -42,7 +42,7 @@ export async function syncOnce({ root = process.cwd(), fetchImpl = fetch, log = 
   const current = JSON.parse(fs.readFileSync(localPath, 'utf8')).version;
 
   async function apiJson(url) {
-    const r = await fetchImpl(url, { headers: { 'user-agent': 'homework-helper-autoupdate' } });
+    const r = await tfetch(url, { headers: { 'user-agent': 'homework-helper-autoupdate' } });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
@@ -56,9 +56,23 @@ export async function syncOnce({ root = process.cwd(), fetchImpl = fetch, log = 
   const apiFile = async (p) =>
     Buffer.from((await apiJson(`${API}/contents/${p}?ref=master`)).content.replace(/\s/g, ''), 'base64');
   async function cdnFile(p) {
-    const r = await fetchImpl(CDN(rev) + p);
+    const r = await tfetch(CDN(rev) + p);
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return Buffer.from(await r.arrayBuffer());
+  }
+  /* 单次请求超时：没有它时，某个文件下载 hang 住会一直拖到宿主 60 秒自杀，用户只看到
+     「宿主提前退出」，根本不知道卡在哪一步。超时后抛错走整轮放弃（旧文件不动），下次点更新重来。 */
+  async function tfetch(url, opts = {}, ms = 25000) {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), ms);
+    try {
+      return await fetchImpl(url, { ...opts, signal: c.signal });
+    } catch (e) {
+      if (e?.name === 'AbortError') throw new Error('请求超时（' + ms / 1000 + 's）：' + url);
+      throw e;
+    } finally {
+      clearTimeout(t);
+    }
   }
   const fileOf = (p) => (source === 'api' ? apiFile(p) : cdnFile(p));
   /* 先把 master 钉到当前 commit：atom 订阅源是网页、不占 GitHub API 配额。jsDelivr 的 @master 按
@@ -66,7 +80,7 @@ export async function syncOnce({ root = process.cwd(), fetchImpl = fetch, log = 
      半新半旧；钉住 sha 后版本、清单、文件字节都出自同一个不可变快照，而且钉住的清单每项还带
      sha256，可以逐字节校验。钉不住就退回 @master，靠下面装前两道校验兜底。 */
   try {
-    const r = await fetchImpl(ATOM);
+    const r = await tfetch(ATOM);
     const m = r && r.ok ? (await r.text()).match(/Grit::Commit\/([0-9a-f]{40})/) : null;
     if (m) rev = m[1];
   } catch { /* 钉不住 */ }
@@ -91,6 +105,14 @@ export async function syncOnce({ root = process.cwd(), fetchImpl = fetch, log = 
         fileHash = new Map(j.files.map((f) => [f.name.replace(/^\//, ''), f.hash]));
         return j.files.map((f) => f.name.replace(/^\//, '')).filter(isPayload);
       } catch { fileHash = null; }
+      /* 清单接口对新合入的 sha 有冷启动（刚推上去那阵子 404，过一会儿才生成），这时**不能**退回
+         @master 的文件清单：那是分支的缓存，可能缺这一版新增的文件（例如某版新增的 dropdown.js），
+         装前的完整性校验会把整轮拦掉，用户看到的是「文件清单与版本不一致」。改用同一个 sha 的
+         GitHub 文件树——快照仍然只有一个，代价只是少了逐文件 sha256（装前那两道校验还在）。 */
+      try {
+        const j = await apiJson(`${API}/git/trees/${rev}?recursive=1`);
+        return j.tree.filter((t) => t.type === 'blob' && isPayload(t.path)).map((t) => t.path);
+      } catch { rev = 'master'; } // 这个快照整个取不到，才退回分支
     }
     if (source === 'api') {
       try {

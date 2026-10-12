@@ -122,7 +122,7 @@ function runUpdateViaHost() {
       return resolve({ ok: false, error: '原生宿主未安装：' + String(e.message || e) });
     }
     const done = (r) => { try { port.disconnect(); } catch { /* 已断开 */ } resolve(r); };
-    const timer = setTimeout(() => done({ ok: false, error: '更新超时（宿主 60 秒无响应）' }), 65000);
+    const timer = setTimeout(() => done({ ok: false, error: '更新超时（宿主 300 秒无响应，可能是网络太慢或卡住）' }), 310000);
     port.onMessage.addListener((m) => { clearTimeout(timer); done(m || { ok: false, error: '宿主返回空结果' }); });
     port.onDisconnect.addListener(() => {
       clearTimeout(timer);
@@ -134,6 +134,36 @@ function runUpdateViaHost() {
       done({ ok: false, error: '宿主提前退出' + (err ? '：' + err : '') });
     });
     port.postMessage({ type: 'run_update' }); // 插件目录由宿主自己定位（它就在插件根的 tools/ 下）
+  });
+}
+
+/* 诊断更新宿主：设置页「诊断更新」用。只 ping 不执行更新，返回本机环境信息，
+   方便定位是「宿主没装」「ID 对不上」还是「node/目录」的问题 */
+function diagUpdateHost() {
+  return new Promise((resolve) => {
+    let port;
+    try {
+      port = chrome.runtime.connectNative('com.homeworkhelper.autoupdate');
+    } catch (e) {
+      return resolve({ ok: false, stage: 'connect', error: '原生宿主未安装：' + String(e.message || e) });
+    }
+    const done = (r) => { try { port.disconnect(); } catch { /* 已断开 */ } resolve(r); };
+    const timer = setTimeout(() => done({ ok: false, stage: 'ping', error: '宿主 10 秒无响应（可能 node 被杀或启动器损坏）' }), 10000);
+    port.onMessage.addListener((m) => {
+      clearTimeout(timer);
+      if (m?.pong) return done({ ok: true, node: m.node, root: m.root, manifestVersion: m.manifestVersion });
+      done({ ok: false, stage: 'ping', error: '宿主返回异常：' + JSON.stringify(m).slice(0, 120) });
+    });
+    port.onDisconnect.addListener(() => {
+      clearTimeout(timer);
+      const err = chrome.runtime.lastError?.message || '';
+      // 浏览器找不到这个宿主（没跑过 install-native-host.mjs）或不允许它（注册表指向的清单已失效/扩展 ID 对不上）：给可操作的中文提示
+      if (/native messaging host/i.test(err)) {
+        return done({ ok: false, stage: 'connect', error: '更新宿主未安装或已失效（扩展 ID 可能对不上）。请在该电脑的插件目录运行 node tools/install-native-host.mjs <插件目录> edge，再重开浏览器' });
+      }
+      done({ ok: false, stage: 'connect', error: '宿主提前退出' + (err ? '：' + err : '') });
+    });
+    port.postMessage({ type: 'ping' });
   });
 }
 
@@ -260,6 +290,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         /* 用户点了「更新」才执行：经原生消息宿主拉起 tools/native-host.mjs → autoupdate.mjs
            同步一轮（下载→暂存→替换→热重载标记）。需要先跑 tools/install-native-host.mjs 安装宿主。 */
         sendResponse(await runUpdateViaHost());
+      } else if (type === 'DIAG_UPDATE_HOST') {
+        /* 设置页「诊断更新」：只 ping 宿主不上报更新，返回本机环境信息 */
+        sendResponse(await diagUpdateHost());
       } else if (type === 'OPEN_SETTINGS') {
         // 面板是 content script，没有 chrome.tabs 权限，由后台代开设置页
         await chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') });

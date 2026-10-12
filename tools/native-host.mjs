@@ -32,11 +32,22 @@ const readMessage = () => new Promise((resolve) => {
   let pending = Buffer.alloc(0);
   process.stdin.on('data', onData);
   process.stdin.once('end', () => { if (len !== null || pending.length) { resolve(null); process.stdin.removeListener('data', onData); } });
-  setTimeout(() => { resolve(null); process.stdin.removeListener('data', onData); }, 60000); // 60 秒无请求自行退出
+  setTimeout(() => { resolve(null); process.stdin.removeListener('data', onData); }, 300000); // 300 秒无请求自行退出（慢网下载需要更久，之前 60 秒会中途杀死更新）
 });
 
 const msg = await readMessage();
-if (!msg || msg.type !== 'run_update') {
+if (!msg) {
+  send({ ok: false, error: '等待浏览器请求超时' });
+  process.exit(1);
+}
+/* 诊断指令：设置页「诊断更新」用，不执行更新，只上报本机环境，方便定位哪一环坏了 */
+if (msg.type === 'ping') {
+  let manifestVersion = '';
+  try { manifestVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8')).version || ''; } catch { /* 读不到 */ }
+  send({ ok: true, pong: true, node: process.version, root: ROOT, manifestVersion });
+  process.exit(0);
+}
+if (msg.type !== 'run_update') {
   send({ ok: false, error: '无效请求' });
   process.exit(1);
 }

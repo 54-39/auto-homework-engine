@@ -157,4 +157,30 @@ console.log('  允许来源: chrome-extension://' + extId + '/');
 if (derivedId) {
   console.log('\n扩展 ID 按插件目录推算并写入 .crinfo；若与 chrome://extensions 里显示的不一致，把那里的 ID 填进 .crinfo 后重跑本脚本。');
 }
-console.log('\n完成。验证：设置页 → 检测更新 → 点「更新」。失败会显示具体错误（重开浏览器后生效）。');
+
+/* 安装后自检：注册表键和清单文件必须都真实存在，否则浏览器根本找不到宿主，
+   点「更新」只会报「宿主未安装」。有问题直接报错退出，不让人装完还蒙在鼓里 */
+let verifyOk = true;
+try {
+  const q = execFileSync('reg', ['query', 'HKCU\\' + HOSTS[browser], '/ve'], { encoding: 'utf8', stdio: 'pipe' });
+  if (!q.includes(manifestPath)) { console.error('自检失败：注册表里没写对清单路径'); verifyOk = false; }
+} catch (e) {
+  console.error('自检失败：读不到注册表键 HKCU\\' + HOSTS[browser] + '（' + String(e.message || e).split('\n')[0] + '）');
+  verifyOk = false;
+}
+try {
+  const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  if (m.path !== exePath || !(m.allowed_origins || []).includes('chrome-extension://' + extId + '/')) {
+    console.error('自检失败：宿主清单内容不对（启动器路径或允许来源不匹配）');
+    verifyOk = false;
+  }
+  if (!fs.existsSync(m.path)) { console.error('自检失败：清单指向的启动器不存在：' + m.path); verifyOk = false; }
+} catch (e) {
+  console.error('自检失败：宿主清单读不出来（' + manifestPath + '）');
+  verifyOk = false;
+}
+if (!verifyOk) process.exit(1);
+console.log('自检通过：注册表与宿主清单都已就位。');
+console.log('\n最后一步：打开 edge://extensions（开发者模式），核对上面「允许来源」里的 ID 和页面上显示的扩展 ID 是否一致，');
+console.log('不一致就把页面上的 ID 写进插件根目录的 .crinfo（{"id":"..."}），重跑本脚本。');
+console.log('\n完成。验证：设置页 → 检测更新 → 点「诊断更新」。失败会显示具体错误（重开浏览器后生效）。');
