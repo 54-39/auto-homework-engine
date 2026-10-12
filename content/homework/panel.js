@@ -69,7 +69,9 @@
     .kbtn{border:0;background:none;cursor:pointer;font-size:11px;padding:0 2px;flex:none;color:#2563EB;font-weight:500}
     .kbtn.del{color:#6B7280;font-weight:400}
     .kbtn:disabled{color:#C0C6CD;cursor:not-allowed}
-    .keywarn{color:#DC2626;font-size:11.5px;font-weight:600;flex:none}
+    .keywarn{color:#64748B;font-size:11px;font-weight:400;flex:none}
+    .keywarn a{color:#2563EB;font-weight:500;text-decoration:underline;text-underline-offset:2px}
+    .keywarn a:hover{color:#1d4ed8}
     .btnrow{display:flex;gap:8px;align-items:center;flex:none}
     button.act{flex:1;height:32px;border:0;border-radius:6px;background:#2563EB;color:#fff;cursor:pointer;font-size:12px;font-weight:500}
     button.act.ghost{background:#fff;color:#374151;border:1px solid #CCD2D9;font-weight:400}
@@ -193,7 +195,7 @@
             <button class="lbtn primary savekey">保存</button>
             <button class="lbtn plain clearkey" data-tip="停用当前 Key（列表记录保留）">停用</button>
           </div>
-          <div class="keywarn hidden">提示：API 引擎还没有填写 Key，粘贴后点「保存」</div>
+          <div class="keywarn hidden">还没有 API Key？可先前往 <a href="https://platform.deepseek.com/usage" target="_blank" rel="noopener noreferrer">DeepSeek 平台</a>了解并准备，获取后粘贴到上方并点「保存」。</div>
           <div class="keylist"></div>
         </div>
         <div class="modal subjmodal hidden">

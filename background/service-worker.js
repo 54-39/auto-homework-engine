@@ -197,8 +197,7 @@ async function openUpdateHealthPage() {
   finally { healthPageCheck = false; }
 }
 
-/* 诊断更新宿主：设置页「诊断更新」用。只 ping 不执行更新，返回本机环境信息，
-   方便定位是「宿主没装」「ID 对不上」还是「node/目录」的问题 */
+/* 安装入口打开设置页时执行一次宿主自检；只 ping，不执行更新。 */
 function diagUpdateHost() {
   return nativeRequest({ type: 'ping' }, 10000).then((r) => r?.pong
     ? { ok: true, node: r.node, root: r.root, manifestVersion: r.manifestVersion, extensionId: r.extensionId }
@@ -327,7 +326,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (type === 'HW_RUN_UPDATE') {
         sendResponse(await runUpdateViaHost());
       } else if (type === 'DIAG_UPDATE_HOST') {
-        /* 设置页「诊断更新」：只 ping 宿主不上报更新，返回本机环境信息 */
+        /* 安装完成自检：只 ping 宿主，不启动更新 */
         sendResponse(await diagUpdateHost());
       } else if (type === 'UPDATE_PAGE_READY') {
         sendResponse(await confirmUpdatePage(payload.transactionId, sender));

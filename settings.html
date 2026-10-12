@@ -135,7 +135,7 @@
 
       <section id="sec-upd" class="card" aria-labelledby="h-upd" hidden>
         <h2 id="h-upd">检测更新</h2>
-        <p class="hint">打开本分区会自动检查一次（1 小时内不重复联网）。发现新版后点「更新」：更新器固定一个提交，先下载、校验并备份，再替换文件；浏览器重载后会验证后台和设置页，确认通过才清理备份。失败会从同一提交重拉一次，再失败自动恢复旧版（作业页面需 F5）。首次使用请在插件目录双击 <code>install-updater.cmd</code>；安装后会由当前浏览器实际 ping 更新宿主。</p>
+        <p class="hint">打开本分区会自动检查一次（1 小时内不重复联网）。发现新版后点「更新」：更新器固定一个提交，先下载、校验并备份，再替换文件；浏览器重载后会验证后台和设置页，确认通过才清理备份。失败会从同一提交重拉一次，再失败自动恢复旧版（作业页面需 F5）。首次使用请在插件目录双击一次 <code>install-updater.cmd</code>；安装后，后续更新只需点「更新」。</p>
         <dl class="kv">
           <div><dt>当前版本</dt><dd id="updCurrent">…</dd></div>
           <div><dt>最新版本</dt><dd id="updLatest">尚未检查</dd></div>
@@ -143,7 +143,6 @@
         <div class="actions">
           <button type="button" id="updCheck">立即检查</button>
           <button type="button" id="updRun" hidden>更新</button>
-          <button type="button" id="updDiag">诊断更新</button>
           <a id="updLink" href="#" target="_blank" rel="noopener" hidden>前往 GitHub 查看新版</a>
         </div>
         <div class="msg" id="updMsg" role="status" aria-live="polite"></div>

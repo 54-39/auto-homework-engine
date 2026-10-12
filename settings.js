@@ -244,29 +244,26 @@
   };
   updBtn.addEventListener('click', () => check(true));
   updRun.addEventListener('click', () => runUpdate());
-  /* 诊断更新：ping 一下本机更新宿主，把链路状态打出来（宿主装没装、node 在不在、目录对不对），
-     更新失败时先点这个，看一眼就知道该修哪一环 */
-  const updDiagBtn = $('#updDiag');
+  /* 首次安装后由安装器打开自检页，自动 ping 宿主；日常更新不显示诊断入口。 */
   const updDiagMsg = $('#updDiagMsg');
-  updDiagBtn.addEventListener('click', async () => {
-    updDiagBtn.disabled = true;
+  const verifyUpdateHost = async () => {
     updDiagMsg.hidden = false;
-    out(updDiagMsg, '正在诊断更新链路…');
+    out(updDiagMsg, '正在验证本机更新程序…');
     try {
       const r = await send('DIAG_UPDATE_HOST');
       if (r?.ok) {
         const matches = r.extensionId === chrome.runtime.id && r.manifestVersion === chrome.runtime.getManifest().version;
         out(updDiagMsg, `${matches ? '浏览器 ping 自检通过' : '宿主响应与当前扩展不匹配'}：node ${r.node}，扩展 ID ${r.extensionId}，插件目录 ${r.root}，目录内版本 v${r.manifestVersion}`, matches ? 'ok' : 'err');
       } else if (r?.stage === 'connect') {
-        out(updDiagMsg, '宿主连不上：' + (r.error || '未知错误') + '。请双击插件目录中的 install-updater.cmd 后重试', 'err');
+        out(updDiagMsg, r.error || '连接不到本机更新程序，请在插件目录双击 install-updater.cmd 完成首次安装。', 'err');
       } else {
         out(updDiagMsg, '诊断失败：' + (r?.error || '未知错误'), 'err');
       }
-    } finally {
-      updDiagBtn.disabled = false;
+    } catch (error) {
+      out(updDiagMsg, '连接检查失败：' + String(error?.message || error), 'err');
     }
-  });
-  if (new URLSearchParams(location.search).get('setupCheck') === '1') updDiagBtn.click();
+  };
+  if (new URLSearchParams(location.search).get('setupCheck') === '1') verifyUpdateHost();
   let autoChecked = false;
   onSection = (key) => {
     if (key === 'upd' && !autoChecked) {

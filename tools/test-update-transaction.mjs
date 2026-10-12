@@ -7,8 +7,8 @@ import { runUpdateTransaction } from './autoupdate.mjs';
 
 const SHA = 'b123456789abcdef0123456789abcdef01234567';
 const EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
-const BASE = '0.6.2';
-const NEXT = '0.6.3';
+const BASE = '0.6.3';
+const NEXT = '0.6.4';
 const files = {
   'manifest.json': JSON.stringify({ version: NEXT, background: { service_worker: 'background/service-worker.js' }, content_scripts: [{ js: ['content/new.js'] }] }),
   'background/service-worker.js': 'new worker',
