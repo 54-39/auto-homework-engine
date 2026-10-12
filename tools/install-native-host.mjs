@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { extensionIdFor, nativeHostManifest, nativeHostNames, normalizeRoot } from './native-host-install-core.mjs';
+import { extensionIdFor, nativeHostLauncherSource, nativeHostManifest, nativeHostNames, normalizeRoot } from './native-host-install-core.mjs';
 
 const HERE = path.dirname(url.fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -92,41 +92,7 @@ if (!csc) {
   console.error('错误：找不到 csc.exe（.NET Framework 编译器），无法生成启动器。');
   process.exit(1);
 }
-const cs = `
-using System;
-using System.Diagnostics;
-using System.Threading;
-class NativeHostLauncher {
-  static void Pump(System.IO.Stream from, System.IO.Stream to) {
-    byte[] buf = new byte[8192];
-    try { int n; while ((n = from.Read(buf, 0, buf.Length)) > 0) { to.Write(buf, 0, n); to.Flush(); } }
-    catch { }
-    try { to.Close(); } catch { }
-  }
-  static int Main(string[] args) {
-    string self = System.Reflection.Assembly.GetExecutingAssembly().Location;
-    string host = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(self), "native-host.mjs");
-    ProcessStartInfo psi = new ProcessStartInfo();
-    psi.FileName = @"${nodeExe.replace(/\\/g, '\\\\')}";
-    psi.Arguments = '"' + host + '"';
-    foreach (string arg in args) psi.Arguments += " \"" + arg.Replace("\"", "\\\"") + "\"";
-    psi.UseShellExecute = false;
-    psi.RedirectStandardInput = true;
-    psi.RedirectStandardOutput = true;
-    psi.RedirectStandardError = true;
-    psi.CreateNoWindow = true;
-    using (Process p = Process.Start(psi)) {
-      Thread ti = new Thread(() => Pump(Console.OpenStandardInput(), p.StandardInput.BaseStream));
-      Thread to = new Thread(() => Pump(p.StandardOutput.BaseStream, Console.OpenStandardOutput()));
-      Thread te = new Thread(() => Pump(p.StandardError.BaseStream, Console.OpenStandardError()));
-      ti.IsBackground = to.IsBackground = te.IsBackground = true;
-      ti.Start(); to.Start(); te.Start();
-      ti.Join();
-      p.WaitForExit();
-      return p.ExitCode;
-    }
-  }
-}`;
+const cs = nativeHostLauncherSource(nodeExe);
 const csPath = path.join(os.tmpdir(), 'hw-native-host-launcher.cs');
 fs.writeFileSync(csPath, cs);
 const cscOut = spawnSync(csc, ['/nologo', '/target:exe', '/out:' + exePath, '/platform:anycpu', csPath], { encoding: 'utf8' });

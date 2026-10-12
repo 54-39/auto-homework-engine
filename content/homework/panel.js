@@ -514,6 +514,11 @@
     }
 
     const apiSecOpen = () => { try { return localStorage.getItem('hwApiOpen') !== '0'; } catch { return true; } };
+    let keyWarningOpen = false;
+    let hasSavedApiKey = false;
+    const updateKeyWarning = () => {
+      els.keywarn.classList.toggle('hidden', !keyWarningOpen || hasSavedApiKey || !!els.keyinput.value.trim());
+    };
     const refreshKeyRow = async () => {
       const isApi = els.engine.value === 'api';
       const open = isApi && apiSecOpen();
@@ -524,14 +529,16 @@
       els.panel.classList.toggle('apiopen', open);
       const cfg = (await send('GET_CONFIG'))?.config;
       const key = cfg?.api?.apiKey;
+      keyWarningOpen = open;
+      hasSavedApiKey = !!key;
       els.keylabel.textContent = key ? `使用中：尾号 ${key.slice(-4)}` : '粘贴 API Key';
-      // 没填 Key：红色醒目提醒（选引擎时/打开面板时/停用后都会经过这里）
-      els.keywarn.classList.toggle('hidden', !open || !!key);
+      updateKeyWarning();
       const cur = IFACES.find((p) => p.id === (cfg?.api?.iface || 'auto')) || IFACES[0];
       els.provider.value = cur.id;
       els.psource.textContent = cur.source;
       await renderKeyList(open);
     };
+    els.keyinput.addEventListener('input', updateKeyWarning);
     const doSaveKey = async (raw, remember) => {
       const clean = String(raw || '').replace(/[^\x21-\x7E]/g, '').trim();
       if (!clean) {

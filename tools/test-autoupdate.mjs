@@ -91,7 +91,7 @@ t('cmp 0.4.8 < 0.4.11', cmp('0.4.8', '0.4.11') < 0);
 t('cmp 相等', cmp('0.5.0', '0.5.0') === 0);
 
 /* 2. 载荷过滤 */
-for (const p of ['manifest.json', 'settings.html', 'settings.js', 'install-updater.cmd', 'background/service-worker.js', 'content/homework/panel.js', 'options/options.js', 'icons/icon16.png', 'tools/autoupdate.mjs', 'tools/native-host.mjs', 'tools/install-native-host.mjs']) {
+for (const p of ['manifest.json', 'settings.html', 'settings.js', 'install-updater.cmd', 'background/service-worker.js', 'content/homework/panel.js', 'options/options.js', 'icons/icon16.png', 'tools/autoupdate.mjs', 'tools/native-host.mjs', 'tools/native-host-install-core.mjs', 'tools/install-native-host.mjs']) {
   t('载荷包含 ' + p, isPayload(p));
 }
 for (const p of ['README.md', 'LICENSE', 'package.json', '.update-files.json', 'hot-reload.json', 'PRIVACY.md']) {
