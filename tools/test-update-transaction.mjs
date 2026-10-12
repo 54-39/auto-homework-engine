@@ -7,10 +7,11 @@ import { runUpdateTransaction } from './autoupdate.mjs';
 
 const SHA = 'b123456789abcdef0123456789abcdef01234567';
 const EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
-const BASE = '0.6.3';
-const NEXT = '0.6.4';
+const BASE = '0.6.4';
+const NEXT = '0.6.5';
 const files = {
   'manifest.json': JSON.stringify({ version: NEXT, background: { service_worker: 'background/service-worker.js' }, content_scripts: [{ js: ['content/new.js'] }] }),
+  'install-updater.cmd': '@echo off\nREM updated installer',
   'background/service-worker.js': 'new worker',
   'content/new.js': 'new content',
   'settings.html': '<html>new</html>',
@@ -61,9 +62,10 @@ function makeRoot() {
   put('background/service-worker.js', 'old worker');
   put('content/old.js', 'old content');
   put('tools/autoupdate.mjs', 'old updater');
+  put('install-updater.cmd', '@echo off\nREM old installer');
   put('settings.html', '<html>old</html>');
   put('settings.js', 'old settings');
-  put('.update-files.json', JSON.stringify(['manifest.json', 'background/service-worker.js', 'content/old.js', 'tools/autoupdate.mjs', 'settings.html', 'settings.js']));
+  put('.update-files.json', JSON.stringify(['manifest.json', 'install-updater.cmd', 'background/service-worker.js', 'content/old.js', 'tools/autoupdate.mjs', 'settings.html', 'settings.js']));
   put('.crinfo', JSON.stringify({ id: EXTENSION_ID, root }));
   put('user-config.json', JSON.stringify({ keyName: 'preserved', options: { keep: true } }));
   return root;
@@ -81,6 +83,7 @@ const run = (root, transactionId, fetchImpl, confirmImpl) => runUpdateTransactio
   assert.equal(result.latest, NEXT);
   assert.equal(read(root, 'manifest.json'), files['manifest.json']);
   assert.equal(read(root, 'tools/autoupdate.mjs'), 'new updater');
+  assert.equal(read(root, 'install-updater.cmd'), files['install-updater.cmd']);
   assert.equal(exists(root, 'content/old.js'), false);
   assert.equal(exists(root, `.update-backup-${id}`), false);
   assert.deepEqual(JSON.parse(read(root, '.crinfo')), { id: EXTENSION_ID, root });
@@ -124,6 +127,7 @@ const run = (root, transactionId, fetchImpl, confirmImpl) => runUpdateTransactio
   assert.equal(read(root, 'content/old.js'), 'old content');
   assert.equal(exists(root, 'content/new.js'), false);
   assert.equal(read(root, 'tools/autoupdate.mjs'), 'old updater');
+  assert.equal(read(root, 'install-updater.cmd'), '@echo off\nREM old installer');
   assert.equal(JSON.parse(read(root, '.update-files.json')).includes('content/old.js'), true);
   assert.equal(exists(root, `.update-backup-${id}`), false);
   fs.rmSync(root, { recursive: true, force: true });

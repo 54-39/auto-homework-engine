@@ -16,7 +16,7 @@ const DOWNLOAD_LIMIT = 300000;
 
 export const isPayload = (p) =>
   typeof p === 'string' && !p.split('/').includes('..') &&
-  (p === 'manifest.json' || p === 'settings.html' || p === 'settings.js' ||
+  (p === 'manifest.json' || p === 'settings.html' || p === 'settings.js' || p === 'install-updater.cmd' ||
     /^(background|content|options|icons|tools)\//.test(p));
 
 export const cmp = (a, b) => {
