@@ -5,7 +5,8 @@
    → 全部成功后覆盖/新增、删除远端已移除的载荷文件 → 写 hot-reload.json 触发后台自动重载。
    更新源：先把 master 钉到当前 commit（atom 订阅源，不占 API 配额），整轮都从那个不可变快照读，
    清单里每个文件还带 sha256 可逐字节校验；钉不住才退回 GitHub API / jsDelivr @master。
-   tools/、README、LICENSE 等非载荷文件永不改动。 */
+   tools/ 里的脚本也一起更新——更新器自己就在 tools/，不更新它，更新逻辑一改就得回每台机器手抄一遍；
+   README、LICENSE、package.json 等非载荷文件不动。 */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,10 +20,13 @@ const CDN_LIST = (rev) => `https://data.jsdelivr.com/v1/packages/gh/${REPO}@${re
 const STAGE = '.update-stage';
 const LIST = '.update-files.json';
 
-/* 扩展载荷范围（浏览器实际加载的文件）；README/LICENSE/package.json/tools 等不在其列 */
+/* 更新范围：扩展载荷（浏览器实际加载的文件）＋ tools/ 里的更新脚本。tools/ 必须一起更新，否则
+   更新逻辑本身永远是装机那天的老版本，改一次就得回每台机器手抄一遍，谈不上全自动。只认远端清单
+   列出的文件，所以本机私有的 tools/native-host.exe 与本地测试脚本不会被碰；README、LICENSE、
+   package.json 等不在其列。 */
 export const isPayload = (p) =>
   p === 'manifest.json' || p === 'settings.html' || p === 'settings.js' ||
-  /^(background|content|options|icons)\//.test(p);
+  /^(background|content|options|icons|tools)\//.test(p);
 
 export const cmp = (a, b) => {
   const A = String(a).split('.').map(Number), B = String(b).split('.').map(Number);
@@ -153,10 +157,19 @@ export async function syncOnce({ root = process.cwd(), fetchImpl = fetch, log = 
     const f = path.join(root, p);
     if (fs.existsSync(f)) { fs.unlinkSync(f); removed.push(p); }
   }
-  for (const p of files) {
+  const put = (p) => {
     const dst = path.join(root, p);
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     fs.copyFileSync(path.join(stage, p), dst);
+  };
+  /* manifest.json 留到最后写：版本号就是「这一版装完了」的标记。中途失败（文件被别的程序占用等）时
+     它还是旧的，下次点更新会整轮重来；先写它则崩在后面的文件上就再也不会补——版本号已经相等了。 */
+  try {
+    for (const p of files) if (p !== 'manifest.json') put(p);
+    if (files.includes('manifest.json')) put('manifest.json');
+  } catch (e) {
+    rmrf(stage);
+    return { ok: false, updated: false, current, latest, error: `写入文件失败（${String(e.message || e)}）；版本号未改，下次点「更新」会重来` };
   }
   fs.writeFileSync(path.join(root, LIST), JSON.stringify(files, null, 2));
   rmrf(stage);

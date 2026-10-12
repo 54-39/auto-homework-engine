@@ -72,7 +72,7 @@
 2. 日常使用：设置页「检测更新」发现新版 → 出现「更新」按钮 → 点它。浏览器经原生消息宿主拉起 `tools/native-host.mjs` → 调用 `tools/autoupdate.mjs` 同步一轮：先把 master 钉到当前 commit（GitHub 的提交订阅源，网页、不占 API 配额）→ 版本号、文件清单、文件本身整轮都从那个**不可变快照**读（清单走 jsDelivr 的接口，每一项带 sha256）→ 把扩展文件全部下载到 `.update-stage/` 暂存（任何一个下载失败、或下载到的字节与清单里的 sha256 不符，就整轮放弃、旧文件原封不动）→ 全部成功后覆盖/新增文件、删除远端已移除的文件 → 写 `hot-reload.json` 触发插件后台自动重载。**一轮更新只用一个快照**：这样即便 GitHub API 配额中途用尽、或 CDN 尚未同步完，也只会「这轮没更成」，不会装出半新半旧却报「已更新到 vX」的版本。钉不住 commit 时退回 GitHub API / jsDelivr `@master`，此时靠装前两道校验兜底：核对暂存下来的 manifest 是不是要装的那一版、manifest 声明的脚本是否都下齐了，对不上就整轮放弃并提示稍后重试。插件目录由宿主自己定位（它就在插件根的 tools/ 下），所以换电脑、换目录都不用改代码。
 3. 更新完成后插件自动重载，**作业页面仍需 F5** 让内容脚本生效；面板提示行同样只在功能更新（次版本号变化）时出现「更新」按钮。
 
-脚本只更新扩展实际加载的文件（manifest.json、background/、content/、options/、icons/、settings.html、settings.js），README、LICENSE、tools 等不受影响。**自动更新不会更新 tools/ 自己**：若某一版的更新逻辑改过（例如换电脑/换目录的支持），那台机器要重新拉取仓库、重跑一次 `install-native-host.mjs` 才会生效。宿主只接受已注册的那个扩展的请求，不监听端口。也可以手动同步一轮（不经过浏览器）：`node tools/autoupdate.mjs <插件目录>`。
+脚本更新扩展实际加载的文件（manifest.json、background/、content/、options/、icons/、settings.html、settings.js）**以及 tools/ 里的更新脚本本身**（`tools/*.mjs`）——更新逻辑改一次就跟着版本走到每台机器，不用再回每台机器手抄，大小更新都能一路自动。只认远端清单列出的文件，所以本机私有的启动器 `tools/native-host.exe`、本地测试脚本（如 `tools/test-autoupdate.mjs`）不会被碰；README、LICENSE、package.json 等也不在更新范围。**唯一仍需每台机器手动一次的**是 `install-native-host.mjs` 生成的启动器与注册表：启动器把浏览器和 node 接起来，它自己不能被正在运行的更新器替换，所以某版若改动了启动器的编译方式（少见），那台机器才需要重拉仓库并重跑一次安装脚本。宿主只接受已注册的那个扩展的请求，不监听端口。也可以手动同步一轮（不经过浏览器）：`node tools/autoupdate.mjs <插件目录>`。
 
 ## 设置页
 
@@ -136,9 +136,10 @@ content/
 options/                   # 设置页（API / 豆包桥接）
 settings.html / settings.js  # 工具设置页（侧边栏：记忆 / 诊断 / 检测更新）
 tools/watch.mjs            # 热重载监听
-tools/autoupdate.mjs       # GitHub 版自动更新（检查→下载→替换→热重载；点「更新」时由浏览器拉起）
-tools/native-host.mjs      # 原生消息宿主（浏览器 ↔ autoupdate.mjs 的桥梁）
-tools/install-native-host.mjs # 一次性安装：注册原生宿主（注册表+清单）
+tools/autoupdate.mjs       # GitHub 版自动更新（检查→下载→替换→热重载；点「更新」时由浏览器拉起，随版本一起自动更新）
+tools/native-host.mjs      # 原生消息宿主（浏览器 ↔ autoupdate.mjs 的桥梁，随版本一起自动更新）
+tools/install-native-host.mjs # 一次性安装：注册原生宿主（注册表+清单；改到它时需在本机重跑一次）
+tools/native-host.exe      # 安装脚本本机编译的启动器（不入库、不自动更新）
 ```
 
 ## 说明
