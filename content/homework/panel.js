@@ -151,10 +151,10 @@
     { id: 'anthropic', label: 'Anthropic', source: 'Claude 系 /v1/messages' },
   ];
 
-  /* 引擎下拉的两行文案（面板用短名，设置页同名同说明，见 options/options.js） */
+  /* 引擎下拉只放名称：说明文字进了列表就是噪音——切到豆包时日志里已经写了它会怎么做 */
   const ENGINES = [
-    { id: 'api', label: 'API', desc: '自带 Key 直连，按量计费' },
-    { id: 'bridge', label: '豆包桥接(免费)', desc: '自动打开豆包标签页，免费但较慢' },
+    { id: 'api', label: 'API' },
+    { id: 'bridge', label: '豆包桥接（免费）' },
   ];
 
   function init() {
@@ -179,7 +179,7 @@
         </div>
         <div class="hintline">只填写不提交，提交请自行操作</div>
         <div class="updline hidden" data-tip="点击「更新」自动下载替换到最新版，成功后本插件自动重载（页面需 F5）"></div>
-        <button class="apitoggle hidden">▾ 接口 与 API Key</button>
+        <button class="apitoggle hidden">接口 与 API Key</button>
         <div class="apisec hidden">
           <div class="provrow">
             <div class="provtop"><label>接口类型</label><div class="dd providerslot"></div></div>
@@ -250,7 +250,7 @@
        控件接口模仿 select：els.engine.value / els.provider.value 读写照旧。 */
     els.engine = HW.Dropdown.create({
       into: $('.engineslot'),
-      items: ENGINES.map((e) => ({ id: e.id, label: e.label, desc: e.desc })),
+      items: ENGINES.map((e) => ({ id: e.id, label: e.label })),
       value: 'api',
       onChange: async (engine) => {
         const r = await send('SET_CONFIG', { engine });
@@ -265,7 +265,7 @@
     });
     els.provider = HW.Dropdown.create({
       into: $('.providerslot'),
-      items: IFACES.map((p) => ({ id: p.id, label: p.label, desc: p.source })),
+      items: IFACES.map((p) => ({ id: p.id, label: p.label })),
       value: 'auto',
       onChange: async (iface) => {
         const r = await send('SET_CONFIG', { api: { iface } });
@@ -517,7 +517,7 @@
       const open = isApi && apiSecOpen();
       // API 引擎：显示「接口与Key」抽屉（可折叠）；其他引擎：整块隐藏，空间让给题目列表和日志
       els.apiToggle.classList.toggle('hidden', !isApi);
-      els.apiToggle.textContent = open ? '▾ 接口 与 API Key' : '▸ 接口 与 API Key（已折叠）';
+      els.apiToggle.textContent = open ? '接口 与 API Key' : '接口 与 API Key（已折叠）';
       els.apisec.classList.toggle('hidden', !open);
       els.panel.classList.toggle('apiopen', open);
       const cfg = (await send('GET_CONFIG'))?.config;

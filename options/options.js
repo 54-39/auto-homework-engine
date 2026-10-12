@@ -12,14 +12,14 @@ const $ = (id) => document.getElementById(id);
 const engineCtl = HW.Dropdown.create({
   into: $('engine'),
   items: [
-    { id: 'api', label: 'API 引擎（OpenAI 兼容）', desc: '自带 Key 直连，按量计费' },
-    { id: 'bridge', label: '豆包网页桥接（免费）', desc: '自动打开豆包标签页，免费但较慢' },
+    { id: 'api', label: 'API 引擎（OpenAI 兼容）' },
+    { id: 'bridge', label: '豆包网页桥接（免费）' },
   ],
   value: 'api',
 });
 const providerCtl = HW.Dropdown.create({
   into: $('provider'),
-  items: Object.entries(IFACES).map(([id, v]) => ({ id, label: v.label, desc: v.hint })),
+  items: Object.entries(IFACES).map(([id, v]) => ({ id, label: v.label })),
   value: 'auto',
   onChange: (iface) => {
     const p = IFACES[iface];

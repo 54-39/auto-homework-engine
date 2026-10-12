@@ -2,8 +2,9 @@
    的「引擎 / 接口类型」共用这一份实现。两处硬约束（都是本项目踩过的坑）：
    1) 弹层挂在面板的 overflow:hidden 之外——与 .tip 一样挂在 Shadow 根上，否则被裁掉；
    2) 面板 .panel.expanded 有 transform，会改 fixed 子元素的定位基准——弹层不能放进 .panel 里。
-   用法：HW.Dropdown.create({ into, items, value, onChange }) → { value, label, close, el }
-   返回对象故意长得像原生 select（value 可读写），调用方其余代码不用改。 */
+   用法：HW.Dropdown.create({ into, items:[{id,label}], value, onChange }) → { value, label, close, el }
+   返回对象故意长得像原生 select（value 可读写），调用方其余代码不用改。
+   列表项只放名称，不放说明文字：说明要么与控件下方的说明行重复，要么是整段话——塞进列表就是臃肿。 */
 (function () {
   'use strict';
   const HW = (window.HW = window.HW || {});
@@ -14,22 +15,22 @@
     .ddtrig{display:flex;align-items:center;gap:6px;width:100%;height:var(--dd-h,30px);padding:0 10px;border:1px solid var(--dd-line,#E3E8EF);
       border-radius:var(--dd-radius,6px);background:#fff;color:#111827;font:inherit;font-size:var(--dd-font,12px);font-weight:500;cursor:pointer;text-align:left}
     .ddtrig:hover{border-color:#C7D0DB}
-    .ddtrig[aria-expanded="true"]{border-color:#2563EB;box-shadow:0 0 0 3px rgba(37,99,235,.14)}
+    .ddtrig[aria-expanded="true"]{border-color:#2563EB}
     .ddname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .ddcaret{flex:none;font-size:9px;color:#9AA1A9;transition:transform .15s ease}
-    .ddtrig[aria-expanded="true"] .ddcaret{transform:rotate(180deg);color:#2563EB}
-    .ddlist{position:fixed;z-index:2147483647;min-width:180px;max-height:264px;overflow-y:auto;padding:4px;background:#fff;
+    /* 箭头用边框画三角：Unicode 字形（▾）在不同字体下大小和基线都不受控 */
+    .ddcaret{flex:none;width:0;height:0;border:4px solid transparent;border-top-color:#6B7280;transition:transform .15s ease}
+    .ddtrig[aria-expanded="true"] .ddcaret{border-top-color:#2563EB;transform:rotate(180deg)}
+    .ddlist{position:fixed;z-index:2147483647;min-width:180px;max-width:320px;max-height:264px;overflow-y:auto;padding:4px;background:#fff;
       border:1px solid #E3E8EF;border-radius:calc(var(--dd-radius,6px) + 4px);
-      box-shadow:0 10px 24px -8px rgba(15,23,42,.22),0 2px 6px -2px rgba(15,23,42,.08)}
+      box-shadow:0 6px 16px -8px rgba(15,23,42,.20),0 1px 3px -1px rgba(15,23,42,.08)}
     .ddlist.hidden{display:none}
-    /* 三种态必须一眼分得开：悬停/键盘高亮=中性灰、选中=淡蓝+左侧蓝条、两者叠加=更深的蓝+蓝内描边 */
-    .ddopt{display:flex;flex-direction:column;gap:1px;padding:6px 8px;border-left:3px solid transparent;border-radius:var(--dd-radius,6px);cursor:pointer}
-    .ddopt .ddlabel{font-size:var(--dd-font,12px);font-weight:500;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .ddopt .dddesc{font-size:11px;color:#9AA1A9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .ddopt.hot{background:#F3F4F6;box-shadow:inset 0 0 0 1px #DCE1E8}
-    .ddopt[aria-selected="true"]{background:#E8EFFD;border-left-color:#2563EB}
-    .ddopt[aria-selected="true"] .ddlabel{font-weight:600}
-    .ddopt.hot[aria-selected="true"]{background:#DCE7FD;box-shadow:inset 0 0 0 1px #A9C4F7}
+    /* 单行选项：两种态一眼分得开即可——悬停/键盘高亮=中性灰、选中=淡蓝底+加粗（不用侧色条与内描边，那是装饰） */
+    .ddopt{padding:6px 8px;border-radius:var(--dd-radius,6px);cursor:pointer;font-size:var(--dd-font,12px);font-weight:500;color:#111827;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .ddopt.hot{background:#F3F4F6}
+    .ddopt[aria-selected="true"]{background:#E8EFFD;font-weight:600}
+    .ddopt.hot[aria-selected="true"]{background:#DCE7FD}
+    @media (prefers-reduced-motion:reduce){.ddcaret{transition:none}}
   `;
 
   const styled = new WeakSet();
@@ -56,8 +57,7 @@
     const name = document.createElement('span');
     name.className = 'ddname';
     const caret = document.createElement('span');
-    caret.className = 'ddcaret';
-    caret.textContent = '▾';
+    caret.className = 'ddcaret'; // 箭头由 CSS 边框画，别塞字形进来
     trig.append(name, caret);
     into.appendChild(trig);
 
@@ -70,13 +70,7 @@
       o.id = 'ddopt-' + ++seq;
       o.dataset.id = it.id;
       o.setAttribute('role', 'option');
-      const l = document.createElement('span');
-      l.className = 'ddlabel';
-      l.textContent = it.label;
-      const d = document.createElement('span');
-      d.className = 'dddesc';
-      d.textContent = it.desc || '';
-      o.append(l, d);
+      o.textContent = it.label; // 单行：说明文字放控件下方，不进列表
       o.addEventListener('mousedown', (e) => e.preventDefault()); // 别让焦点离开触发器，键盘流程才不断
       o.addEventListener('click', () => pick(it.id));
       o.addEventListener('mouseenter', () => setHot(o));
