@@ -1,3 +1,5 @@
+import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } from './tools/updater-setup-core.mjs';
+
 /* 工具设置页（settings.html）：侧边栏收纳 记忆 / 诊断 / 检测更新。
    由面板「设置」按钮打开（后台 OPEN_SETTINGS 消息），逻辑走后台消息或脚本注入。 */
 (() => {
@@ -125,24 +127,9 @@
   const updLink = $('#updLink');
   const updMsg = $('#updMsg');
   const updBtn = $('#updCheck');
+  const updSetup = $('#updSetup');
+  const updSetupMsg = $('#updSetupMsg');
   const updRun = $('#updRun');
-  const updSetupDialog = $('#updSetupDialog');
-  const setupReminderKey = 'hwUpdaterSetupReminderShown';
-  let setupReminderShown = false;
-  const showSetupReminderOnce = async () => {
-    if (setupReminderShown) return false;
-    try {
-      const saved = await chrome.storage.local.get(setupReminderKey);
-      if (saved?.[setupReminderKey]) {
-        setupReminderShown = true;
-        return false;
-      }
-    } catch { /* still show once for this page session */ }
-    setupReminderShown = true;
-    try { await chrome.storage.local.set({ [setupReminderKey]: true }); } catch { /* storage is optional for this reminder */ }
-    if (!updSetupDialog.open) updSetupDialog.showModal();
-    return true;
-  };
   const isUpdaterHostMissing = (error) => /更新宿主未安装|原生宿主未安装|specified native messaging host|native messaging host.*(?:not found|does not exist|forbidden)/i.test(error);
   const updateHost = `com.homeworkhelper.autoupdate.${chrome.runtime.id}`;
   const nativeUpdateRequest = (message, timeoutMs = 10000) => new Promise((resolve) => {
@@ -162,6 +149,98 @@
     port.onDisconnect.addListener(() => done({ ok: false, error: chrome.runtime.lastError?.message || '宿主提前退出' }));
     port.postMessage({ ...message, extensionId: chrome.runtime.id });
   });
+  let setupPollTimer = 0;
+  let setupPollBusy = false;
+  let setupWatchActive = false;
+  let setupDownloadBusy = false;
+  const showSetupStatus = (response, installed = false) => {
+    const ready = isUpdaterHostReady(response, chrome.runtime.id, chrome.runtime.getManifest().version);
+    updSetup.hidden = ready;
+    if (ready) {
+      if (installed) {
+        updSetupMsg.hidden = false;
+        out(updSetupMsg, '更新组件已安装并连接到当前插件。', 'ok');
+      } else updSetupMsg.hidden = true;
+      setupWatchActive = false;
+      if (setupPollTimer) clearTimeout(setupPollTimer);
+      setupPollTimer = 0;
+      return true;
+    }
+    updSetupMsg.hidden = false;
+    out(updSetupMsg, response?.ok
+      ? '已连接到其他插件目录或版本。点“运行”重新下载安装器，并选择当前加载的作业助手文件夹。'
+      : setupWatchActive
+        ? '请双击刚才定位的安装器，选择作业助手文件夹并按 CMD 提示完成。若取消或安装失败，回到这里再点“运行”重试。'
+        : '更新组件尚未连接。点“运行”下载安装器并选择作业助手文件夹。', 'err');
+    return false;
+  };
+  const checkSetupHost = async (installed = false) => {
+    if (setupPollBusy) return false;
+    setupPollBusy = true;
+    try { return showSetupStatus(await send('DIAG_UPDATE_HOST'), installed); }
+    finally { setupPollBusy = false; }
+  };
+  const scheduleSetupPoll = () => {
+    if (!setupWatchActive || setupPollTimer) return;
+    setupPollTimer = setTimeout(async () => {
+      setupPollTimer = 0;
+      const ready = await checkSetupHost(true);
+      if (!ready) scheduleSetupPoll();
+    }, 3000);
+  };
+  const waitForDownload = async (downloadId) => {
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      const [item] = await chrome.downloads.search({ id: downloadId });
+      if (item?.state === 'complete') return item;
+      if (item?.state === 'interrupted') throw new Error('浏览器中断了安装器下载。请在下载提示中选择保留后重试。');
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Error('下载等待超时。请检查浏览器下载提示后重试。');
+  };
+  const downloadUpdaterInstaller = async () => {
+    if (setupDownloadBusy) return;
+    setupDownloadBusy = true;
+    updSetup.disabled = true;
+    updSetup.textContent = '准备中…';
+    let blobUrl = '';
+    try {
+      const granted = await requestDownloadsPermission(chrome.permissions);
+      if (!granted) {
+        out(updSetupMsg, '需要允许“管理下载内容”权限，才能下载并定位安装器。允许后再点“运行”。', 'err');
+        updSetupMsg.hidden = false;
+        return;
+      }
+      const response = await fetch(chrome.runtime.getURL('tools/updater-bootstrap.cmd'));
+      if (!response.ok) throw new Error('读取安装器失败');
+      const installer = makeInstallerPayload(await response.text(), chrome.runtime.id);
+      blobUrl = URL.createObjectURL(new Blob([installer], { type: 'application/octet-stream' }));
+      const downloadId = await chrome.downloads.download({
+        url: blobUrl,
+        filename: '作业助手-更新安装器.cmd',
+        saveAs: false,
+      });
+      await waitForDownload(downloadId);
+      setupWatchActive = true;
+      let located = true;
+      try { chrome.downloads.show(downloadId); }
+      catch { located = false; }
+      out(updSetupMsg, located
+        ? '已定位到安装器。双击它，选择作业助手文件夹并按 CMD 提示完成；若取消或失败，回到这里再点“运行”重试。'
+        : '安装器已下载，但浏览器没能定位文件。请从下载列表打开它，选择作业助手文件夹并按 CMD 提示操作。', located ? 'ok' : 'err');
+      updSetupMsg.hidden = false;
+      const ready = await checkSetupHost();
+      if (!ready) scheduleSetupPoll();
+    } catch (error) {
+      out(updSetupMsg, '安装器未能打开：' + String(error?.message || error) + '。可在浏览器下载列表中查看并重试。', 'err');
+      updSetupMsg.hidden = false;
+    } finally {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      setupDownloadBusy = false;
+      updSetup.disabled = false;
+      updSetup.textContent = '运行';
+    }
+  };
   const transactionKey = `hw-update-transaction:${chrome.runtime.id}`;
   const phaseText = {
     checking: '正在锁定本轮更新提交…',
@@ -254,10 +333,10 @@
         updRun.textContent = '更新';
         const error = String(r?.error || '未知错误');
         if (isUpdaterHostMissing(error)) {
-          const firstReminder = await showSetupReminderOnce();
-          out(updMsg, firstReminder
-            ? '请按弹窗步骤完成一次安装，再点“更新”。'
-            : '更新组件还没安装。请在插件文件夹双击 install-updater.cmd，再回来点“更新”。', 'err');
+          updSetup.hidden = false;
+          out(updSetupMsg, '更新组件尚未连接。点“运行”下载安装器并选择作业助手文件夹。', 'err');
+          updSetupMsg.hidden = false;
+          out(updMsg, '请先点“运行”完成一次安装，然后重试更新。', 'err');
         } else out(updMsg, '更新失败：' + error, 'err');
       }
     } catch (error) {
@@ -267,32 +346,20 @@
     }
   };
   updBtn.addEventListener('click', () => check(true));
+  updSetup.addEventListener('click', () => downloadUpdaterInstaller());
   updRun.addEventListener('click', () => runUpdate());
-  /* 首次安装后由安装器打开自检页，自动 ping 宿主；日常更新不显示诊断入口。 */
-  const updDiagMsg = $('#updDiagMsg');
-  const verifyUpdateHost = async () => {
-    updDiagMsg.hidden = false;
-    out(updDiagMsg, '正在验证本机更新程序…');
-    try {
-      const r = await send('DIAG_UPDATE_HOST');
-      if (r?.ok) {
-        const matches = r.extensionId === chrome.runtime.id && r.manifestVersion === chrome.runtime.getManifest().version;
-        out(updDiagMsg, `${matches ? '浏览器 ping 自检通过' : '宿主响应与当前扩展不匹配'}：node ${r.node}，扩展 ID ${r.extensionId}，插件目录 ${r.root}，目录内版本 v${r.manifestVersion}`, matches ? 'ok' : 'err');
-      } else if (r?.stage === 'connect') {
-        out(updDiagMsg, r.error || '连接不到本机更新程序，请在插件目录双击 install-updater.cmd 完成首次安装。', 'err');
-      } else {
-        out(updDiagMsg, '诊断失败：' + (r?.error || '未知错误'), 'err');
-      }
-    } catch (error) {
-      out(updDiagMsg, '连接检查失败：' + String(error?.message || error), 'err');
-    }
-  };
-  if (new URLSearchParams(location.search).get('setupCheck') === '1') verifyUpdateHost();
   let autoChecked = false;
+  let setupHostChecked = false;
   onSection = (key) => {
-    if (key === 'upd' && !autoChecked) {
-      autoChecked = true;
-      check(false);
+    if (key === 'upd') {
+      if (!autoChecked) {
+        autoChecked = true;
+        check(false);
+      }
+      if (!setupHostChecked) {
+        setupHostChecked = true;
+        checkSetupHost();
+      }
     }
   };
   if (!secs.upd.hidden) onSection('upd'); // 直接以 #upd 打开时也要自动检查

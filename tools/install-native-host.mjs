@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { extensionIdFor, nativeHostLauncherSource, nativeHostManifest, nativeHostNames, normalizeRoot } from './native-host-install-core.mjs';
 
 const HERE = path.dirname(url.fileURLToPath(import.meta.url));
@@ -22,8 +22,11 @@ const HOSTS = {
 const args = process.argv.slice(2);
 const browser = (args[0] || 'edge').toLowerCase();
 const extRoot = ROOT;
-if (args.length > 1 || !HOSTS[browser]) {
-  console.error('用法：在插件目录双击 install-updater.cmd；或 node tools/install-native-host.mjs [edge|chrome]');
+const expectedArg = args.find((arg) => arg.startsWith('--expected-id='));
+const expectedId = expectedArg?.slice('--expected-id='.length) || '';
+const unknownArgs = args.filter((arg, index) => index !== 0 && arg !== expectedArg);
+if (!HOSTS[browser] || unknownArgs.length || (expectedArg && !/^[a-p]{32}$/.test(expectedId))) {
+  console.error('用法：在插件目录双击 install-updater.cmd；或 node tools/install-native-host.mjs [edge|chrome] [--expected-id=<extension-id>]');
   process.exit(1);
 }
 if (!fs.existsSync(path.join(extRoot, 'manifest.json'))) {
@@ -40,6 +43,10 @@ const crinfoPath = path.join(extRoot, '.crinfo');
 let saved = null;
 try { saved = JSON.parse(fs.readFileSync(crinfoPath, 'utf8')); } catch { /* 首次安装 */ }
 const extId = extensionIdFor(extRoot);
+if (expectedId && extId !== expectedId) {
+  console.error('所选文件夹不是浏览器当前加载的作业助手目录。没有修改安装信息，请返回设置页重新运行并选择正确文件夹。');
+  process.exit(1);
+}
 const names = nativeHostNames(extId);
 const derivedId = saved?.id !== extId || normalizeRoot(saved?.root || '') !== normalizeRoot(extRoot);
 fs.writeFileSync(crinfoPath, JSON.stringify({ id: extId, root: normalizeRoot(extRoot) }, null, 2));
@@ -66,19 +73,6 @@ function findNode() {
   for (const p of ['C:\\Program Files\\nodejs\\node.exe', 'C:\\Program Files (x86)\\nodejs\\node.exe']) {
     if (fs.existsSync(p)) return p;
   }
-  return '';
-}
-function findBrowser() {
-  const name = browser === 'edge' ? 'msedge.exe' : 'chrome.exe';
-  for (const p of browser === 'edge'
-    ? ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe']
-    : ['C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe']) {
-    if (fs.existsSync(p)) return p;
-  }
-  try {
-    const result = spawnSync('where.exe', [name], { encoding: 'utf8' });
-    if (result.status === 0) return String(result.stdout || '').split(/\r?\n/).find(Boolean)?.trim() || '';
-  } catch { /* user can open the settings page manually */ }
   return '';
 }
 const nodeExe = findNode();
@@ -162,14 +156,4 @@ try {
 }
 if (!verifyOk) process.exit(1);
 console.log('自检通过：注册表、宿主清单、启动器路径与目录 ID 一致。');
-console.log('\n安装完成。设置页将通过当前浏览器验证宿主连接、扩展 ID、目录和版本。');
-const browserExe = findBrowser();
-if (browserExe) {
-  const settingsUrl = `chrome-extension://${extId}/settings.html?setupCheck=1#upd`;
-  const opened = spawn(browserExe, [settingsUrl], { detached: true, stdio: 'ignore', windowsHide: false });
-  opened.once('error', (e) => console.error('无法自动打开浏览器自检页：' + String(e.message || e)));
-  opened.unref();
-  console.log('已打开设置页，由当前浏览器实际 ping 更新宿主并校验扩展 ID、目录和版本。');
-} else {
-  console.log('未找到浏览器可执行文件；打开扩展设置页 → 诊断更新，完成实际浏览器 ping。');
-}
+console.log('\n安装完成。请回到设置页，等待当前浏览器 ping 验证后“运行”按钮自动消失。');

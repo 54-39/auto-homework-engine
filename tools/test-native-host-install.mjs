@@ -3,8 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { deriveExtensionId, extensionIdFor, nativeHostLauncherSource, nativeHostManifest, nativeHostNames, normalizeRoot } from './native-host-install-core.mjs';
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(path.parse(process.cwd()).root, '插件 源码', '作业助手 中文目录');
 const otherRoot = path.join(path.parse(process.cwd()).root, '插件 源码', '其他目录');
 const id = deriveExtensionId(root);
@@ -24,6 +26,13 @@ assert.equal(manifest.path, path.join(root, 'tools', 'native-host.exe'));
 assert.deepEqual(manifest.allowed_origins, [`chrome-extension://${id}/`]);
 
 console.log('installer path, copied-ID, per-extension host, and origin cases PASS');
+
+const mismatch = spawnSync(process.execPath, [
+  path.join(HERE, 'install-native-host.mjs'), 'edge', `--expected-id=${deriveExtensionId(otherRoot)}`,
+], { encoding: 'utf8' });
+assert.equal(mismatch.status, 1);
+assert.match(mismatch.stderr + mismatch.stdout, /所选文件夹不是浏览器当前加载的作业助手目录/);
+console.log('installer rejects a different selected extension directory before registration PASS');
 
 const nodeExe = String.raw`C:\Program Files\nodejs\node.exe`;
 const launcher = nativeHostLauncherSource(nodeExe);
