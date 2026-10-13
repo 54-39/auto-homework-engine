@@ -180,7 +180,7 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
         ? '宿主连接到了其他插件目录。请点“运行”，安装器会自动查找 Edge 当前使用的目录。'
         : setupWatchActive
           ? '请双击 Edge 下载目录中的“作业助手-更新安装器.cmd”，按提示完成。返回此页后会自动重新检查；失败时可再点“运行”重试。'
-          : `更新宿主尚未连接${response?.error ? '：' + response.error : ''}。点“运行”下载安装器并双击下载项。`;
+          : `更新宿主尚未连接${response?.error ? '：' + response.error : ''}。点“运行”下载“作业助手-更新安装器.cmd”，再从 Edge 下载记录中双击运行。`;
     out(updSetupMsg, message, 'err');
     return false;
   };
@@ -232,16 +232,12 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
       });
       await waitForDownload(downloadId);
       setupWatchActive = true;
-      let shown = true;
-      try { chrome.downloads.show(downloadId); } catch { shown = false; }
-      out(updSetupMsg, shown
-        ? '安装器已下载到 Edge 的下载目录，并已在资源管理器中显示。双击 CMD 文件；它会自动查找 Edge 正在使用的插件目录，无法唯一确认时才会让你选择。'
-        : '安装器已下载到浏览器的下载目录。请从下载记录打开 CMD；它会自动查找 Edge 正在使用的插件目录，无法唯一确认时才会让你选择。', 'ok');
+      out(updSetupMsg, '安装器已下载。请在 Edge 的下载记录中双击“作业助手-更新安装器.cmd”；它会自动查找 Edge 正在使用的插件目录，无法唯一确认时才会让你选择。', 'ok');
       updSetupMsg.hidden = false;
       const ready = await checkSetupHost();
       if (!ready) scheduleSetupPoll();
     } catch (error) {
-      out(updSetupMsg, '安装器未能打开：' + String(error?.message || error) + '。可在浏览器下载列表中查看并重试。', 'err');
+      out(updSetupMsg, '安装器未能下载：' + String(error?.message || error) + '。请重试。', 'err');
       updSetupMsg.hidden = false;
     } finally {
       if (blobUrl) URL.revokeObjectURL(blobUrl);
@@ -343,7 +339,7 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
         const error = String(r?.error || '未知错误');
         if (isUpdaterHostMissing(error)) {
           updSetup.hidden = false;
-          out(updSetupMsg, '更新组件尚未连接。点“运行”下载安装器并选择作业助手文件夹。', 'err');
+          out(updSetupMsg, '更新组件尚未连接。点“运行”下载并双击“作业助手-更新安装器.cmd”，再按提示安装。', 'err');
           updSetupMsg.hidden = false;
           out(updMsg, '请先点“运行”完成一次安装，然后重试更新。', 'err');
         } else out(updMsg, '更新失败：' + error, 'err');
