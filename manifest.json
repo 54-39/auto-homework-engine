@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "作业助手",
-  "version": "0.6.10",
+  "version": "0.6.11",
   "description": "网页作业 AI 辅助：提取题目、生成答案并自动填写；支持多家 API、豆包网页桥接与安全更新。",
   "permissions": ["storage", "tabs", "scripting", "notifications", "nativeMessaging"],
   "optional_permissions": ["downloads"],

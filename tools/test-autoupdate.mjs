@@ -91,7 +91,7 @@ t('cmp 0.4.8 < 0.4.11', cmp('0.4.8', '0.4.11') < 0);
 t('cmp 相等', cmp('0.5.0', '0.5.0') === 0);
 
 /* 2. 载荷过滤 */
-for (const p of ['manifest.json', 'settings.html', 'settings.js', 'install-updater.cmd', 'repair-updater.cmd', 'background/service-worker.js', 'content/homework/panel.js', 'options/options.js', 'icons/icon16.png', 'tools/autoupdate.mjs', 'tools/native-host.mjs', 'tools/native-host-install-core.mjs', 'tools/install-native-host.mjs', 'tools/updater-setup-core.mjs', 'tools/updater-bootstrap.ps1', 'tools/updater-bootstrap.cmd']) {
+for (const p of ['manifest.json', 'settings.html', 'settings.js', 'install-updater.cmd', 'repair-updater.cmd', 'background/service-worker.js', 'content/homework/panel.js', 'options/options.js', 'icons/icon16.png', 'tools/autoupdate.mjs', 'tools/native-host.mjs', 'tools/native-host-install-core.mjs', 'tools/install-native-host.mjs', 'tools/updater-setup-core.mjs', 'tools/updater-network.mjs', 'tools/updater-bootstrap.ps1', 'tools/updater-bootstrap.cmd']) {
   t('载荷包含 ' + p, isPayload(p));
 }
 for (const p of ['README.md', 'LICENSE', 'package.json', '.update-files.json', '.native-runtime/v24.21.0-win-x64/node.exe', 'hot-reload.json', 'PRIVACY.md']) {
@@ -168,7 +168,20 @@ for (const p of ['README.md', 'LICENSE', 'package.json', '.update-files.json', '
   t('源全挂返回 ok:false', r.ok === false);
 }
 
-/* 8. 无更新路径不触碰网络文件树（ 远端同版本 → updated:false，不请求 trees） */
+/* 8. fetch 网络错误要说明请求主机和系统网络原因 */
+{
+  const root = mkRoot('0.4.8');
+  const cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:7890'), { code: 'ECONNREFUSED' });
+  const r = await syncOnce({
+    root,
+    fetchImpl: async () => { throw new TypeError('fetch failed', { cause }); },
+    log: noop,
+  });
+  t('网络失败包含目标主机', /连接 api\.github\.com 失败/.test(r.error || ''));
+  t('网络失败包含底层错误码', /ECONNREFUSED/.test(r.error || ''));
+}
+
+/* 9. 无更新路径不触碰网络文件树（远端同版本 → updated:false，不请求 trees） */
 {
   let treeHits = 0;
   const f = mockFetch({ version: '0.5.0', files: {} });

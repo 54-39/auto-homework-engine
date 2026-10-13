@@ -38,8 +38,14 @@ async function request(url, consume, fetchImpl, headers = {}, deadline = Infinit
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return await consume(r);
   } catch (e) {
-    if (e?.name === 'AbortError') throw new Error(`请求超时（${FETCH_TIMEOUT / 1000}s）：${url}`);
-    throw e;
+    let host = url;
+    try { host = new URL(url).host; } catch { /* Keep the original URL for diagnostics. */ }
+    if (e?.name === 'AbortError') throw new Error(`请求超时（${FETCH_TIMEOUT / 1000}s）：${host}`);
+    if (/^HTTP \d+/.test(e?.message || '')) throw new Error(`请求 ${host} 失败：${e.message}`, { cause: e });
+    const cause = e?.cause;
+    const detail = [cause?.code, cause?.message].filter(Boolean).join('：');
+    const prefix = e?.name === 'TypeError' && /^fetch failed/i.test(e?.message || '') ? `连接 ${host} 失败` : `请求 ${host} 失败`;
+    throw new Error(`${prefix}：${e?.message || e}${detail ? `（${detail}）` : ''}`, { cause: e });
   } finally {
     clearTimeout(timer);
   }

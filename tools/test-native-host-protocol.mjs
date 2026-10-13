@@ -10,6 +10,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hw-native-host-'));
 const tools = path.join(root, 'tools');
 fs.mkdirSync(tools);
 fs.copyFileSync(path.join(source, 'native-host.mjs'), path.join(tools, 'native-host.mjs'));
+fs.copyFileSync(path.join(source, 'updater-network.mjs'), path.join(tools, 'updater-network.mjs'));
 fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({ version: '0.6.3' }));
 const extensionId = 'abcdefghijklmnopabcdefghijklmnop';
 const transactionId = '12345678-1234-4234-8234-123456789abc';

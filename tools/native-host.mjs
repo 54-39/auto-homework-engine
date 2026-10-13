@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import url from 'node:url';
+import { updaterEnvironment, windowsSystemProxy } from './updater-network.mjs';
 
 const HERE = path.dirname(url.fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -103,6 +104,7 @@ try {
   fs.copyFileSync(path.join(HERE, 'transaction-runner.mjs'), path.join(runnerDir, 'transaction-runner.mjs'));
   const child = spawn(process.execPath, [path.join(runnerDir, 'transaction-runner.mjs'), ROOT, msg.transactionId, EXTENSION_ID], {
     detached: true, stdio: 'ignore', windowsHide: true,
+    env: updaterEnvironment(process.env, { platform: process.platform, lookupSystemProxy: windowsSystemProxy }),
   });
   await new Promise((resolve, reject) => {
     child.once('spawn', resolve);
