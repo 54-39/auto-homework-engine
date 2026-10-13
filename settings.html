@@ -74,11 +74,20 @@
   .msg{margin-top:12px;min-height:20px;color:var(--text-2)}
   .msg.ok{color:var(--ok)}
   .msg.err{color:var(--err)}
+  .update-progress{display:flex;align-items:center;gap:10px;margin-top:14px}
+  .update-progress[hidden]{display:none}
+  .update-progress progress{appearance:none;display:block;flex:1;min-width:0;width:100%;height:8px;border:0;border-radius:999px;overflow:hidden;background:var(--ghost)}
+  .update-progress progress::-webkit-progress-bar{border-radius:999px;background:var(--ghost)}
+  .update-progress progress::-webkit-progress-value{border-radius:999px;background:var(--accent);transition:width .18s ease}
+  .update-progress progress::-moz-progress-bar{border-radius:999px;background:var(--accent);transition:width .18s ease}
+  .update-progress span{min-width:108px;color:var(--text-2);font-size:12px;text-align:right;font-variant-numeric:tabular-nums}
   .confirm{margin-top:16px;border:1px solid var(--line);border-radius:var(--radius);background:#fbfcfe;padding:14px 16px}
   .confirm[hidden]{display:none}
   .confirm p{margin:0 0 12px;color:var(--text-2)}
   @media (prefers-reduced-motion:reduce){
     .side button,button{transition:none}
+    .update-progress progress::-webkit-progress-value{transition:none}
+    .update-progress progress::-moz-progress-bar{transition:none}
   }
   @media (max-width:720px){
     .app{grid-template-columns:1fr}
@@ -144,6 +153,10 @@
           <button type="button" id="updSetup" hidden>运行</button>
           <button type="button" id="updRun" hidden>更新</button>
           <a id="updLink" href="#" target="_blank" rel="noopener" hidden>前往 GitHub 查看新版</a>
+        </div>
+        <div class="update-progress" id="updProgressWrap" hidden>
+          <progress id="updProgress" max="100" value="0" aria-label="更新文件下载与校验进度" aria-valuetext="准备中"></progress>
+          <span id="updProgressText">准备中</span>
         </div>
         <div class="msg" id="updMsg" role="status" aria-live="polite"></div>
         <div class="msg" id="updSetupMsg" role="status" aria-live="polite" hidden></div>

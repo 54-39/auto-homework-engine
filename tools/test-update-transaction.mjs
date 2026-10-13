@@ -81,6 +81,9 @@ const run = (root, transactionId, fetchImpl, confirmImpl) => runUpdateTransactio
   assert.equal(result.phase, 'complete');
   assert.equal(result.updated, true);
   assert.equal(result.latest, NEXT);
+  assert.equal(result.downloadedFiles, result.totalFiles);
+  assert.equal(result.totalFiles, Object.keys(files).length);
+  assert.equal(result.attempt, 1);
   assert.equal(read(root, 'manifest.json'), files['manifest.json']);
   assert.equal(read(root, 'tools/autoupdate.mjs'), 'new updater');
   assert.equal(read(root, 'install-updater.cmd'), files['install-updater.cmd']);
@@ -111,6 +114,8 @@ const run = (root, transactionId, fetchImpl, confirmImpl) => runUpdateTransactio
   assert.equal(result.phase, 'complete');
   assert.deepEqual(attempts, [1, 2]);
   assert.equal(result.attempt, 2);
+  assert.equal(result.downloadedFiles, result.totalFiles);
+  assert.equal(result.totalFiles, Object.keys(files).length);
   assert.equal(exists(root, 'content/old.js'), false);
   assert.equal(exists(root, `.update-backup-${id}`), false);
   fs.rmSync(root, { recursive: true, force: true });

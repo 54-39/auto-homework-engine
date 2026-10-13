@@ -104,7 +104,7 @@ function localFilesFromManifest(root) {
   } catch { return ['manifest.json']; }
 }
 
-async function fetchSnapshot({ root, fetchImpl, targetRevision, force, log }) {
+async function fetchSnapshot({ root, fetchImpl, targetRevision, force, log, onProgress }) {
   const deadline = Date.now() + DOWNLOAD_LIMIT;
   const localManifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
   const current = localManifest.version;
@@ -134,6 +134,8 @@ async function fetchSnapshot({ root, fetchImpl, targetRevision, force, log }) {
   const stage = path.join(root, STAGE);
   rmrf(stage);
   try {
+    onProgress?.({ completed: 0, total: files.length });
+    let completed = 0;
     for (const file of files) {
       if (Date.now() >= deadline) throw new Error('本轮下载超过 5 分钟');
       const buf = file === 'manifest.json' ? manifestBytes : await fileAtRevision(revision, file, fetchImpl, deadline);
@@ -147,6 +149,8 @@ async function fetchSnapshot({ root, fetchImpl, targetRevision, force, log }) {
       const dest = safePath(stage, file);
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.writeFileSync(dest, buf);
+      completed++;
+      onProgress?.({ completed, total: files.length });
     }
   } catch (e) {
     rmrf(stage);
@@ -173,7 +177,7 @@ async function fetchSnapshot({ root, fetchImpl, targetRevision, force, log }) {
 
 export async function syncOnce({
   root = process.cwd(), fetchImpl = fetch, log = (m) => console.log('[autoupdate] ' + m),
-  targetRevision, force = false, attempt = 1, beforeApply = null, confirmCandidate = async () => true,
+  targetRevision, force = false, attempt = 1, beforeApply = null, confirmCandidate = async () => true, onProgress = null,
 } = {}) {
   const localPath = path.join(root, 'manifest.json');
   if (!fs.existsSync(localPath)) throw new Error('当前目录不是插件根目录（缺 manifest.json）');
@@ -181,7 +185,7 @@ export async function syncOnce({
   let snapshot;
   try {
     if (!revision) revision = await resolveRevision({ fetchImpl });
-    snapshot = await fetchSnapshot({ root, fetchImpl, targetRevision: revision, force, log });
+    snapshot = await fetchSnapshot({ root, fetchImpl, targetRevision: revision, force, log, onProgress });
   }
   catch (e) {
     const current = JSON.parse(fs.readFileSync(localPath, 'utf8')).version;
@@ -329,6 +333,13 @@ export async function runUpdateTransaction({
     state = { ...state, ...candidate, removed, backup: backupName, backupFiles: index.files.length, phase: 'replacing' };
     save();
   };
+  const reportProgress = ({ completed, total }) => {
+    state = {
+      ...state, phase: 'downloading', attempt: state.attempt || 1,
+      downloadedFiles: completed, totalFiles: total,
+    };
+    save();
+  };
   const previous = readJson(root, stateFile);
   if (previous && ['complete', 'failed', 'rolled_back'].includes(previous.phase) && /^[0-9a-f-]{36}$/i.test(previous.transactionId || '')) {
     rmrf(path.join(root, `.update-backup-${previous.transactionId}`));
@@ -354,11 +365,11 @@ export async function runUpdateTransaction({
     }
   }
   baseVersion = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8')).version;
-  state = { ...state, current: baseVersion, latest: baseVersion };
+  state = { ...state, current: baseVersion, latest: baseVersion, attempt: 1, downloadedFiles: 0, totalFiles: 0 };
   state.phase = 'downloading';
   save();
   try {
-    let result = await syncOnce({ root, fetchImpl, log, beforeApply, confirmCandidate });
+    let result = await syncOnce({ root, fetchImpl, log, beforeApply, confirmCandidate, onProgress: reportProgress });
     if (result.ok && !result.updated) {
       state = { ...state, ...result, phase: 'complete' };
       save();
@@ -376,9 +387,9 @@ export async function runUpdateTransaction({
       save();
       return state;
     }
-    state = { ...state, phase: 'retrying', attempt: 2, error: result.error };
+    state = { ...state, phase: 'retrying', attempt: 2, downloadedFiles: 0, totalFiles: 0, error: result.error };
     save();
-    result = await syncOnce({ root, fetchImpl, log, targetRevision: revision, force: true, attempt: 2, beforeApply, confirmCandidate });
+    result = await syncOnce({ root, fetchImpl, log, targetRevision: revision, force: true, attempt: 2, beforeApply, confirmCandidate, onProgress: reportProgress });
     if (result.ok && result.updated) {
       state = { ...state, ...result, phase: 'complete', settingsReady: true };
       save();

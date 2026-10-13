@@ -247,6 +247,9 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
     }
   };
   const transactionKey = `hw-update-transaction:${chrome.runtime.id}`;
+  const updProgressWrap = $('#updProgressWrap');
+  const updProgress = $('#updProgress');
+  const updProgressText = $('#updProgressText');
   const phaseText = {
     checking: '正在锁定本轮更新提交…',
     downloading: '正在下载并校验固定提交…',
@@ -256,10 +259,57 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
     retrying: '本轮失败，正在从同一提交完整重拉一次…',
   };
   let transactionTimer = 0;
+  const setProgressLabel = (value, accessibleText = value) => {
+    if (updProgressText.textContent !== value) updProgressText.textContent = value;
+    if (updProgress.getAttribute('aria-valuetext') !== accessibleText) updProgress.setAttribute('aria-valuetext', accessibleText);
+  };
+  const renderProgress = (state) => {
+    const { phase } = state || {};
+    if (phase === 'complete' && state.updated) {
+      updProgressWrap.hidden = false;
+      updProgress.value = 100;
+      setProgressLabel('完成', '更新完成');
+      return;
+    }
+    if (phase === 'downloading') {
+      updProgressWrap.hidden = false;
+      const total = Math.max(0, Number(state.totalFiles) || 0);
+      const completed = Math.max(0, Math.min(total, Number(state.downloadedFiles) || 0));
+      if (total) {
+        const percent = Math.floor(completed * 100 / total);
+        updProgress.value = percent;
+        setProgressLabel(`${percent}%（${completed}/${total}）`, `已下载并校验 ${completed} 个，共 ${total} 个文件`);
+      } else {
+        updProgress.value = 0;
+        setProgressLabel('准备中', '正在准备更新文件');
+      }
+      return;
+    }
+    if (['checking', 'retrying', 'replacing', 'awaiting_reload', 'awaiting_health'].includes(phase)) {
+      updProgressWrap.hidden = false;
+      if (phase === 'replacing' || phase === 'awaiting_reload' || phase === 'awaiting_health') {
+        updProgress.value = 100;
+        const label = phase === 'replacing' ? '文件已校验' : phase === 'awaiting_reload' ? '等待重载' : '运行验证';
+        setProgressLabel(label, label);
+      } else {
+        updProgress.value = 0;
+        const label = phase === 'retrying' ? `重试 ${state.attempt || 2}/2` : '准备中';
+        setProgressLabel(label, label);
+      }
+      return;
+    }
+    updProgressWrap.hidden = true;
+  };
+  const prepareProgress = () => {
+    updProgressWrap.hidden = false;
+    updProgress.value = 0;
+    setProgressLabel('准备中', '正在准备更新');
+  };
   const pollUpdate = async (transactionId, startedAt = Date.now()) => {
     if (transactionTimer) clearTimeout(transactionTimer);
     if (Date.now() - startedAt > 12 * 60 * 1000) {
       out(updMsg, '等待更新状态超时。请重新打开设置页检查更新状态。', 'err');
+      updProgressWrap.hidden = true;
       updRun.disabled = false;
       updRun.textContent = '更新';
       return;
@@ -267,16 +317,22 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
     const response = await nativeUpdateRequest({ type: 'update_status', transactionId });
     const state = response?.state;
     if (!response?.ok || state?.transactionId !== transactionId) {
-      out(updMsg, `更新进程正在启动或浏览器重载中…${response?.error ? `（${response.error}）` : ''}`, 'ok');
+      const message = `更新进程正在启动或浏览器重载中…${response?.error ? `（${response.error}）` : ''}`;
+      if (updMsg.textContent !== message) out(updMsg, message, 'ok');
       transactionTimer = setTimeout(() => pollUpdate(transactionId, startedAt), 1200);
       return;
     }
     if (phaseText[state.phase]) {
-      out(updMsg, phaseText[state.phase], 'ok');
+      renderProgress(state);
+      const message = state.phase === 'downloading' && Number(state.attempt) > 1
+        ? `正在重试下载并校验（第 ${state.attempt} 次）…`
+        : phaseText[state.phase];
+      if (updMsg.textContent !== message) out(updMsg, message, 'ok');
       transactionTimer = setTimeout(() => pollUpdate(transactionId, startedAt), 1200);
       return;
     }
     localStorage.removeItem(transactionKey);
+    renderProgress(state);
     updRun.disabled = false;
     updRun.textContent = '更新';
     if (state.phase === 'complete') {
@@ -327,6 +383,7 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
   const runUpdate = async () => {
     updRun.disabled = true;
     updRun.textContent = '更新中…';
+    prepareProgress();
     out(updMsg, '正在启动独立更新进程…', 'ok');
     try {
       const r = await send('HW_RUN_UPDATE');
@@ -336,6 +393,7 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
       } else {
         updRun.disabled = false;
         updRun.textContent = '更新';
+        updProgressWrap.hidden = true;
         const error = String(r?.error || '未知错误');
         if (isUpdaterHostMissing(error)) {
           updSetup.hidden = false;
@@ -347,6 +405,7 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
     } catch (error) {
       updRun.disabled = false;
       updRun.textContent = '更新';
+      updProgressWrap.hidden = true;
       out(updMsg, '更新失败：' + String(error?.message || error), 'err');
     }
   };
@@ -372,6 +431,9 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
   updCurrent.textContent = 'v' + chrome.runtime.getManifest().version;
   const healthTransaction = new URLSearchParams(location.search).get('updateHealth');
   if (healthTransaction) {
+    updProgressWrap.hidden = false;
+    updProgress.value = 100;
+    setProgressLabel('运行验证', '新版后台正在进行运行验证');
     out(updMsg, '设置页已加载，正在等待后台确认本轮版本…', 'ok');
     const acknowledge = async () => {
       const result = await send('UPDATE_PAGE_READY', { transactionId: healthTransaction });
@@ -383,6 +445,7 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
   if (activeTransaction && !healthTransaction) {
     updRun.disabled = true;
     updRun.textContent = '更新中…';
+    prepareProgress();
     pollUpdate(activeTransaction);
   }
 })();

@@ -121,7 +121,8 @@ for (const p of ['README.md', 'LICENSE', 'package.json', '.update-files.json', '
     'content/homework/new.js': 'NEW-FILE',
     'icons/icon16.png': Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]),
   };
-  const r = await syncOnce({ root, fetchImpl: mockFetch({ version: '0.5.0', files: remote }), log: noop });
+  const progress = [];
+  const r = await syncOnce({ root, fetchImpl: mockFetch({ version: '0.5.0', files: remote }), log: noop, onProgress: (x) => progress.push(x) });
   t('成功返回 updated:true', r.ok && r.updated === true && r.latest === '0.5.0');
   t('manifest 已覆盖', JSON.parse(read(root, 'manifest.json')).version === '0.5.0');
   t('已有文件内容被替换', read(root, 'background/engines/api-engine.js') === 'NEW-API');
@@ -132,6 +133,7 @@ for (const p of ['README.md', 'LICENSE', 'package.json', '.update-files.json', '
   t('清单回写为新列表', JSON.parse(read(root, '.update-files.json')).join() === Object.keys(remote).join());
   t('写热重载标记', exists(root, 'hot-reload.json') && JSON.parse(read(root, 'hot-reload.json')).t > 0);
   t('暂存目录已清理', !exists(root, '.update-stage'));
+  t('下载进度按文件逐项报告', progress.length === Object.keys(remote).length + 1 && progress[0].completed === 0 && progress.at(-1).completed === Object.keys(remote).length && progress.at(-1).total === Object.keys(remote).length);
 }
 
 /* 5. 下载失败：整轮放弃、旧文件原封不动、暂存清理 */
