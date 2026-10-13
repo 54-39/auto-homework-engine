@@ -7,6 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { deriveExtensionId, extensionIdFor, nativeHostLauncherSource, nativeHostManifest, nativeHostNames, normalizeRoot } from './native-host-install-core.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const installerSource = fs.readFileSync(path.join(HERE, 'install-native-host.mjs'), 'utf8');
+assert.match(installerSource, /const nodeExe = process\.execPath/);
+assert.doesNotMatch(installerSource, /function findNode\(/);
 const root = path.join(path.parse(process.cwd()).root, '插件 源码', '作业助手 中文目录');
 const otherRoot = path.join(path.parse(process.cwd()).root, '插件 源码', '其他目录');
 const id = deriveExtensionId(root);

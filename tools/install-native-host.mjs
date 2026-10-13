@@ -64,20 +64,9 @@ function findCsc() {
   }
   return '';
 }
-function findNode() {
-  try {
-    const out = spawnSync('where.exe', ['node'], { encoding: 'utf8' });
-    const first = String(out.stdout || '').split(/\r?\n/).find(Boolean);
-    if (out.status === 0 && first) return first.trim();
-  } catch { /* 走兜底 */ }
-  for (const p of ['C:\\Program Files\\nodejs\\node.exe', 'C:\\Program Files (x86)\\nodejs\\node.exe']) {
-    if (fs.existsSync(p)) return p;
-  }
-  return '';
-}
-const nodeExe = findNode();
-if (!nodeExe) {
-  console.error('错误：PATH 上找不到 node.exe，无法编译启动器。先安装 Node.js 再重跑。');
+const nodeExe = process.execPath;
+if (!fs.existsSync(nodeExe)) {
+  console.error('错误：当前 Node.js 运行文件不存在，无法编译启动器。');
   process.exit(1);
 }
 const exePath = path.join(HERE, 'native-host.exe');

@@ -153,9 +153,16 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
   let setupPollBusy = false;
   let setupWatchActive = false;
   let setupDownloadBusy = false;
+  const updRepairLink = $('#updRepairLink');
   const showSetupStatus = (response, installed = false) => {
-    const ready = isUpdaterHostReady(response, chrome.runtime.id, chrome.runtime.getManifest().version);
+    const currentId = chrome.runtime.id;
+    const currentVersion = chrome.runtime.getManifest().version;
+    const sameId = Boolean(response?.ok && response.extensionId === currentId);
+    const ready = isUpdaterHostReady(response, currentId, currentVersion);
     updSetup.hidden = ready;
+    updSetup.disabled = sameId && !ready;
+    updSetup.textContent = sameId && !ready ? '刷新扩展后重查' : '运行';
+    updRepairLink.hidden = ready || (sameId && !ready);
     if (ready) {
       if (installed) {
         updSetupMsg.hidden = false;
@@ -167,11 +174,14 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
       return true;
     }
     updSetupMsg.hidden = false;
-    out(updSetupMsg, response?.ok
-      ? '已连接到其他插件目录或版本。点“运行”重新下载安装器，并选择当前加载的作业助手文件夹。'
-      : setupWatchActive
-        ? '请双击刚才定位的安装器，选择作业助手文件夹并按 CMD 提示完成。若取消或安装失败，回到这里再点“运行”重试。'
-        : '更新组件尚未连接。点“运行”下载安装器并选择作业助手文件夹。', 'err');
+    const message = sameId
+      ? `宿主已连接，但报告版本 ${response.manifestVersion || '未知'}，当前页面版本是 ${currentVersion}。请先到 Edge 扩展管理页刷新“作业助手”，再回到这里检查。`
+      : response?.ok
+        ? '宿主连接到了其他插件目录。请点“运行”，安装器会自动查找 Edge 当前使用的目录。'
+        : setupWatchActive
+          ? '请双击 Edge 下载目录中的“作业助手-更新安装器.cmd”，按提示完成。返回此页后会自动重新检查；失败时可再点“运行”重试。'
+          : `更新宿主尚未连接${response?.error ? '：' + response.error : ''}。点“运行”下载安装器并双击下载项。`;
+    out(updSetupMsg, message, 'err');
     return false;
   };
   const checkSetupHost = async (installed = false) => {
@@ -207,13 +217,13 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
     try {
       const granted = await requestDownloadsPermission(chrome.permissions);
       if (!granted) {
-        out(updSetupMsg, '需要允许“管理下载内容”权限，才能下载并定位安装器。允许后再点“运行”。', 'err');
+        out(updSetupMsg, '需要允许“管理下载内容”权限，才能下载安装器。允许后再点“运行”。', 'err');
         updSetupMsg.hidden = false;
         return;
       }
       const response = await fetch(chrome.runtime.getURL('tools/updater-bootstrap.cmd'));
       if (!response.ok) throw new Error('读取安装器失败');
-      const installer = makeInstallerPayload(await response.text(), chrome.runtime.id);
+      const installer = makeInstallerPayload(await response.text(), chrome.runtime.id, chrome.runtime.getManifest().version);
       blobUrl = URL.createObjectURL(new Blob([installer], { type: 'application/octet-stream' }));
       const downloadId = await chrome.downloads.download({
         url: blobUrl,
@@ -222,12 +232,11 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
       });
       await waitForDownload(downloadId);
       setupWatchActive = true;
-      let located = true;
-      try { chrome.downloads.show(downloadId); }
-      catch { located = false; }
-      out(updSetupMsg, located
-        ? '已定位到安装器。双击它，选择作业助手文件夹并按 CMD 提示完成；若取消或失败，回到这里再点“运行”重试。'
-        : '安装器已下载，但浏览器没能定位文件。请从下载列表打开它，选择作业助手文件夹并按 CMD 提示操作。', located ? 'ok' : 'err');
+      let shown = true;
+      try { chrome.downloads.show(downloadId); } catch { shown = false; }
+      out(updSetupMsg, shown
+        ? '安装器已下载到 Edge 的下载目录，并已在资源管理器中显示。双击 CMD 文件；它会自动查找 Edge 正在使用的插件目录，无法唯一确认时才会让你选择。'
+        : '安装器已下载到浏览器的下载目录。请从下载记录打开 CMD；它会自动查找 Edge 正在使用的插件目录，无法唯一确认时才会让你选择。', 'ok');
       updSetupMsg.hidden = false;
       const ready = await checkSetupHost();
       if (!ready) scheduleSetupPoll();
@@ -349,19 +358,20 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
   updSetup.addEventListener('click', () => downloadUpdaterInstaller());
   updRun.addEventListener('click', () => runUpdate());
   let autoChecked = false;
-  let setupHostChecked = false;
   onSection = (key) => {
     if (key === 'upd') {
       if (!autoChecked) {
         autoChecked = true;
         check(false);
       }
-      if (!setupHostChecked) {
-        setupHostChecked = true;
-        checkSetupHost();
-      }
+      checkSetupHost();
     }
   };
+  const refreshSetupHost = () => { if (!secs.upd.hidden) checkSetupHost(); };
+  window.addEventListener('focus', refreshSetupHost);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshSetupHost();
+  });
   if (!secs.upd.hidden) onSection('upd'); // 直接以 #upd 打开时也要自动检查
   updCurrent.textContent = 'v' + chrome.runtime.getManifest().version;
   const healthTransaction = new URLSearchParams(location.search).get('updateHealth');

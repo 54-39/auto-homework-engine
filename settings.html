@@ -134,7 +134,7 @@
 
       <section id="sec-upd" class="card" aria-labelledby="h-upd" hidden>
         <h2 id="h-upd">检测更新</h2>
-        <p class="hint">打开本分区会自动检查一次（1 小时内不重复联网）。首次使用更新功能时点「运行」下载安装器；双击后选择作业助手文件夹并按 CMD 提示操作。安装成功后「运行」按钮会自动消失。之后发现新版，点「更新」即可下载、校验并替换；失败会自动重试一次，再失败恢复旧版（作业页面需 F5）。</p>
+        <p class="hint">打开本分区会自动检查一次（1 小时内不重复联网）。首次使用时点「运行」并允许下载；双击 Edge 下载目录中的 CMD，安装器会自动查找当前插件目录，无法唯一确认时才请你选择。完成后回到此页会自动验证。之后发现新版，点「更新」即可下载、校验并替换；失败会自动重试一次，再失败恢复旧版（作业页面需 F5）。</p>
         <dl class="kv">
           <div><dt>当前版本</dt><dd id="updCurrent">…</dd></div>
           <div><dt>最新版本</dt><dd id="updLatest">尚未检查</dd></div>
@@ -147,6 +147,7 @@
         </div>
         <div class="msg" id="updMsg" role="status" aria-live="polite"></div>
         <div class="msg" id="updSetupMsg" role="status" aria-live="polite" hidden></div>
+        <p class="hint"><a id="updRepairLink" href="https://github.com/54-39/auto-homework-engine/releases/download/v0.6.9/repair-updater.cmd" target="_blank" rel="noopener" hidden>旧版安装失败？下载独立修复 CMD</a></p>
       </section>
     </div>
   </main>

@@ -5,6 +5,7 @@ design-preview/
 .native-host.json
 .native-host/
 tools/native-host.exe
+.native-runtime/
 .crinfo
 
 # 自动更新脚本工作文件（不上传）
