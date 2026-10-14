@@ -22,18 +22,32 @@
         const stem = norm((q.querySelector('.mark_name, .Zy_TItle') || q).textContent).slice(0, 300);
         const stateInput = q.querySelector('input[name="answer' + id + '"]');
         if (type === 'subjective' || type === 'blank') {
-          const ta = q.querySelector('textarea');
+          const tas = [...q.querySelectorAll('textarea')];
           const iframe = q.querySelector('iframe');
+          // 填空题：一个空一个 UEditor（交卷时页面用 UE.getEditor("answerEditor{id}{j}").getContent()
+          // 现取正文，隐藏 textarea 只是源码容器，写它无效）；写作题仍走那个可见 textarea
+          const eds = type === 'blank' ? [...q.querySelectorAll('[class*="edui-editor"] iframe')] : [];
           return {
             meta: { index: i, type, stem, writing: type === 'subjective' && q.getAttribute('typename') === '写作题' },
-            el: { inputs: ta ? [ta] : [], iframe: type === 'subjective' && iframe ? iframe : null, labels: [], stateInput },
+            el: {
+              inputs: type === 'blank' ? tas : tas.slice(0, 1),
+              iframe: type === 'subjective' && iframe ? iframe : null,
+              iframes: eds,
+              labels: [],
+              stateInput,
+            },
           };
         }
         const rows = [...q.querySelectorAll('.answerBg')];
         const labels = rows.map((row, idx) => {
           const letterEl = row.querySelector('[class*="num_option"]');
           let key = norm((letterEl ? letterEl.textContent : '')).toUpperCase()[0] || 'ABCDEFGH'[idx] || 'A';
-          if (type === 'judge') key = row.querySelector('b.ri') ? 'T' : row.querySelector('b.wr') ? 'F' : key;
+          // 判断题真值在字母圈 span 的 data 上（true=对 / false=错，2026-10-14 导出页实测）；
+          // b.ri/b.wr 是旧版式的图标标记，保留兼容
+          if (type === 'judge') {
+            const d = (letterEl ? letterEl.getAttribute('data') : '') || '';
+            key = /^true$/i.test(d) || row.querySelector('b.ri') ? 'T' : /^false$/i.test(d) || row.querySelector('b.wr') ? 'F' : key;
+          }
           return { key, text: norm((row.querySelector('.answer_p') || row).textContent), input: null, clickEl: row };
         });
         return {

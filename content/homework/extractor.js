@@ -125,6 +125,16 @@
     });
   }
 
+  /* 读富文本编辑器正文（超星填空题交卷读的就是 UEditor 的 getContent()，即这个 body） */
+  function editorText(f) {
+    try {
+      const b = f.contentDocument && f.contentDocument.body;
+      return b ? norm(b.textContent) : '';
+    } catch {
+      return '';
+    }
+  }
+
   function extract() {
     // 超星专用适配器优先（答案状态从隐藏 answer input 读取，100% 可靠）
     if (window.HW.CXAdapter && window.HW.CXAdapter.match()) {
@@ -301,7 +311,12 @@
         const picked = q.el.labels.find(labelState);
         return picked ? strip(picked.text) : '';
       }
-      if (t === 'blank') return q.el.inputs.map((i) => norm(i.value)).filter(Boolean).join(';');
+      if (t === 'blank') {
+        // 超星填空题的正文在 UEditor iframe 里（隐藏 textarea 只是源码容器，交卷不读它）
+        const eds = q.el.iframes || [];
+        if (eds.length) return eds.map((f) => editorText(f)).filter(Boolean).join(';');
+        return q.el.inputs.map((i) => norm(i.value)).filter(Boolean).join(';');
+      }
       if (t === 'subjective') {
         if (q.el.iframe) {
           const b = q.el.iframe.contentDocument && q.el.iframe.contentDocument.body;

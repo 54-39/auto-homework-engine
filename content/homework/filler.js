@@ -150,14 +150,26 @@
       const sameAs = (set, want) => set.size === want.size && [...want].every((k) => set.has(k));
 
       if (type === 'judge') {
-        const wantKey = /^(对|正确|√|✔|✓|是|T|True|TRUE)$/i.test(ans) ? 'T' : /^(错|错误|误|×|✘|✗|否|假|F|False|FALSE)$/i.test(ans) ? 'F' : null;
+        const wantKey = JUDGE_TRUE.test(ans) ? 'T' : JUDGE_FALSE.test(ans) ? 'F' : null;
         if (!wantKey) throw new Error('判断题答案无法解析: ' + ans.slice(0, 20));
-        const target = q.el.labels.find((l) => l.key === wantKey);
-        if (target && !readSet().has(wantKey)) {
+        // 适配器新版式给 T/F 键；旧版式/不认得的版式按选项文字（对/错）兜底匹配
+        const target =
+          q.el.labels.find((l) => l.key === wantKey) ||
+          q.el.labels.find((l) => (wantKey === 'T' ? JUDGE_TRUE : JUDGE_FALSE).test(plainLabel(l.text)));
+        if (!target) throw new Error('未找到对应的 对/错 选项');
+        if (!readSet().has(target.key)) {
           if (target.clickEl) target.clickEl.click();
           await sleep(350);
-          if (!readSet().has(wantKey) && !String(q.el.stateInput.value || '').trim()) {
-            q.el.stateInput.value = wantKey === 'T' ? '对' : '错';
+        }
+        if (!readSet().has(target.key)) {
+          // 兜底直写：载体值按现场格式——新版式判断题是字母圈 span 的 data（true/false），旧版式是 对/错
+          const sp = spanOf(target);
+          const dv = sp && sp.getAttribute('data');
+          q.el.stateInput.value = dv || (wantKey === 'T' ? '对' : '错');
+          for (const l of q.el.labels) {
+            const s = spanOf(l);
+            if (s) s.classList.toggle(selClass, l === target);
+            if (l.clickEl && l.clickEl.hasAttribute('aria-checked')) l.clickEl.setAttribute('aria-checked', String(l === target));
           }
         }
         return;
@@ -224,16 +236,23 @@
     }
 
     if (type === 'blank') {
+      // 超星填空题：每个空是一个 UEditor（隐藏 textarea 只是源码容器，页面交卷读的是编辑器正文）
+      const eds = q.el.iframes || [];
       const inputs = q.el.inputs;
       let parts = ans.split(/[;；\n]+/).map(norm).filter(Boolean);
-      if (parts.length === 1 && inputs.length > 1) {
+      const slots = eds.length || inputs.length;
+      if (parts.length === 1 && slots > 1) {
         const alt = parts[0].split(/[,，、]+/).map(norm).filter(Boolean);
-        if (alt.length === inputs.length) parts = alt;
+        if (alt.length === slots) parts = alt;
       }
       if (!parts.length) throw new Error('填空答案为空');
-      while (parts.length > inputs.length && parts.length > 1) {
+      while (parts.length > slots && parts.length > 1) {
         const tail = parts.splice(parts.length - 2, 2).join('；');
         parts.push(tail);
+      }
+      if (eds.length) {
+        eds.forEach((fr, i) => fillRichEditor(fr, parts[Math.min(i, parts.length - 1)]));
+        return;
       }
       inputs.forEach((inp, i) => setNativeValue(inp, parts[Math.min(i, parts.length - 1)]));
       return;
@@ -312,8 +331,9 @@
         }
         const cur = String(q.el.stateInput.value || '').trim();
         if (type === 'judge') {
-          if (/^(对|正确|√|✔|✓|是|T|True|TRUE)$/i.test(ans)) return /^T$/i.test(cur) || cur === '对' || cur === '正确';
-          if (/^(错|错误|误|×|✘|✗|否|假|F|False|FALSE)$/i.test(ans)) return /^F$/i.test(cur) || cur === '错' || cur === '错误';
+          // 载体值两代格式都认：新版式 true/false（字母圈 data），旧版式 对/错
+          if (JUDGE_TRUE.test(ans)) return /^(T|true|对|正确)$/i.test(cur);
+          if (JUDGE_FALSE.test(ans)) return /^(F|false|错|错误)$/i.test(cur);
           return false;
         }
         const wantSet = new Set(lettersOf(ans));
@@ -336,7 +356,12 @@
         if (!canRead && !anySel) return 'unknown';
         return stateOf(target);
       }
-      if (type === 'blank') return q.el.inputs.every((i) => norm(i.value));
+      if (type === 'blank') {
+        // 超星：正文在 UEditor iframe 里，隐藏 textarea 写没写都不算数
+        const eds = q.el.iframes || [];
+        if (eds.length) return eds.every((f) => squash(f.contentDocument?.body?.textContent));
+        return q.el.inputs.every((i) => norm(i.value));
+      }
       if (type === 'subjective') {
         if (q.el.iframe) {
           const body = q.el.iframe.contentDocument?.body;
