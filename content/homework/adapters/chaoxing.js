@@ -27,8 +27,12 @@
           // 填空题：一个空一个 UEditor（交卷时页面用 UE.getEditor("answerEditor{id}{j}").getContent()
           // 现取正文，隐藏 textarea 只是源码容器，写它无效）；写作题仍走那个可见 textarea
           const eds = type === 'blank' ? [...q.querySelectorAll('[class*="edui-editor"] iframe')] : [];
+          // 空数以页面声明为准（隐藏 input[name=tiankongsize{id}]），读不到才退回编辑器/文本框数量。
+          // 题干里的 "____" 个数不等于空数：第22题题干两个下划线，页面只有 1 个空。
+          const sizeEl = type === 'blank' ? q.querySelector('input[name="tiankongsize' + id + '"]') : null;
+          const blanks = type === 'blank' ? parseInt(sizeEl && sizeEl.value, 10) || eds.length || tas.length : 0;
           return {
-            meta: { index: i, type, stem, writing: type === 'subjective' && q.getAttribute('typename') === '写作题' },
+            meta: { index: i, type, stem, blanks, writing: type === 'subjective' && q.getAttribute('typename') === '写作题' },
             el: {
               inputs: type === 'blank' ? tas : tas.slice(0, 1),
               iframe: type === 'subjective' && iframe ? iframe : null,

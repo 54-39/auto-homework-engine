@@ -107,6 +107,52 @@ try {
   assert(!fs.existsSync(path.join(secondRoot, '.native-runtime')));
   console.log('Edge Preferences/Secure Preferences discovery, relative paths, duplicate roots, conflicts, damaged JSON, version and ID rejection PASS');
 
+  /* ---- 完整离线包：插件目录里带了 node 压缩包时，必须不联网直接解压使用 ----
+     用本机已验证的那份 node.exe 造包；没有就跳过（不联网拉 93 MB）。 */
+  const realNode = path.join(ROOT, '.native-runtime', 'v24.21.0-win-x64', 'node.exe');
+  if (process.arch === 'x64' && fs.existsSync(realNode)) {
+    const bundleStage = path.join(temp, 'node-v24.21.0-win-x64');
+    fs.mkdirSync(bundleStage, { recursive: true });
+    fs.copyFileSync(realNode, path.join(bundleStage, 'node.exe'));
+    const bundleZip = path.join(temp, 'node-v24.21.0-win-x64.zip');
+    const zipped = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+      `Compress-Archive -LiteralPath '${bundleStage}' -DestinationPath '${bundleZip}' -CompressionLevel NoCompression -Force`],
+    { encoding: 'utf8', timeout: 120000 });
+    assert.equal(zipped.status, 0, zipped.stdout + zipped.stderr);
+
+    const offlineRoot = path.join(temp, 'Edge Data', '离线包插件目录');
+    const offlineId = makeExtension(offlineRoot);
+    fs.copyFileSync(bundleZip, path.join(offlineRoot, 'node-v24.21.0-win-x64.zip'));
+    const offline = runPowerShell(['-Root', offlineRoot, '-ExpectedId', offlineId, '-ExpectedVersion', '0.6.9'], path.join(temp, 'Edge Data'));
+    assert.equal(offline.status, 0, offline.stdout + offline.stderr);
+    assert.match(offline.stdout, /发现离线 Node.js 压缩包/);
+    assert.match(offline.stdout, /安装命令已完成/);
+    assert(!/正在下载并校验/.test(offline.stdout), '带了离线包就不该联网下载');
+    const unpacked = path.join(offlineRoot, '.native-runtime', 'v24.21.0-win-x64', 'node.exe');
+    assert(fs.existsSync(unpacked), '离线包应解出 .native-runtime/node.exe');
+    assert.equal(fs.statSync(unpacked).size, fs.statSync(realNode).size);
+
+    /* 压缩包是坏的时不能直接失败退出，要打印原因再回落到在线下载。 */
+    const badRoot = path.join(temp, 'Edge Data', '坏包插件目录');
+    const badId = makeExtension(badRoot);
+    fs.writeFileSync(path.join(badRoot, 'node-v24.21.0-win-x64.zip'), 'not a zip at all', 'utf8');
+    // 这一步故意掐断（不掐断就会真去下载 93MB）。机器忙时 PowerShell 还没打印就被掐掉，
+    // 管道里拿到的 stdout 会是空的——空输出算这次没测到，重跑，最多三次。
+    let bad = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      bad = spawnSync(path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+        ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(TOOLS, 'updater-bootstrap.ps1'),
+          '-Root', badRoot, '-ExpectedId', badId, '-ExpectedVersion', '0.6.9'],
+        { encoding: 'utf8', env: { ...process.env, LOCALAPPDATA: path.join(temp, 'Edge Data') }, timeout: 4000 });
+      if (bad.stdout && /离线压缩包不可用/.test(bad.stdout) && /正在下载并校验/.test(bad.stdout)) break;
+    }
+    assert.match(bad.stdout, /离线压缩包不可用/);
+    assert.match(bad.stdout, /正在下载并校验/);
+    console.log('Offline Node bundle is unpacked without network; a broken bundle falls back to download PASS');
+  } else {
+    console.log('Offline Node bundle check SKIPPED (需要本机 .native-runtime 里的 x64 node.exe)');
+  }
+
   const csc = findCsc();
   assert(csc, 'Windows .NET Framework csc.exe is required to exercise the generated CMD entry points');
   const shimDir = path.join(temp, 'PowerShell Shim');

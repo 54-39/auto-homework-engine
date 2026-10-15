@@ -6,7 +6,6 @@
    安装后：由浏览器实际 ping 验证宿主，再在设置页点「更新」启动可回滚事务。
    重复运行会覆盖旧配置。卸载：删 .native-host.json + 删注册表键。 */
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -24,9 +23,12 @@ const browser = (args[0] || 'edge').toLowerCase();
 const extRoot = ROOT;
 const expectedArg = args.find((arg) => arg.startsWith('--expected-id='));
 const expectedId = expectedArg?.slice('--expected-id='.length) || '';
-const unknownArgs = args.filter((arg, index) => index !== 0 && arg !== expectedArg);
+/* --node=：把哪份 node.exe 写进启动器。插件目录在工作区（带 Low 完整性级别）里时，
+   安装器本身必须用复制到普通目录的 node 运行，但启动器要指向插件目录里那份稳定路径。 */
+const nodeArg = args.find((arg) => arg.startsWith('--node='));
+const unknownArgs = args.filter((arg, index) => index !== 0 && arg !== expectedArg && arg !== nodeArg);
 if (!HOSTS[browser] || unknownArgs.length || (expectedArg && !/^[a-p]{32}$/.test(expectedId))) {
-  console.error('用法：在插件目录双击 install-updater.cmd；或 node tools/install-native-host.mjs [edge|chrome] [--expected-id=<extension-id>]');
+  console.error('用法：在插件目录双击 install-updater.cmd；或 node tools/install-native-host.mjs [edge|chrome] [--expected-id=<extension-id>] [--node=<node.exe 路径>]');
   process.exit(1);
 }
 if (!fs.existsSync(path.join(extRoot, 'manifest.json'))) {
@@ -64,9 +66,10 @@ function findCsc() {
   }
   return '';
 }
-const nodeExe = process.execPath;
+/* 默认用当前进程这份 node；--node= 指定别的（安装器被复制到普通目录运行时用）。 */
+const nodeExe = nodeArg ? nodeArg.slice('--node='.length) : process.execPath;
 if (!fs.existsSync(nodeExe)) {
-  console.error('错误：当前 Node.js 运行文件不存在，无法编译启动器。');
+  console.error('错误：Node.js 运行文件不存在，无法编译启动器：' + nodeExe);
   process.exit(1);
 }
 const exePath = path.join(HERE, 'native-host.exe');
@@ -76,12 +79,22 @@ if (!csc) {
   process.exit(1);
 }
 const cs = nativeHostLauncherSource(nodeExe);
-const csPath = path.join(os.tmpdir(), 'hw-native-host-launcher.cs');
-fs.writeFileSync(csPath, cs);
-const cscOut = spawnSync(csc, ['/nologo', '/target:exe', '/out:' + exePath, '/platform:anycpu', csPath], { encoding: 'utf8' });
-if (cscOut.status !== 0 || !fs.existsSync(exePath)) {
-  console.error('错误：启动器编译失败：' + (cscOut.stdout || cscOut.stderr || ''));
-  process.exit(1);
+/* 源文件与 csc 的中间文件都放插件目录内：某些环境（工作区被标了低完整性级别）写不了
+   %TEMP%，但插件目录一直可写。 */
+const buildDir = fs.mkdtempSync(path.join(HERE, '.native-host-build-'));
+const csPath = path.join(buildDir, 'native-host-launcher.cs');
+try {
+  fs.writeFileSync(csPath, cs);
+  const cscOut = spawnSync(csc, ['/nologo', '/target:exe', '/out:' + exePath, '/platform:anycpu', csPath], {
+    encoding: 'utf8',
+    env: { ...process.env, TEMP: buildDir, TMP: buildDir },
+  });
+  if (cscOut.status !== 0 || !fs.existsSync(exePath)) {
+    console.error('错误：启动器编译失败：' + (cscOut.stdout || cscOut.stderr || ''));
+    process.exit(1);
+  }
+} finally {
+  fs.rmSync(buildDir, { recursive: true, force: true });
 }
 
 /* ③ 每个目录有独立宿主名；再保留旧固定名供尚未迁移的插件完成第一次更新。 */

@@ -8,6 +8,7 @@ const DEFAULT_CONFIG = {
   api: { iface: 'auto', baseURL: '', model: '', apiKey: '' },
   bridge: { newChat: true, delayMin: 3000, delayMax: 8000 },
   subjMode: 'ask', // 简答题策略：ask=每次弹窗询问 | keep=保留跳过 | rewrite=清空重写
+  verify2: true, // 多选/判断题二次复核开关（API 引擎）：关掉每题少一次 AI 调用
 };
 
 let run = null; // { tabId, cancelled, items: [{ q, status, answer, error }] }
@@ -108,7 +109,7 @@ async function checkUpdate(force, cacheOnly) {
 
 async function askEngine(cfg, q) {
   if (cfg.engine === 'bridge') return answerWithBridge(q, cfg.bridge);
-  return answerWithAPI(q, cfg.api);
+  return answerWithAPI(q, cfg.api, { verify2: cfg.verify2 !== false });
 }
 
 const UPDATE_HOST = `com.homeworkhelper.autoupdate.${chrome.runtime.id}`;

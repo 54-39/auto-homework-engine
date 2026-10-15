@@ -1,4 +1,3 @@
-export const DOWNLOADS_PERMISSION = 'downloads';
 export const EXPECTED_EXTENSION_ID_TOKEN = '__HW_EXPECTED_EXTENSION_ID__';
 export const EXPECTED_VERSION_TOKEN = '__HW_EXPECTED_VERSION__';
 
@@ -18,8 +17,4 @@ export function makeInstallerPayload(template, extensionId, version) {
     .replace(`set "HW_EXPECTED_EXTENSION_ID=${EXPECTED_EXTENSION_ID_TOKEN}"`, `set "HW_EXPECTED_EXTENSION_ID=${extensionId}"`)
     .replace(`set "HW_EXPECTED_VERSION=${EXPECTED_VERSION_TOKEN}"`, `set "HW_EXPECTED_VERSION=${version}"`)
     .replace(/\n/g, '\r\n');
-}
-
-export function requestDownloadsPermission(permissions) {
-  return permissions.request({ permissions: [DOWNLOADS_PERMISSION] });
 }

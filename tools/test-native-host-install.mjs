@@ -8,7 +8,9 @@ import { deriveExtensionId, extensionIdFor, nativeHostLauncherSource, nativeHost
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const installerSource = fs.readFileSync(path.join(HERE, 'install-native-host.mjs'), 'utf8');
-assert.match(installerSource, /const nodeExe = process\.execPath/);
+assert.match(installerSource, /const nodeExe = nodeArg \? nodeArg\.slice\('--node='\.length\) : process\.execPath;/);
+assert.match(installerSource, /env: \{ \.\.\.process\.env, TEMP: buildDir, TMP: buildDir \}/);
+assert.doesNotMatch(installerSource, /os\.tmpdir\(\)/);
 assert.doesNotMatch(installerSource, /function findNode\(/);
 const root = path.join(path.parse(process.cwd()).root, '插件 源码', '作业助手 中文目录');
 const otherRoot = path.join(path.parse(process.cwd()).root, '插件 源码', '其他目录');

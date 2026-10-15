@@ -246,6 +246,9 @@
         if (alt.length === slots) parts = alt;
       }
       if (!parts.length) throw new Error('填空答案为空');
+      /* 单空题只能填一个值：模型按题干下划线个数多给值时取第一个，
+         绝不把多个值拼成 "0.4；0.4" 塞进同一个空（第22题实测踩过） */
+      if (slots <= 1) parts = parts.slice(0, 1);
       while (parts.length > slots && parts.length > 1) {
         const tail = parts.splice(parts.length - 2, 2).join('；');
         parts.push(tail);

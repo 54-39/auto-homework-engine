@@ -12,3 +12,6 @@ tools/native-host.exe
 .update-stage/
 .update-files.json
 hot-reload.json
+
+# 打包产物（完整离线包等，不上传）
+dist/

@@ -2,7 +2,7 @@
    - openai：POST {base}/chat/completions（OpenAI 兼容，DeepSeek/智谱/Kimi/火山/通义 等）
    - anthropic：POST {base}/v1/messages（Claude 系协议，火山 Coding Plan / Z.ai）
    - 自动探测：粘贴 Key 后并行尝试已知接口，谁先通过鉴权用谁（结果按 Key 尾号记住） */
-import { buildMessages, parseAnswer, buildMultiVerify } from './engine.js';
+import { buildMessages, parseAnswer, buildMultiVerify, buildJudgeVerify, parseJudgeVerify } from './engine.js';
 
 export function sanitizeKey(k) {
   return String(k || '').replace(/[^\x21-\x7E]/g, '').trim();
@@ -188,14 +188,14 @@ async function callIface(cfg, messages, maxTokens) {
   return await chatOpenAI(cfg, messages, maxTokens);
 }
 
-async function run(q, endpoint, maxTokens) {
+async function run(q, endpoint, maxTokens, opts = {}) {
   const msgs = buildMessages(q);
   const cfg = { ...endpoint, apiKey: sanitizeKey(endpoint.apiKey) };
   let content = await callIface(cfg, msgs, maxTokens);
   let answer = parseAnswer(q, content);
   let note = '';
-  // 多选题：自动二次复核（初答交给模型逐项复查，专治漏选）
-  if (q.type === 'multi' && answer) {
+  // 多选题：自动二次复核（初答交给模型逐项复查，专治漏选）；verify2=false 时跳过
+  if (q.type === 'multi' && answer && opts.verify2 !== false) {
     try {
       const vMsgs = buildMultiVerify(q, answer);
       const vRaw = await callIface({ ...cfg, maxTokens: undefined }, vMsgs, 96);
@@ -215,10 +215,26 @@ async function run(q, endpoint, maxTokens) {
       /* 复核失败不阻断，用初答 */
     }
   }
+  // 判断题：自动二次复核（初答只有两个字，让模型显式推理一遍再定论）；verify2=false 时跳过
+  if (q.type === 'judge' && answer && opts.verify2 !== false) {
+    try {
+      const vMsgs = buildJudgeVerify(q, answer);
+      const vRaw = await callIface({ ...cfg, maxTokens: undefined }, vMsgs, 256);
+      const vAns = parseJudgeVerify(vRaw);
+      if (vAns && vAns !== answer) {
+        note = '判断题已二次复核修正：' + answer + ' → ' + vAns;
+        answer = vAns;
+      } else if (vAns === answer) {
+        note = '判断题已二次复核确认';
+      }
+    } catch {
+      /* 复核失败不阻断，用初答 */
+    }
+  }
   return { answer, raw: content, note: note || undefined };
 }
 
-export async function answerWithAPI(q, cfg) {
+export async function answerWithAPI(q, cfg, opts = {}) {
   const apiKey = sanitizeKey(cfg?.apiKey);
   if (!apiKey) throw new Error('API Key 未填写：粘贴后点「保存」');
   const tail = apiKey.slice(-4);
@@ -226,7 +242,7 @@ export async function answerWithAPI(q, cfg) {
 
   // 手动指定接口类型且填了地址/模型 → 直接用（用户覆盖优先）
   if (manual && cfg.baseURL && cfg.model) {
-    return await run(q, { iface: cfg.iface, baseURL: cfg.baseURL, model: cfg.model, apiKey }, maxTokensFor(q));
+    return await run(q, { iface: cfg.iface, baseURL: cfg.baseURL, model: cfg.model, apiKey }, maxTokensFor(q), opts);
   }
 
   // 自动：优先用记住的组合；失效（401/403/404）则重新探测一次
@@ -234,14 +250,14 @@ export async function answerWithAPI(q, cfg) {
   let endpoint = saved || (await detectEndpoint(apiKey, cfg.iface === 'anthropic' ? 'anthropic' : cfg.iface === 'openai' ? 'openai' : undefined));
   if (!saved) await saveEndpoint(tail, endpoint);
   try {
-    const r = await run(q, { ...endpoint, apiKey }, maxTokensFor(q));
+    const r = await run(q, { ...endpoint, apiKey }, maxTokensFor(q), opts);
     if (!saved) r.note = '已自动匹配接口：' + hostOf(endpoint.baseURL) + '（模型 ' + endpoint.model + '，已记住）';
     return r;
   } catch (e) {
     if (e.status === 401 || e.status === 403 || e.status === 404) {
       const ep2 = await detectEndpoint(apiKey, undefined, endpoint);
       await saveEndpoint(tail, ep2);
-      const r = await run(q, { ...ep2, apiKey }, maxTokensFor(q));
+      const r = await run(q, { ...ep2, apiKey }, maxTokensFor(q), opts);
       return { ...r, note: '已重新自动匹配接口：' + hostOf(ep2.baseURL) + '（模型 ' + ep2.model + '）' };
     }
     throw e;

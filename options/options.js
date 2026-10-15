@@ -54,6 +54,7 @@ $('save').addEventListener('click', async () => {
   const payload = {
     engine: engineCtl.value,
     subjMode: $('subjMode').value,
+    verify2: $('verify2').checked,
     api: currentAPIConfig(),
     bridge: {
       delayMin: +$('delayMin').value || 3000,
@@ -114,6 +115,7 @@ $('clearKey').addEventListener('click', async () => {
   if (!cfg) return;
   engineCtl.value = cfg.engine;
   if (cfg.subjMode) $('subjMode').value = cfg.subjMode;
+  $('verify2').checked = cfg.verify2 !== false;
   const api = cfg.api || {};
   providerCtl.value = IFACES[api.iface] ? api.iface : (api.baseURL ? 'openai' : 'auto');
   $('baseURL').value = api.baseURL || '';

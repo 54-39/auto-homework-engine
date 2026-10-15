@@ -83,7 +83,13 @@
   .update-progress span{min-width:108px;color:var(--text-2);font-size:12px;text-align:right;font-variant-numeric:tabular-nums}
   .confirm{margin-top:16px;border:1px solid var(--line);border-radius:var(--radius);background:#fbfcfe;padding:14px 16px}
   .confirm[hidden]{display:none}
-  .confirm p{margin:0 0 12px;color:var(--text-2)}
+  .confirm p{margin:0 0 12px;color:var(--text-2);word-break:break-word}
+  .confirm p#updGuidePath{word-break:break-all}
+  .confirm code,.hint code{display:inline;padding:1px 6px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px;white-space:nowrap}
+  .confirm ol{margin:0 0 12px;padding-left:22px;color:var(--text-2)}
+  .confirm li{margin:0 0 6px}
+  .confirm li:last-child{margin-bottom:0}
+  .guide-meta{margin:12px 0 0;color:var(--muted);font-size:12px}
   @media (prefers-reduced-motion:reduce){
     .side button,button{transition:none}
     .update-progress progress::-webkit-progress-value{transition:none}
@@ -143,7 +149,8 @@
 
       <section id="sec-upd" class="card" aria-labelledby="h-upd" hidden>
         <h2 id="h-upd">检测更新</h2>
-        <p class="hint">打开本分区会自动检查一次（1 小时内不重复联网）。首次使用时点「运行」并允许下载；在 Edge 下载记录里双击“作业助手-更新安装器.cmd”，安装器会自动查找当前插件目录，无法唯一确认时才请你选择。完成后回到此页会自动验证。之后发现新版，点「更新」即可下载、校验并替换；失败会自动重试一次，再失败恢复旧版（作业页面需 F5）。</p>
+        <p class="hint">打开本分区会自动检查一次（1 小时内不重复联网）。检查出新版后，点「更新」即可下载、校验并替换；失败会自动重试一次，再失败恢复旧版（作业页面需 F5）。</p>
+        <p class="hint">点「更新」提示“更新组件尚未连接”时，说明这台电脑还没装更新组件：点「运行」看安装步骤，按提示运行插件目录里的 <code>install-updater.cmd</code>，只做一次。</p>
         <dl class="kv">
           <div><dt>当前版本</dt><dd id="updCurrent">…</dd></div>
           <div><dt>最新版本</dt><dd id="updLatest">尚未检查</dd></div>
@@ -160,7 +167,20 @@
         </div>
         <div class="msg" id="updMsg" role="status" aria-live="polite"></div>
         <div class="msg" id="updSetupMsg" role="status" aria-live="polite" hidden></div>
-        <p class="hint"><a id="updRepairLink" href="https://github.com/54-39/auto-homework-engine/releases/download/v0.6.9/repair-updater.cmd" target="_blank" rel="noopener" hidden>旧版安装失败？下载 repair-updater.cmd 修复安装器</a></p>
+        <div class="confirm" id="updGuide" hidden>
+          <p id="updGuidePath">插件目录：…</p>
+          <ol>
+            <li>在文件资源管理器里打开上面的插件目录。</li>
+            <li>找到 <code>install-updater.cmd</code>，双击运行。</li>
+            <li>弹出的那个黑窗口会自己找 Edge 正在用的插件目录；只有一个时不问你，有多个时才让你点选。</li>
+            <li>窗口显示“安装已完成”后关掉它，回到这一页，会自动重新检查连接。</li>
+          </ol>
+          <p class="guide-meta">只做一次，之后点「更新」就能自动升级。窗口里如果报错，把整段文字发给我。</p>
+          <div class="actions">
+            <button type="button" class="ghost" id="updGuideClose">知道了</button>
+          </div>
+        </div>
+        <p class="hint"><a id="updRepairLink" href="https://github.com/54-39/auto-homework-engine/releases/download/v0.6.9/repair-updater.cmd" target="_blank" rel="noopener" hidden>安装器运行失败？下载 repair-updater.cmd 重新修复</a></p>
       </section>
     </div>
   </main>

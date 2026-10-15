@@ -42,10 +42,46 @@
     .apitoggle{border:0;background:none;cursor:pointer;font-size:11.5px;color:#374151;font-weight:500;padding:2px 0;text-align:left;flex:none;align-self:flex-start}
     .apitoggle:hover{color:#111827}
     .apisec{display:flex;flex-direction:column;gap:8px;flex:none}
-    .provrow{border:1px solid #DBE6FF;background:#F5F8FF;border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:4px;flex:none}
-    .provtop{display:flex;align-items:center;gap:8px}
-    .provtop label{font-size:12px;color:#374151;font-weight:500;flex:none}
-    .psource{font-size:11px;color:#9AA1A9}
+    /* 二次判断开关＝用户给的组件（switch/slider/title/ball/icon 五个元素、动效全不动）。
+       按用户指定改的颜色：关态轨道浅灰 #D9DEE7、开态轨道淡浅蓝 #DCE9FB（2026-10-15 用户：
+       「换个浅蓝色吧，和这个背景一样的颜色」——面板那一格实测背景 #FDFEFF，开态取比它略蓝、亮度贴近关态的值，
+       再淡就会连白球一起融掉；ON/OFF 文字随之改深灰 #313033，否则白字在两个浅底上都看不见）。
+       球选中时**没有光晕**（用户：「球形外不要带蓝色的光晕」，原来那圈
+       outline:6px rgba(147,197,253,.55) 已删，box-shadow 保持 none）。
+       icon 里是站点原版那颗播放三角 SVG（用户 2026-10-15：「闪电图标改回三角图标，和网站的一样」，
+       并抱怨原来那个 ⚡ 文字能被拖选 → icon 加 user-select:none;pointer-events:none）。
+       icon 用 top/left 50% 与球心重合（用户：「把圆形和三角形的中心重合就行了」）——站点原版的 58%/53%
+       会让三角偏在球心右下 3.08px，转起来是绕球心画小圈；居中后就是原地自转一圈。
+       尺寸只动了长度：高度、球径、字号全部保持组件原基准（font-size:14px、高 2.6em=36.39px、球 36px），
+       width 由 9em 收到 8em（126px→112px）——用户先嫌长，等比缩到 11px 后又改口「不要等比例缩小，
+       让它变短一点点，符合审美」，所以只收长度、不缩球。
+       ⚠ 再要改长度就只改 .switch 的 width：选中时的 left 是 calc(100% - 35px)，会自动跟着贴到右端（左右各溢 1px）。
+       ⚠ 绝对不要加 prefers-reduced-motion 关过渡的规则：用户机器 Windows「动画效果」是关的（SPI_GETCLIENTAREAANIMATION=0），
+       Edge 因此常报 reduce，加了那条整个滑动+旋转动画会直接消失——用户已因此报过一次「没有旋转动画」。 */
+    .v2row{display:flex;align-items:center;gap:8px;flex:none}
+    .v2text{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+    .v2t{font-size:12px;color:#374151;font-weight:500}
+    .v2h{font-size:11px;color:#9AA1A9}
+    .switch{font-size:14px;position:relative;display:inline-block;width:8em;height:2.6em;flex:none}
+    /* 真 checkbox 只隐形、不移出键盘：组件原来的 display:none 会让开关没法 Tab/Space 操作 */
+    .switch input{position:absolute;top:0;left:0;width:1px;height:1px;opacity:0;margin:0;pointer-events:none}
+    .switch .slider{position:absolute;top:0;left:0;right:0;bottom:0;background-color:#D9DEE7;transition:all .4s;border-radius:30px;cursor:pointer}
+    /* 开态＝淡浅蓝，几乎融进面板背景（用户 2026-10-15 m06856：「换个浅蓝色，和这个背景一样的颜色」）。
+       取值 #DCE9FB：与背景 #FDFEFF 对比 1.22、与白球 1.23（≈关态 #D9DEE7 的 1.34/1.35），
+       既不跳出背景、又能保住白球边缘可见；再淡（#E3EDFB 起）球就糊进背景了。 */
+    .switch input:checked+.slider{background-color:#DCE9FB}
+    .switch input:focus-visible+.slider{outline:2px solid #2563EB;outline-offset:2px}
+    /* 文字深灰：轨道改浅灰/淡浅蓝之后，白字对比度只有 1.35/1.22，等于看不见（用户 2026-10-15 报过看不清） */
+    .switch .slider .title{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-weight:600;color:#313033;white-space:nowrap;transition:all .4s;user-select:none}
+    .switch .slider .ball{position:absolute;top:0;left:-1px;width:36px;height:36px;border-radius:50%;background-color:#fff;transition:.4s}
+    /* 图标＝站点原版播放三角（SVG 自带 width/height=25，与站点逐字一致）。不给选、不接鼠标：用户抱怨过 ⚡ 能被拖选。
+       top/left 50% ＝ 与球心重合（用户 2026-10-15：「把圆形和三角形的中心重合就行了」），不再是站点的 58%/53% */
+    .switch .slider .ball .icon{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#313033;font-size:12px;line-height:0;user-select:none;-webkit-user-select:none;pointer-events:none}
+    .switch .slider .ball .icon svg{display:block}
+    .switch input:checked+.slider .title{left:40%}
+    /* ⚠ 球里不能再用 em：面板顶部那条 *{font:12px/1.5 …} 是直接命中每个元素的规则，优先级高于继承，
+       所以 .ball 的 font-size 会被它压成 12px（不是 .switch 的 14px），em 在这里会算错。球固定 36px，用 px 最稳。 */
+    .switch input:checked+.slider .ball{left:calc(100% - 35px);transform:rotate(360deg);outline:none;box-shadow:none}
     .keyrow{display:flex;gap:8px;align-items:center;flex:none;padding-top:14px} /* 顶部留白：浮起后的标签占这里，写死以免聚焦时布局跳 */
     .inputGroup{flex:1;min-width:0;position:relative}
     .inputGroup input{width:100%;height:36px;padding:0 14px;outline:none;caret-color:#2563EB;border:2px solid rgb(200,200,200);border-radius:20px;background:#fff;color:#111827;font-size:12px;transition:border-color .18s ease,box-shadow .18s ease}
@@ -183,9 +219,15 @@
         <div class="updline hidden" data-tip="点击「更新」启动更新事务；下载、验证与回滚状态请在设置页查看，成功后作业页面需 F5"></div>
         <button class="apitoggle hidden">接口 与 API Key</button>
         <div class="apisec hidden">
-          <div class="provrow">
-            <div class="provtop"><label>接口类型</label><div class="dd providerslot"></div></div>
-            <div class="psource"></div>
+          <div class="v2row">
+            <div class="v2text">
+              <span class="v2t">选择题 / 判断题 二次判断</span>
+              <span class="v2h">更稳，但每题多一次 AI 调用</span>
+            </div>
+            <label class="switch" data-tip="开启后：多选与判断题先答一遍，再让 AI 复查一遍；关掉每题省一次调用">
+              <input class="v2input" type="checkbox">
+              <span class="slider"><span class="title">OFF</span><span class="ball"><span class="icon"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="25" height="25" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 18V6l8 6-8 6Z"></path></svg></span></span></span>
+            </label>
           </div>
           <div class="keyrow">
             <div class="inputGroup">
@@ -240,7 +282,7 @@
     const els = {
       fab: $('.fab'), panel: $('.panel'), badge: $('.badge'), header: $('header'), settingsbtn: $('.settingsbtn'), collapse: $('.btn-collapse'), expandbtn: $('.expandbtn'),
       keyinput: $('.keyinput'), keylabel: $('.keylabel'), savekey: $('.savekey'), clearkey: $('.clearkey'),
-      keylist: $('.keylist'), keywarn: $('.keywarn'), psource: $('.psource'),
+      keylist: $('.keylist'), keywarn: $('.keywarn'), v2input: $('.v2input'), v2title: $('.switch .title'),
       apiToggle: $('.apitoggle'), apisec: $('.apisec'),
       modal: $('.keymodal'), msave: $('.msave'), mtemp: $('.mtemp'), mcancel: $('.mcancel'),
       subjmodal: $('.subjmodal'), subjbody: $('.subjbody'), subjcancel: $('.subjcancel'), subjkeep: $('.subjkeep'), subjrewrite: $('.subjrewrite'),
@@ -248,8 +290,8 @@
       summary: $('.summary'), smsg: $('.smsg'), shint: $('.shint'), list: $('.list'), log: $('.log'),
       updline: $('.updline'),
     };
-    /* 引擎 / 接口类型改用自绘下拉（原生 select 的展开层是系统窗口，样式改不到）。
-       控件接口模仿 select：els.engine.value / els.provider.value 读写照旧。 */
+    /* 引擎下拉用自绘控件（原生 select 的展开层是系统窗口，样式改不到）。
+       控件接口模仿 select：els.engine.value 读写照旧。 */
     els.engine = HW.Dropdown.create({
       into: $('.engineslot'),
       items: ENGINES.map((e) => ({ id: e.id, label: e.label })),
@@ -265,21 +307,8 @@
         log('引擎已切换：' + engineName() + (engine === 'bridge' ? '（将自动打开豆包标签页答题）' : ''));
       },
     });
-    els.provider = HW.Dropdown.create({
-      into: $('.providerslot'),
-      items: IFACES.map((p) => ({ id: p.id, label: p.label })),
-      value: 'auto',
-      onChange: async (iface) => {
-        const r = await send('SET_CONFIG', { api: { iface } });
-        if (!r?.ok) {
-          log('接口类型切换失败：' + (r?.error || '未知错误'));
-          return;
-        }
-        const p = IFACES.find((x) => x.id === iface) || IFACES[0];
-        els.psource.textContent = p.source;
-        log('接口类型已切换：' + p.label + '（粘贴 Key 保存后会自动探测匹配）');
-      },
-    });
+    /* 接口类型不再让用户挑：去掉下拉后 Key 一律按「自动识别」保存（KEY_SAVE 收到 auto 会并行
+       探测已知接口）；已记住的接口仍随 Key 列表保留，点「使用」即可恢复，所以这里不再有控件。 */
     /* 原生 title 提示在 Windows 上是系统气泡框（字体/圆角/箭头都不受控），改成本面板内的文字气泡：
        鼠标悬停与键盘聚焦都显示；事件委托在 Shadow 根上，动态生成的列表行（答题记录/Key 列表）同样生效。 */
     const tip = $('.tip');
@@ -533,11 +562,24 @@
       hasSavedApiKey = !!key;
       els.keylabel.textContent = key ? `使用中：尾号 ${key.slice(-4)}` : '粘贴 API Key';
       updateKeyWarning();
-      const cur = IFACES.find((p) => p.id === (cfg?.api?.iface || 'auto')) || IFACES[0];
-      els.provider.value = cur.id;
-      els.psource.textContent = cur.source;
+      /* 二次判断开关回显（与设置页那个勾选框共用 config.verify2） */
+      setVerify2(cfg?.verify2 !== false);
       await renderKeyList(open);
     };
+    function setVerify2(on) {
+      els.v2input.checked = !!on;
+      els.v2title.textContent = on ? 'ON' : 'OFF';
+    }
+    /* 开关立刻生效、不弹确认：出错就把开关拨回去，别显示与后台不一致的状态 */
+    els.v2input.addEventListener('change', async () => {
+      const on = els.v2input.checked;
+      setVerify2(on);
+      const r = await send('SET_CONFIG', { verify2: on });
+      if (!r?.ok) {
+        setVerify2(!on);
+        log('二次判断开关保存失败：' + (r?.error || '未知错误'));
+      } else log(on ? '已开启二次判断（多选/判断题每题多一次 AI 调用）' : '已关闭二次判断（多选/判断题只答一次）');
+    });
     els.keyinput.addEventListener('input', updateKeyWarning);
     const doSaveKey = async (raw, remember) => {
       const clean = String(raw || '').replace(/[^\x21-\x7E]/g, '').trim();
@@ -548,7 +590,7 @@
       if (clean !== String(raw || '')) {
         log(`已自动清理 Key 中的非法字符（中文/全角/空格等），清理后尾号 ${clean.slice(-4)}——若与你的 Key 尾号不符说明复制时带入了多余内容`);
       }
-      const iface = els.provider.value || 'auto';
+      const iface = 'auto'; // 接口类型控件已去掉：一律自动识别（KEY_SAVE 收到 auto 会并行探测）
       if (remember) {
         log('正在自动识别接口类型（并行尝试已知接口，几秒钟）…');
         const res = await send('KEY_SAVE', { key: clean, iface });

@@ -1,14 +1,36 @@
-import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } from './tools/updater-setup-core.mjs';
+import { isUpdaterHostReady } from './tools/updater-setup-core.mjs';
 
 /* 工具设置页（settings.html）：侧边栏收纳 记忆 / 诊断 / 检测更新。
    由面板「设置」按钮打开（后台 OPEN_SETTINGS 消息），逻辑走后台消息或脚本注入。 */
 (() => {
   const $ = (s) => document.querySelector(s);
-  const send = (type, payload) =>
-    chrome.runtime.sendMessage({ type, payload }).catch((e) => {
-      const msg = String(e && e.message ? e.message : e);
-      return { ok: false, error: msg };
-    });
+  // 更新收尾时扩展会整体重载，本页随之变成「僵尸页」：旧上下文里进度条再也收不掉 → 检测到上下文失效就刷新本页。
+  const contextAlive = () => !!(chrome.runtime && chrome.runtime.id);
+  let pageReviving = false;
+  const revivePage = () => {
+    if (pageReviving) return;
+    const last = Number(sessionStorage.getItem('hw-revive-at') || 0); // 扩展被停用/卸载时别无限刷新
+    if (Date.now() - last < 10000) return;
+    pageReviving = true;
+    sessionStorage.setItem('hw-revive-at', String(Date.now()));
+    location.reload();
+  };
+  const send = (type, payload) => {
+    if (!contextAlive()) {
+      revivePage();
+      return Promise.resolve({ ok: false, error: '扩展刚刚更新，设置页正在重载' });
+    }
+    try {
+      return chrome.runtime.sendMessage({ type, payload }).catch((e) => {
+        const msg = String(e && e.message ? e.message : e);
+        if (!contextAlive()) revivePage();
+        return { ok: false, error: msg };
+      });
+    } catch (e) {
+      if (!contextAlive()) revivePage();
+      return Promise.resolve({ ok: false, error: String(e && e.message ? e.message : e) });
+    }
+  };
   const out = (el, text, cls) => {
     el.textContent = text;
     el.className = 'msg' + (cls ? ' ' + cls : '');
@@ -152,13 +174,18 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
   let setupPollTimer = 0;
   let setupPollBusy = false;
   let setupWatchActive = false;
-  let setupDownloadBusy = false;
   const updRepairLink = $('#updRepairLink');
+  const updGuide = $('#updGuide');
+  const updGuidePath = $('#updGuidePath');
+  const updGuideClose = $('#updGuideClose');
+  /* 教程面板要显示插件目录；宿主已连接时由它上报 */
+  let setupHostRoot = '';
   const showSetupStatus = (response, installed = false) => {
     const currentId = chrome.runtime.id;
     const currentVersion = chrome.runtime.getManifest().version;
     const sameId = Boolean(response?.ok && response.extensionId === currentId);
     const ready = isUpdaterHostReady(response, currentId, currentVersion);
+    if (response?.root) setupHostRoot = String(response.root);
     updSetup.hidden = ready;
     updSetup.disabled = sameId && !ready;
     updSetup.textContent = sameId && !ready ? '刷新扩展后重查' : '运行';
@@ -168,6 +195,7 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
         updSetupMsg.hidden = false;
         out(updSetupMsg, '更新组件已安装并连接到当前插件。', 'ok');
       } else updSetupMsg.hidden = true;
+      updGuide.hidden = true;
       setupWatchActive = false;
       if (setupPollTimer) clearTimeout(setupPollTimer);
       setupPollTimer = 0;
@@ -177,10 +205,10 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
     const message = sameId
       ? `宿主已连接，但报告版本 ${response.manifestVersion || '未知'}，当前页面版本是 ${currentVersion}。请先到 Edge 扩展管理页刷新“作业助手”，再回到这里检查。`
       : response?.ok
-        ? '宿主连接到了其他插件目录。请点“运行”，安装器会自动查找 Edge 当前使用的目录。'
+        ? '宿主连接到了其他插件目录。请点“运行”按提示在正确的插件目录里重新安装一次。'
         : setupWatchActive
-          ? '请双击 Edge 下载目录中的“作业助手-更新安装器.cmd”，按提示完成。返回此页后会自动重新检查；失败时可再点“运行”重试。'
-          : `更新宿主尚未连接${response?.error ? '：' + response.error : ''}。点“运行”下载“作业助手-更新安装器.cmd”，再从 Edge 下载记录中双击运行。`;
+          ? '请在插件目录里双击“install-updater.cmd”，按窗口提示完成。返回此页后会自动重新检查；失败时可再点“运行”重看步骤。'
+          : `更新宿主尚未连接${response?.error ? '：' + response.error : ''}。点“运行”查看安装步骤。`;
     out(updSetupMsg, message, 'err');
     return false;
   };
@@ -198,53 +226,17 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
       if (!ready) scheduleSetupPoll();
     }, 3000);
   };
-  const waitForDownload = async (downloadId) => {
-    const deadline = Date.now() + 60000;
-    while (Date.now() < deadline) {
-      const [item] = await chrome.downloads.search({ id: downloadId });
-      if (item?.state === 'complete') return item;
-      if (item?.state === 'interrupted') throw new Error('浏览器中断了安装器下载。请在下载提示中选择保留后重试。');
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-    throw new Error('下载等待超时。请检查浏览器下载提示后重试。');
-  };
-  const downloadUpdaterInstaller = async () => {
-    if (setupDownloadBusy) return;
-    setupDownloadBusy = true;
-    updSetup.disabled = true;
-    updSetup.textContent = '准备中…';
-    let blobUrl = '';
-    try {
-      const granted = await requestDownloadsPermission(chrome.permissions);
-      if (!granted) {
-        out(updSetupMsg, '需要允许“管理下载内容”权限，才能下载安装器。允许后再点“运行”。', 'err');
-        updSetupMsg.hidden = false;
-        return;
-      }
-      const response = await fetch(chrome.runtime.getURL('tools/updater-bootstrap.cmd'));
-      if (!response.ok) throw new Error('读取安装器失败');
-      const installer = makeInstallerPayload(await response.text(), chrome.runtime.id, chrome.runtime.getManifest().version);
-      blobUrl = URL.createObjectURL(new Blob([installer], { type: 'application/octet-stream' }));
-      const downloadId = await chrome.downloads.download({
-        url: blobUrl,
-        filename: '作业助手-更新安装器.cmd',
-        saveAs: false,
-      });
-      await waitForDownload(downloadId);
-      setupWatchActive = true;
-      out(updSetupMsg, '安装器已下载。请在 Edge 的下载记录中双击“作业助手-更新安装器.cmd”；它会自动查找 Edge 正在使用的插件目录，无法唯一确认时才会让你选择。', 'ok');
-      updSetupMsg.hidden = false;
-      const ready = await checkSetupHost();
-      if (!ready) scheduleSetupPoll();
-    } catch (error) {
-      out(updSetupMsg, '安装器未能下载：' + String(error?.message || error) + '。请重试。', 'err');
-      updSetupMsg.hidden = false;
-    } finally {
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-      setupDownloadBusy = false;
-      updSetup.disabled = false;
-      updSetup.textContent = '运行';
-    }
+  /* 安装指引：不再下载安装器，改为告诉用户去插件目录双击 install-updater.cmd。
+     插件目录只能由宿主上报（未打包扩展的磁盘路径无法从扩展内部取到）。 */
+  const showSetupGuide = () => {
+    updGuidePath.textContent = setupHostRoot
+      ? '插件目录：' + setupHostRoot
+      : '插件目录：到 Edge 扩展管理页（edge://extensions）找到“作业助手”，页面上会显示它的文件夹路径';
+    updGuide.hidden = false;
+    updSetupMsg.hidden = true;
+    updGuideClose.focus();
+    setupWatchActive = true;
+    scheduleSetupPoll();
   };
   const transactionKey = `hw-update-transaction:${chrome.runtime.id}`;
   const updProgressWrap = $('#updProgressWrap');
@@ -265,12 +257,6 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
   };
   const renderProgress = (state) => {
     const { phase } = state || {};
-    if (phase === 'complete' && state.updated) {
-      updProgressWrap.hidden = false;
-      updProgress.value = 100;
-      setProgressLabel('完成', '更新完成');
-      return;
-    }
     if (phase === 'downloading') {
       updProgressWrap.hidden = false;
       const total = Math.max(0, Number(state.totalFiles) || 0);
@@ -335,9 +321,10 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
     renderProgress(state);
     updRun.disabled = false;
     updRun.textContent = '更新';
-    if (state.phase === 'complete') {
+    if (state.phase === 'complete' || state.phase === 'confirmed') {
+      // confirmed＝宿主已收到「设置页就绪」的确认（本轮真正收尾），与 complete 同样算成功
       updRun.hidden = true;
-      out(updMsg, state.updated
+      out(updMsg, state.phase === 'confirmed' || state.updated
         ? `已更新并通过运行验证到 v${state.latest}；作业页面请刷新(F5)后使用新版`
         : `已是最新版本 v${state.latest}`, 'ok');
     } else if (state.phase === 'rolled_back') {
@@ -397,9 +384,9 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
         const error = String(r?.error || '未知错误');
         if (isUpdaterHostMissing(error)) {
           updSetup.hidden = false;
-          out(updSetupMsg, '更新组件尚未连接。点“运行”下载并双击“作业助手-更新安装器.cmd”，再按提示安装。', 'err');
+          out(updSetupMsg, '更新组件尚未连接。点“运行”看安装步骤：在插件目录里双击 install-updater.cmd，完成后回来重试。', 'err');
           updSetupMsg.hidden = false;
-          out(updMsg, '请先点“运行”完成一次安装，然后重试更新。', 'err');
+          out(updMsg, '请先按“运行”里的步骤完成一次安装，然后重试更新。', 'err');
         } else out(updMsg, '更新失败：' + error, 'err');
       }
     } catch (error) {
@@ -410,7 +397,11 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
     }
   };
   updBtn.addEventListener('click', () => check(true));
-  updSetup.addEventListener('click', () => downloadUpdaterInstaller());
+  updSetup.addEventListener('click', () => showSetupGuide());
+  updGuideClose.addEventListener('click', () => {
+    updGuide.hidden = true;
+    if (!updSetup.hidden) updSetup.focus();
+  });
   updRun.addEventListener('click', () => runUpdate());
   let autoChecked = false;
   onSection = (key) => {
@@ -435,9 +426,21 @@ import { isUpdaterHostReady, makeInstallerPayload, requestDownloadsPermission } 
     updProgress.value = 100;
     setProgressLabel('运行验证', '新版后台正在进行运行验证');
     out(updMsg, '设置页已加载，正在等待后台确认本轮版本…', 'ok');
+    let healthTries = 0;
     const acknowledge = async () => {
       const result = await send('UPDATE_PAGE_READY', { transactionId: healthTransaction });
-      if (!result?.accepted) setTimeout(acknowledge, 1000);
+      if (result?.accepted) {
+        localStorage.removeItem(transactionKey); // 本轮已确认：清掉事务标记，重开设置页不会再拉起进度条
+        updProgressWrap.hidden = true; // 进度条只在更新进行中出现，确认后收起
+        out(updMsg, '已更新并通过运行验证；作业页面请刷新(F5)后使用新版', 'ok');
+        return;
+      }
+      if (++healthTries >= 60) {
+        updProgressWrap.hidden = true;
+        out(updMsg, '运行验证未收到确认。到扩展管理页手动重载一次，或重新打开设置页检查更新状态。', 'err');
+        return;
+      }
+      setTimeout(acknowledge, 1000);
     };
     acknowledge();
   }
