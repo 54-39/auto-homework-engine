@@ -43,9 +43,9 @@
     .apitoggle:hover{color:#111827}
     .apisec{display:flex;flex-direction:column;gap:8px;flex:none}
     /* 二次判断开关＝用户给的组件（switch/slider/title/ball/icon 五个元素、动效全不动）。
-       按用户指定改的颜色：关态轨道浅灰 #D9DEE7、开态轨道淡浅蓝 #DCE9FB（2026-10-15 用户：
-       「换个浅蓝色吧，和这个背景一样的颜色」——面板那一格实测背景 #FDFEFF，开态取比它略蓝、亮度贴近关态的值，
-       再淡就会连白球一起融掉；ON/OFF 文字随之改深灰 #313033，否则白字在两个浅底上都看不见）。
+       按用户指定改的颜色：关态轨道浅灰 #D9DEE7，开态轨道**透明＝直接露出面板背景**
+       （开态原为淡浅蓝 #DCE9FB；2026-10-15 用户圈住开态轨道、在 A/B/C 里选定 A「改成和背景一样的颜色」）。
+       ON/OFF 文字随之改深灰 #313033，否则白字在两个浅底上都看不见。
        球选中时**没有光晕**（用户：「球形外不要带蓝色的光晕」，原来那圈
        outline:6px rgba(147,197,253,.55) 已删，box-shadow 保持 none）。
        icon 里是站点原版那颗播放三角 SVG（用户 2026-10-15：「闪电图标改回三角图标，和网站的一样」，
@@ -66,10 +66,14 @@
     /* 真 checkbox 只隐形、不移出键盘：组件原来的 display:none 会让开关没法 Tab/Space 操作 */
     .switch input{position:absolute;top:0;left:0;width:1px;height:1px;opacity:0;margin:0;pointer-events:none}
     .switch .slider{position:absolute;top:0;left:0;right:0;bottom:0;background-color:#D9DEE7;transition:all .4s;border-radius:30px;cursor:pointer}
-    /* 开态＝淡浅蓝，几乎融进面板背景（用户 2026-10-15 m06856：「换个浅蓝色，和这个背景一样的颜色」）。
-       取值 #DCE9FB：与背景 #FDFEFF 对比 1.22、与白球 1.23（≈关态 #D9DEE7 的 1.34/1.35），
-       既不跳出背景、又能保住白球边缘可见；再淡（#E3EDFB 起）球就糊进背景了。 */
-    .switch input:checked+.slider{background-color:#DCE9FB}
+    /* 开态＝和面板背景一模一样（用户 2026-10-15 m08565 选 A）。
+       ⚠ 这里**不能写死任何一个背景色值**：面板背景是渐变（见 .panel 的 background 三条），
+       开关在竖排里随位置不同而不同（实测同一横行上左端 #F7F9FE、右端 #FFFFFF）。
+       所以开态用 background-color:transparent —— 轨道自身不上色，露出底下真正的面板背景，
+       这才是字面意义上的「和背景一样的颜色」，且面板背景以后怎么改都不会再对不上。
+       白球保持纯白：实测背景是 #F6F8FE~#FFFFFF，球与背景仍有约 1.03~1.10 的亮度差，
+       加上球投影和深灰三角，开态的球依然清晰可辨。 */
+    .switch input:checked+.slider{background-color:transparent}
     .switch input:focus-visible+.slider{outline:2px solid #2563EB;outline-offset:2px}
     /* 文字深灰：轨道改浅灰/淡浅蓝之后，白字对比度只有 1.35/1.22，等于看不见（用户 2026-10-15 报过看不清） */
     .switch .slider .title{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-weight:600;color:#313033;white-space:nowrap;transition:all .4s;user-select:none}
