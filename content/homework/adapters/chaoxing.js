@@ -10,6 +10,7 @@
   if (window.HW.CXAdapter) return;
   const TYPE_MAP = { '单选题': 'choice', '多选题': 'multi', '判断题': 'judge', '填空题': 'blank', '简答题': 'subjective', '写作题': 'subjective' };
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const textOf = el => window.HW.AIDetection?.textOf?.(el) || norm(el.textContent);
 
   const CX = {
     match(doc = document) {
@@ -21,7 +22,7 @@
         const code = q.querySelector('input[name="answertype' + id + '"]')?.value;
         const type = TYPE_MAP[q.getAttribute('typename')] || { 0: 'choice', 1: 'multi', 2: 'blank', 3: 'judge', 4: 'subjective' }[code];
         if (!type) return null;
-        const stem = norm((q.querySelector('.mark_name, .Zy_TItle') || q).textContent).slice(0, 300);
+        const stem = textOf(q.querySelector('.mark_name, .Zy_TItle') || q).slice(0, 300);
         const stateInput = q.querySelector('input[name="answer' + id + '"]');
         if (type === 'subjective' || type === 'blank') {
           const tas = [...q.querySelectorAll('textarea')];
@@ -54,7 +55,7 @@
             const d = (letterEl ? letterEl.getAttribute('data') : '') || '';
             key = /^true$/i.test(d) || row.querySelector('b.ri') ? 'T' : /^false$/i.test(d) || row.querySelector('b.wr') ? 'F' : key;
           }
-          return { key, text: norm((row.querySelector('.answer_p') || row).textContent), input: null, clickEl: row };
+          return { key, text: textOf(row.querySelector('.answer_p') || row), input: null, clickEl: row };
         });
         return {
           meta: { index: i, type, stem, options: labels.map((l) => ({ key: l.key, text: l.text })) },

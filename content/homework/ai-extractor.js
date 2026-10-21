@@ -6,6 +6,25 @@
   const esc = (s) => String(s).replace(/[&<>"\n]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\n': ' ' }[c]));
   const OMIT = 'script,style,noscript,nav,footer,[role="navigation"],[role="banner"],[role="search"],#hw-panel-host,.newTopic1,#posDiscussScroll,#searchChapterListByName';
   const TYPES = new Set(['choice', 'multi', 'judge', 'blank', 'subjective']);
+  function imageText(img) {
+    // 超星公式图的 data 是经过 URL 编码的 JSON 字符串，保留其 LaTeX 原文。
+    if (img.matches('img.ans-latex-moudle')) {
+      try {
+        const latex = JSON.parse(decodeURIComponent(img.getAttribute('data') || ''));
+        if (typeof latex === 'string' && latex.trim() && latex.length <= 12000) return '$' + latex.trim() + '$';
+      } catch { /* 公式元数据损坏时仍按未读取的图片处理 */ }
+    }
+    return norm(img.alt);
+  }
+  function textOf(el) {
+    const read = node => {
+      if (node.nodeType === 3) return node.data;
+      if (node.nodeType !== 1) return '';
+      if (node.tagName === 'IMG') return imageText(node);
+      return [...node.childNodes].map(read).join('');
+    };
+    return norm(read(el));
+  }
   function sharedOptions(el) {
     if (!el.matches?.('.B-answerCon')) return null;
     const root = el.closest('.TiMu');
@@ -119,7 +138,7 @@
         }
       }
       if (kind === 'editor') documents.add((editor || el).contentDocument);
-      if (el.tagName === 'IMG') children.push(el.alt ? esc(norm(el.alt)) : '（图片内容未读取）');
+      if (el.tagName === 'IMG') children.push(imageText(el) ? esc(imageText(el)) : '（图片内容未读取）');
       const body = children.map((c) => typeof c === 'string' ? c : c.full).join(' ');
       const full = open + body + close;
       total += open.length + close.length + children.filter((c) => typeof c === 'string').join('').length;
@@ -197,7 +216,7 @@
       const key = (item.containerId || '') + '|' + item.stem;
       if (!pendingKeys.has(key)) {
         pendingKeys.add(key);
-        pending.push({ stem: item.stem, reason: reason || '题型或答题位置无法确认' });
+        pending.push({ type: TYPES.has(item.type) ? item.type : 'unknown', stem: item.stem, reason: reason || '题型或答题位置无法确认' });
         const root = snapshot.refs.get(item.containerId)?.el;
         if (root) {
           pendingRoots.push(root);
@@ -210,13 +229,13 @@
         if (!TYPES.has(item.type)) throw new Error(item.reason || '暂不支持此题型或题目资料不完整');
         const container = snapshot.refs.get(item.containerId)?.el;
         if (!container) throw new Error('AI 返回的题目容器不存在');
-        if ([...container.querySelectorAll('img')].some((img) => !norm(img.alt))) throw new Error('题目包含尚未读取的图片内容，需要人工确认');
-        if (container.querySelector('input[type="file"],[draggable="true"],select[multiple]')) throw new Error('题目包含上传、拖拽或多选下拉控件，尚不能可靠填写');
+        if ([...container.querySelectorAll('img')].some((img) => snapshot.ids.has(img) && !imageText(img))) throw new Error('题型已识别，但题干或选项含有未读取的图片，请核对图片内容');
+        if ([...container.querySelectorAll('input[type="file"],[draggable="true"],select[multiple]')].some(el => snapshot.ids.has(el))) throw new Error('题目包含上传、拖拽或多选下拉控件，尚不能可靠填写');
         const context = (item.contextIds || []).map((id) => {
           const el = snapshot.refs.get(id)?.el;
           if (!el || el.matches('input,textarea,select,iframe,[contenteditable]') || el.querySelector('input,textarea,select,iframe,[contenteditable]')) throw new Error('共享材料区域不存在或混入了答题控件');
-          if ([...el.querySelectorAll('img')].some((img) => !norm(img.alt))) throw new Error('共享材料包含尚未读取的图片内容');
-          return norm(el.innerText || el.textContent);
+          if ([...el.querySelectorAll('img')].some((img) => snapshot.ids.has(img) && !imageText(img))) throw new Error('共享材料包含尚未读取的图片内容');
+          return textOf(el);
         }).filter(Boolean).filter((text) => !norm(item.stem).includes(text)).join('\n');
         const stem = context ? context + '\n' + item.stem : item.stem;
         if (stem.length > 12000) throw new Error('材料与子题内容过长，请分段确认');
@@ -245,7 +264,7 @@
             const native = el.matches('input[type="radio"],input[type="checkbox"]') ? el : el.control || el.querySelector('input[type="radio"],input[type="checkbox"]');
             if (native && (native.disabled || (item.type === 'multi' ? native.type !== 'checkbox' : native.type !== 'radio'))) throw new Error('题型与页面选项控件不一致');
             const clickEl = el.matches('input') ? null : el;
-            let text = norm((native?.closest('label') || native?.labels?.[0] || el).textContent);
+            let text = textOf(native?.closest('label') || native?.labels?.[0] || el);
             const pageKey = norm(el.querySelector('[class*="num_option"]')?.textContent) || text.match(/^([A-H])[.、．:：)）\s]+/)?.[1];
             if (item.type !== 'judge' && /^[A-H]$/.test(pageKey || '') && option.key !== pageKey) throw new Error('AI 返回的选项编号与页面不一致');
             if (item.type === 'judge') {
@@ -338,5 +357,5 @@
     return { questions, pending };
   }
 
-  HW.AIDetection = { collect, bind, isCurrent, sharedOptions };
+  HW.AIDetection = { collect, bind, isCurrent, sharedOptions, imageText, textOf };
 })();

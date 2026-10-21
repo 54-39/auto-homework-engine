@@ -352,6 +352,50 @@ async function browserChecks() {
     await HW.Filler.fill(blank, '本地填写');
     ok(HW.Filler.verify(blank, '本地填写'), '恢复后的原生填空不能填写');
   });
+  await check('原生题目的嵌套题块、隐藏选项及隐藏附件不重复报漏题', async () => {
+    const extra = document.createElement('div');
+    extra.innerHTML = `<div class="TiMu"><section class="questionLi" typename="单选题" id="question911"><h3 class="mark_name">1. 总线原生题目</h3><label class="answerBg"><span class="num_option">A</span>甲</label><label class="answerBg"><span class="num_option">B</span>乙</label></section></div>
+      <section class="questionLi" typename="单选题" id="question912"><h3 class="mark_name">2. 总线原生题目</h3><label class="answerBg"><span class="num_option">A</span>甲</label><label class="answerBg"><span class="num_option">B</span>乙</label></section>
+      <section class="questionLi" typename="单选题" id="question913"><h3 class="mark_name">3. 总线原生题目</h3><label class="answerBg"><span class="num_option">A</span>甲</label><label class="answerBg"><span class="num_option">B</span>乙</label><div hidden><label class="answerBg"><span class="num_option">C</span>隐藏模板</label><img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"><input type="file"><div draggable="true">隐藏工具</div></div></section>`;
+    nativeFixture.append(extra);
+    try {
+      await until(() => HW.questions.filter(q => q.meta.stem.includes('总线原生题目')).length === 3);
+      ok(![...ui.querySelectorAll('.pending .stem')].some(el => el.textContent.includes('总线原生题目')), '同一道原生题目又被报为待确认');
+      const q = HW.questions.find(q => q.meta.stem.startsWith('3. 总线'));
+      ok(q.meta.options.length === 2, '隐藏选项参与识题');
+      ok(!testCalls.includes('HW_DETECT_QUESTIONS'));
+      const image = document.createElement('img');
+      image.width = 20; image.height = 20;
+      image.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+      extra.querySelector('#question913 .mark_name').append(image);
+      await until(() => !HW.questions.some(q => q.meta.stem.startsWith('3. 总线')));
+      const pending = [...ui.querySelectorAll('.pending')].filter(el => el.querySelector('.stem').textContent.includes('3. 总线'));
+      ok(pending.length === 1 && pending[0].querySelector('.type').textContent === '单选', '图片待确认被误写为题型未知或重复计数');
+      ok(pending[0].dataset.tip.includes('题型已识别') && pending[0].dataset.tip.includes('图片'));
+    } finally { extra.remove(); }
+  });
+  await check('超星公式图读取已有LaTeX，原生题干、四个选项及AI采集均完整，不误报图片', async () => {
+    const extra = document.createElement('div');
+    extra.className = 'TiMu';
+    const latex = value => `<img class="ans-latex-moudle" data="${encodeURIComponent(JSON.stringify(value))}" width="20" height="20" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">`;
+    extra.innerHTML = `<section class="questionLi" typename="单选题" id="question918"><h3 class="mark_name">公式题：有 ${latex('n')} 个设备</h3>` +
+      ['\\log_2 n', 'n', '2n', 'n^2'].map((value, i) => `<label class="answerBg"><span class="num_option">${'ABCD'[i]}</span><span class="answer_p">${latex(value)}${i === 0 ? '向上取整' : ''}</span></label>`).join('') + '</section>';
+    nativeFixture.append(extra);
+    try {
+      await until(() => HW.questions.some(q => q.meta.stem.startsWith('公式题：')));
+      const q = HW.questions.find(q => q.meta.stem.startsWith('公式题：'));
+      ok(q.meta.stem.includes('$n$'), q.meta.stem);
+      ok(q.meta.options.map(o => o.text).join('|') === 'A$\\log_2 n$向上取整|B$n$|C$2n$|D$n^2$', JSON.stringify(q.meta));
+      ok(![...ui.querySelectorAll('.pending .stem')].some(el => el.textContent.includes('公式题：')), '有公式元数据仍误报图片待确认');
+      ok(HW.AIDetection.collect().batches.join('').includes('\\log_2 n'), '手动 AI 检测资料丢失公式');
+      extra.querySelector('img').setAttribute('data', encodeURIComponent(JSON.stringify('m')));
+      await until(() => HW.questions.some(q => q.meta.stem.startsWith('公式题：') && q.meta.stem.includes('$m$')));
+      extra.querySelector('img').setAttribute('data', '%broken');
+      await until(() => !HW.questions.some(q => q.meta.stem.startsWith('公式题：')));
+      ok([...ui.querySelectorAll('.pending')].some(el => el.dataset.tip.includes('公式题：') && el.dataset.tip.includes('图片')), '损坏公式数据被当作已读取');
+      ok(!testCalls.includes('HW_DETECT_QUESTIONS'));
+    } finally { extra.remove(); }
+  });
   await check('延迟加载的章节 iframe 自动显示题目，换题后本地刷新且不调用 AI', async () => {
     const frame = document.createElement('iframe');
     nativeFixture.append(frame);

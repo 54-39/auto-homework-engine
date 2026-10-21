@@ -1124,12 +1124,13 @@
         for (const doc of snapshot.documents) {
           if (doc.body?.isContentEditable) continue; // 富文本编辑器正文不是另一份题目
           for (const q of HW.Extractor.extract(doc)) {
+            const labels = (q.el.labels || []).filter(l => snapshot.ids.has(l.input || l.clickEl));
             const fields = q.el.iframes?.length ? q.el.iframes : q.el.iframe ? [q.el.iframe] : q.el.inputs || [];
-            const target = q.el.labels?.[0]?.input || q.el.labels?.[0]?.clickEl || fields[0];
+            const target = labels[0]?.input || labels[0]?.clickEl || fields[0];
             const container = target?.closest('.questionLi,.TiMu,fieldset,section,article,[role="group"]') || target?.parentElement;
             if (!snapshot.ids.has(container)) continue;
             items.push({ ...q.meta, containerId: snapshot.ids.get(container),
-              options: (q.el.labels || []).map(l => {
+              options: labels.map(l => {
                 const plain = l.text.replace(/^[A-H][.、．:：)）\s]+/, '').trim();
                 let key = l.key;
                 if (q.meta.type === 'judge' && /^(对|正确|是|真|true|T|√)$/i.test(plain)) key = 'T';
@@ -1140,7 +1141,12 @@
           }
           for (const el of doc.querySelectorAll('.questionLi,.TiMu')) {
             const containerId = snapshot.ids.get(el);
-            if (containerId && !items.some(q => q.containerId === containerId)) items.push({ type: 'unknown', containerId,
+            // 同一道题可能同时套着 questionLi 和 TiMu；不再把外壳或内层容器另算一题。
+            const represented = items.some(q => {
+              const root = snapshot.refs.get(q.containerId)?.el;
+              return root === el || (q.type !== 'unknown' && root && (root.contains(el) || el.contains(root)));
+            });
+            if (containerId && !represented) items.push({ type: 'unknown', containerId,
               stem: (el.querySelector('.mark_name,.Zy_TItle') || el).textContent.trim().slice(0, 300), options: [], inputIds: [],
               reason: '页面题型暂未识别，可点「检测题目」调用 AI' });
           }
@@ -1251,7 +1257,10 @@
         r.className = 'item pending';
         r.tabIndex = 0;
         r.dataset.tip = q.reason + '｜' + q.stem;
-        r.innerHTML = '<span class="no">·</span><span class="type t-judge">未知</span><span class="stem"></span><span class="st s-failed">待确认</span>';
+        r.innerHTML = '<span class="no">·</span><span class="type"></span><span class="stem"></span><span class="st s-failed">待确认</span>';
+        const type = r.querySelector('.type');
+        type.textContent = TYPE_NAME[q.type] || '未知';
+        type.classList.add('t-' + (TYPE_NAME[q.type] ? q.type : 'judge'));
         r.querySelector('.stem').textContent = q.stem;
         els.list.appendChild(r);
       });
