@@ -1,0 +1,8 @@
+{
+  "extensionName": {
+    "message": "作业助手"
+  },
+  "extensionDescription": {
+    "message": "Helps users extract questions, generate reference answers, and fill forms for review. Users submit manually."
+  }
+}

@@ -43,15 +43,11 @@ async function pingReady(tabId) {
   return { ok: false, info: last };
 }
 
-function flattenPrompt(q) {
-  const [sys, user] = buildMessages(q);
-  return `${sys.content}\n\n${user.content}`;
-}
-
 /* 后台标签页里 execCommand 偶尔因无焦点失效：首次失败时激活豆包标签页并重试一次（自愈） */
 let activatedOnce = false;
+let busy = false;
 
-async function askOnce(q, cfg) {
+async function askOnce(prompt, cfg) {
   const tabId = await ensureDoubaoTab();
   const ready = await pingReady(tabId);
   if (!ready.ok) {
@@ -64,7 +60,7 @@ async function askOnce(q, cfg) {
   }
   const send = chrome.tabs.sendMessage(tabId, {
     type: 'BRIDGE_ASK',
-    payload: { prompt: flattenPrompt(q), newChat: cfg?.newChat !== false },
+    payload: { prompt, newChat: cfg?.newChat !== false },
   });
   let timer;
   const timeout = new Promise((_, rej) => {
@@ -78,12 +74,15 @@ async function askOnce(q, cfg) {
     send.catch(() => {}); // 超时后迟到的响应不再触发未处理拒绝
   }
   if (!res?.ok) throw new Error(res?.error || '豆包桥接失败');
-  return { answer: parseAnswer(q, res.text) };
+  return { raw: res.text };
 }
 
-export async function answerWithBridge(q, cfg) {
+export async function requestWithBridge(messages, cfg) {
+  if (busy) throw new Error('豆包正在处理上一条请求，请等待完成后重试');
+  busy = true;
+  const prompt = messages.map((m) => m.content).join('\n\n');
   try {
-    return await askOnce(q, cfg);
+    return await askOnce(prompt, cfg);
   } catch (e) {
     const msg = String(e.message || e);
     if (!activatedOnce && /未发出|发送按钮|编辑器|输入框/.test(msg)) {
@@ -94,8 +93,15 @@ export async function answerWithBridge(q, cfg) {
       } catch {
         /* 标签页可能已被关闭 */
       }
-      return askOnce(q, cfg);
+      return await askOnce(prompt, cfg);
     }
     throw e;
+  } finally {
+    busy = false;
   }
+}
+
+export async function answerWithBridge(q, cfg) {
+  const result = await requestWithBridge(buildMessages(q), cfg);
+  return { answer: parseAnswer(q, result.raw) };
 }

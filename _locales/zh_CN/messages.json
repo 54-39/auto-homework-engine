@@ -1,0 +1,8 @@
+{
+  "extensionName": {
+    "message": "作业助手"
+  },
+  "extensionDescription": {
+    "message": "作业助手是一款用于超星学习通的 AI 辅助工具，可帮助提取题目、生成参考答案并辅助填写。支持豆包网页桥接与多家 AI API。答案供参考，请核对后自行提交。"
+  }
+}

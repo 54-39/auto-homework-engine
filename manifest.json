@@ -1,28 +1,40 @@
 {
   "manifest_version": 3,
-  "name": "作业助手",
-  "version": "0.6.15",
-  "description": "网页作业 AI 辅助：提取题目、生成答案并自动填写；支持多家 API、豆包网页桥接与安全更新。",
-  "permissions": ["storage", "tabs", "scripting", "notifications", "nativeMessaging"],
+  "name": "__MSG_extensionName__",
+  "version": "0.9.1",
+  "description": "__MSG_extensionDescription__",
+  "default_locale": "en",
+  "permissions": ["storage", "unlimitedStorage", "tabs", "scripting", "notifications", "nativeMessaging"],
   "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": [
+    "*://*.chaoxing.com/*",
+    "*://*.doubao.com/*",
+    "https://api.deepseek.com/*",
+    "https://ark.cn-beijing.volces.com/*",
+    "https://open.bigmodel.cn/*",
+    "https://api.moonshot.cn/*",
+    "https://api.z.ai/*"
+  ],
+  "optional_host_permissions": ["https://*/*"],
   "background": {
     "service_worker": "background/service-worker.js",
     "type": "module"
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "exclude_matches": ["*://*.doubao.com/*"],
+      "matches": ["*://*.chaoxing.com/*"],
       "js": [
         "content/homework/adapters/chaoxing.js",
         "content/homework/dropdown.js",
         "content/homework/extractor.js",
+        "content/homework/ai-extractor.js",
         "content/homework/filler.js",
+        "content/course/watch.js",
         "content/homework/panel.js",
         "content/homework/content.js"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     },
     {
       "matches": ["*://*.doubao.com/*"],

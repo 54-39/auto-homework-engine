@@ -40,6 +40,24 @@ function currentAPIConfig() {
 
 const msg = (text, cls = '') => ($('msg').textContent = text), setCls = (cls) => ($('msg').className = 'msg ' + cls);
 
+async function requestAPIHostPermission(baseURL) {
+  let url;
+  try { url = new URL(baseURL); } catch { return false; }
+  if (url.protocol !== 'https:') {
+    msg('接口地址必须使用 HTTPS');
+    setCls('err');
+    return false;
+  }
+  const origin = `${url.origin}/*`;
+  if (await chrome.permissions.contains({ origins: [origin] })) return true;
+  const granted = await chrome.permissions.request({ origins: [origin] });
+  if (!granted) {
+    msg('未授予该接口域名权限，配置未保存');
+    setCls('err');
+  }
+  return granted;
+}
+
 $('save').addEventListener('click', async () => {
   const rawKey = $('apiKey').value;
   const cleanKey = rawKey.replace(/[^\x21-\x7E]/g, '').trim();
@@ -51,11 +69,13 @@ $('save').addEventListener('click', async () => {
   if (cleanKey !== rawKey.trim()) {
     $('apiKey').value = cleanKey;
   }
+  const api = currentAPIConfig();
+  if (api.baseURL && !(await requestAPIHostPermission(api.baseURL))) return;
   const payload = {
     engine: engineCtl.value,
     subjMode: $('subjMode').value,
     verify2: $('verify2').checked,
-    api: currentAPIConfig(),
+    api,
     bridge: {
       delayMin: +$('delayMin').value || 3000,
       delayMax: +$('delayMax').value || 8000,
@@ -79,6 +99,7 @@ $('test').addEventListener('click', async () => {
     setCls('err');
     return;
   }
+  if (!(await requestAPIHostPermission(api.baseURL))) return;
   msg('测试中…');
   setCls('');
   const res = await chrome.runtime.sendMessage({ type: 'TEST_API', payload: { api } });

@@ -29,15 +29,15 @@ function copyDir(name) {
 }
 
 try {
-  for (const dir of ['background', 'content', 'icons', 'options']) copyDir(dir);
+  for (const dir of ['_locales', 'background', 'content', 'icons', 'options']) copyDir(dir);
   for (const file of ['manifest.json', 'settings.html', 'settings.js']) {
     fs.copyFileSync(path.join(ROOT, file), path.join(stage, file));
   }
 
   const manifest = JSON.parse(read('manifest.json'));
   manifest.version = version;
-  manifest.description = manifest.description.replace('、豆包网页桥接与安全更新。', '、豆包网页桥接。');
-  if (manifest.description.includes('安全更新')) throw new Error('Edge 商店版描述仍包含 GitHub 更新功能');
+  manifest.description = manifest.description.replace('、豆包网页桥接与 GitHub 更新。', '、豆包网页桥接，由 Edge 商店管理更新。');
+  if (manifest.description.includes('GitHub 更新')) throw new Error('Edge 商店版描述仍包含 GitHub 更新功能');
   manifest.permissions = manifest.permissions.filter((permission) => permission !== 'nativeMessaging');
   write('manifest.json', JSON.stringify(manifest, null, 2) + '\n');
 

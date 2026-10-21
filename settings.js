@@ -1,4 +1,5 @@
 import { isUpdaterHostReady } from './tools/updater-setup-core.mjs';
+import { exportIssueHistory, ISSUE_PREFIX } from './background/issue-history.js';
 
 /* 工具设置页（settings.html）：侧边栏收纳 记忆 / 诊断 / 检测更新。
    由面板「设置」按钮打开（后台 OPEN_SETTINGS 消息），逻辑走后台消息或脚本注入。 */
@@ -111,6 +112,65 @@ import { isUpdaterHostReady } from './tools/updater-setup-core.mjs';
 
   /* 诊断：把最近打开的网页（作业页）DOM 导出为 HTML 下载文件 */
   const diagMsg = $('#diagMsg');
+  let issues = [];
+  let issueOffset = 0;
+  const issuePageSize = 50;
+  const issueMsg = $('#issueMsg');
+  async function loadIssues() {
+    const result = await send('HW_ISSUE_LIST', { offset: issueOffset, limit: issuePageSize });
+    if (!result?.ok) return out(issueMsg, '读取失败：' + (result?.error || '请刷新重试'), 'err');
+    issues = result.issues;
+    $('#issueCount').textContent = result.total ? `共 ${result.total} 条异常记录 · 当前显示 ${result.offset + 1}–${result.offset + issues.length} 条` : '暂时没有异常记录，正常运行不会产生记录';
+    $('#issueExport').disabled = !result.total;
+    $('#issueClear').disabled = !result.total;
+    $('#issuePages').hidden = result.total <= issuePageSize;
+    $('#issuePrev').disabled = issueOffset === 0;
+    $('#issueNext').disabled = issueOffset + issues.length >= result.total;
+    $('#issuePageLabel').textContent = `${Math.floor(issueOffset / issuePageSize) + 1} / ${Math.max(1, Math.ceil(result.total / issuePageSize))}`;
+    const list = $('#issueList');
+    list.replaceChildren();
+    for (const issue of issues) {
+      const li = document.createElement('li');
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = issue.stage + ' · ' + issue.message;
+      const meta = document.createElement('small');
+      meta.textContent = new Date(issue.firstAt || issue.at).toLocaleString() + ' · v' + issue.version + (issue.count > 1 ? ` · 旧版合并记录 ${issue.count} 次` : '');
+      const body = document.createElement('pre');
+      body.textContent = [['章节', issue.chapter], ['页面', issue.url], ['题目', issue.question], ['答案 / 回执', issue.answer]]
+        .filter(([, value]) => value).map(([label, value]) => `${label}：${value}`).join('\n\n') || '没有附加内容';
+      details.append(summary, meta, body); li.append(details); list.append(li);
+    }
+  }
+  $('#issueRefresh').addEventListener('click', () => { issueOffset = 0; loadIssues(); });
+  $('#issuePrev').addEventListener('click', () => { issueOffset = Math.max(0, issueOffset - issuePageSize); loadIssues(); });
+  $('#issueNext').addEventListener('click', () => { issueOffset += issuePageSize; loadIssues(); });
+  $('#issueExport').addEventListener('click', async () => {
+    $('#issueExport').disabled = true;
+    out(issueMsg, '正在导出全部异常记录…');
+    try {
+      const { blob, count } = await exportIssueHistory(chrome.runtime.getManifest().version);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `作业助手-异常记录-${new Date().toISOString().slice(0, 10)}.json`; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      out(issueMsg, `已导出全部 ${count} 条异常记录`, 'ok');
+    } catch (e) { out(issueMsg, '导出失败：' + (e.message || e), 'err'); }
+    finally { $('#issueExport').disabled = false; }
+  });
+  $('#issueClear').addEventListener('click', async () => {
+    const result = await send('HW_ISSUE_CLEAR');
+    if (!result?.ok) return out(issueMsg, '清空失败：' + (result?.error || '请重试'), 'err');
+    issueOffset = 0;
+    await loadIssues(); out(issueMsg, '异常记录已清空', 'ok');
+  });
+  let issueRefreshTimer;
+  chrome.storage.onChanged?.addListener((changes, area) => {
+    if (area === 'local' && Object.keys(changes).some(key => key.startsWith(ISSUE_PREFIX)) && !secs.diag.hidden && issueOffset === 0) {
+      clearTimeout(issueRefreshTimer); issueRefreshTimer = setTimeout(loadIssues, 200);
+    }
+  });
+  loadIssues();
   const diagBtn = $('#diagExport');
   diagBtn.addEventListener('click', async () => {
     diagBtn.disabled = true;
@@ -122,7 +182,31 @@ import { isUpdaterHostReady } from './tools/updater-setup-core.mjs';
       const tab = tabs.reduce((a, b) => ((b.lastAccessed || 0) >= (a.lastAccessed || 0) ? b : a));
       const [res] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: () => '<!DOCTYPE html>\n' + document.documentElement.outerHTML,
+        // 章节题在 #iframe 里，只导顶层文档会丢掉真正的题目 DOM；同源 iframe 就地展开
+        func: () => {
+          const copy = document.documentElement.cloneNode(true);
+          const fill = (live, clone) => {
+            const lc = [...live.children];
+            [...clone.children].forEach((c, i) => {
+              const l = lc[i];
+              if (!l) return;
+              if (l.tagName === 'IFRAME') {
+                let doc = null;
+                try { doc = l.contentDocument; } catch { /* 跨域读不到，保留 <iframe> */ }
+                if (!doc?.body) return;
+                const box = document.createElement('div');
+                box.setAttribute('data-iframe', l.src || 'about:blank');
+                [...doc.body.childNodes].forEach((n) => box.appendChild(n.cloneNode(true)));
+                c.replaceWith(box);
+                fill(doc.body, box);
+                return;
+              }
+              fill(l, c);
+            });
+          };
+          fill(document.documentElement, copy);
+          return '<!DOCTYPE html>\n' + copy.outerHTML;
+        },
       });
       const host = tab.url ? new URL(tab.url).hostname.replace(/[^a-z0-9.-]/gi, '_') : 'page';
       const blob = new Blob([res.result], { type: 'text/html' });
@@ -405,6 +489,7 @@ import { isUpdaterHostReady } from './tools/updater-setup-core.mjs';
   updRun.addEventListener('click', () => runUpdate());
   let autoChecked = false;
   onSection = (key) => {
+    if (key === 'diag') loadIssues();
     if (key === 'upd') {
       if (!autoChecked) {
         autoChecked = true;

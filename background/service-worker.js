@@ -1,7 +1,9 @@
 /* 后台 Service Worker：引擎路由、题目队列、答案缓存、与作业页消息中转、热重载、自动更新检查 */
-import { answerWithAPI, testAPI, sanitizeKey, detectEndpoint } from './engines/api-engine.js';
-import { answerWithBridge } from './engines/bridge-engine.js';
+import { answerWithAPI, testAPI, sanitizeKey, detectEndpoint, requestWithAPI } from './engines/api-engine.js';
+import { answerWithBridge, requestWithBridge } from './engines/bridge-engine.js';
+import { detectQuestions } from './engines/detection-engine.js';
 import { hashKey, compareVersions, isMajorUpdate } from './engines/engine.js';
+import { appendIssue, readIssuePage, clearIssueHistory } from './issue-history.js';
 
 const DEFAULT_CONFIG = {
   engine: 'api', // api | bridge
@@ -9,13 +11,109 @@ const DEFAULT_CONFIG = {
   bridge: { newChat: true, delayMin: 3000, delayMax: 8000 },
   subjMode: 'ask', // 简答题策略：ask=每次弹窗询问 | keep=保留跳过 | rewrite=清空重写
   verify2: true, // 多选/判断题二次复核开关（API 引擎）：关掉每题少一次 AI 调用
+  watchRate: 'auto', // 刷课倍速：'auto' 跟播放器菜单最高档 | '1'/'1.25'/'1.5'/'2' 固定档
+  watchMuted: true, // 保持原有刷课默认静音；面板可取消
+  panelMode: 'homework', // API 面板：写题 / 刷课
 };
 
 let run = null; // { tabId, cancelled, items: [{ q, status, answer, error }] }
+const detectingTabs = new Map();
+
+/* —— 多课程刷课队列 ——
+   刷课脚本每跳一次页面就重新加载一遍，内存全丢，所以队列只能存在这里。
+   内容脚本到新页面先问一句「我该干什么」，后台指着当前这门课；一门走完报一次，
+   后台把标签页导航到下一门的课程目录页。 */
+/*　MV3 的后台空闲 30 秒就被回收，整门课要刷几小时，队列只放内存必然丢，
+    所以每次都顺手落一份到 storage.local；新页面来问时再读回来。 */
+const WQ_KEY = 'watchQueue';
+let watchQueue = null; // { courses:[{key,scUrl,name}], index, tabId, rate, autoRate }
+let issueWrites = Promise.resolve();
+function recordIssue(entry, sender = {}) {
+  const write = issueWrites.then(async () => {
+    const stored = await chrome.storage.local.get('config');
+    const clean = value => {
+      let text = String(value || '');
+      const secret = stored.config?.api?.apiKey;
+      if (secret) text = text.split(secret).join('[已隐藏]');
+      return text.replace(/Bearer\s+[^\s]+/gi, 'Bearer [已隐藏]')
+        .replace(/https?:\/\/[^\s"<>]+/g, value => { try { const u = new URL(value); return u.origin + u.pathname; } catch { return '[网址]'; } });
+    };
+    let url = '';
+    try { const u = new URL(sender.url || sender.tab?.url || entry.url); url = u.origin + u.pathname; } catch { /* 无页面上下文 */ }
+    const item = { at: new Date().toISOString(), version: chrome.runtime.getManifest().version,
+      stage: clean(entry.stage || '异常'), message: clean(entry.message), url,
+      chapter: clean(entry.chapter), question: clean(entry.question), answer: clean(entry.answer),
+      score: typeof entry.score === 'number' ? entry.score : null, count: 1 };
+    if (!item.message) return;
+    await appendIssue(item);
+  });
+  issueWrites = write.catch(() => {});
+  return write;
+}
+
+async function saveQueue(q) {
+  watchQueue = q;
+  if (q) await chrome.storage.local.set({ [WQ_KEY]: q }).catch(() => {});
+  else await chrome.storage.local.remove(WQ_KEY).catch(() => {});
+}
+
+async function loadQueue() {
+  if (watchQueue) return watchQueue;
+  const got = await chrome.storage.local.get(WQ_KEY).catch(() => ({}));
+  watchQueue = got?.[WQ_KEY] || null;
+  return watchQueue;
+}
+
+async function watchGo(index) {
+  const q = await loadQueue();
+  if (!q) return;
+  q.index = index;
+  const cur = q.courses[index];
+  if (!cur) {
+    await saveQueue(null);
+    notify(`刷课结束：${q.courses.length} 门课都走完了`);
+    sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { count: q.courses.length } });
+    return;
+  }
+  await saveQueue(q);
+  await chrome.tabs.update(q.tabId, { url: cur.scUrl }).catch(() => {});
+}
+
+async function detectPage(payload, sender) {
+  const tabId = sender.tab?.id;
+  const host = new URL(sender.url || sender.tab?.url || 'about:blank').hostname;
+  if (tabId == null || !(host === 'chaoxing.com' || host.endsWith('.chaoxing.com'))) throw new Error('只支持在超星页面检测题目');
+  if (detectingTabs.has(tabId)) throw new Error('正在识别题目，请等待本次检测完成');
+  const operation = { cancelled: false };
+  detectingTabs.set(tabId, operation);
+  try {
+    const cfg = await getConfig();
+    const request = cfg.engine === 'bridge'
+      ? (messages) => requestWithBridge(messages, cfg.bridge)
+      : (messages) => requestWithAPI(messages, cfg.api);
+    const questions = await detectQuestions(payload.batches, async (messages) => {
+      if (operation.cancelled) throw new Error('已取消识别，请重新检测');
+      const result = await request(messages);
+      if (operation.cancelled) throw new Error('已取消识别，请重新检测');
+      return result;
+    }, (current, total) => {
+      sendTab(tabId, { type: 'HW_DETECT_PROGRESS', payload: { requestId: payload.requestId, current, total } });
+    });
+    return { ok: true, questions };
+  } finally {
+    detectingTabs.delete(tabId);
+  }
+}
 
 /* 暂停当前队列（风控/多次失败共用），发通知 + 面板红字 */
 function pauseRun(tabId, reason) {
   if (run) run.cancelled = true;
+  const item = run?.items.find(i => i.status === 'failed');
+  recordIssue({ stage: '答题失败', message: item?.error || reason, question: item?.q?.stem, answer: item?.raw || item?.answer?.answer, url: run?.sourceUrl })
+    .catch(e => {
+      sendTab(tabId, { type: 'HW_ISSUE_WRITE_FAILED', payload: { error: String(e.message || e) } });
+      notify('异常记录写入失败，已停止答题：' + String(e.message || e).slice(0, 100));
+    });
   notify('已暂停：' + reason.slice(0, 90));
   return sendTab(tabId, { type: 'HW_DONE', payload: { paused: reason } });
 }
@@ -206,7 +304,7 @@ function diagUpdateHost() {
 }
 
 function cacheKeyOf(q) {
-  return hashKey(JSON.stringify({ t: q.type, s: q.stem, o: (q.options || []).map((x) => x.text) }));
+  return hashKey(JSON.stringify({ v: 2, t: q.type, s: q.stem, o: (q.options || []).map((x) => x.text), b: q.blanks || 0, d: q.slotOptions || [] }));
 }
 async function cached(key) {
   const o = await chrome.storage.local.get('c:' + key);
@@ -216,14 +314,15 @@ function cacheSet(key, val) {
   return chrome.storage.local.set({ ['c:' + key]: val });
 }
 
-async function startRun(questions, tabId) {
+async function startRun(questions, tabId, sourceUrl) {
   const cfg = await getConfig();
   if (run) run.cancelled = true;
-  run = { tabId, cancelled: false, items: questions.map((q) => ({ q, status: 'queued', answer: null, error: null })) };
+  const activeRun = { tabId, sourceUrl, cancelled: false, items: questions.map((q) => ({ q, status: 'queued', answer: null, error: null })) };
+  run = activeRun;
   (async () => {
-    for (let i = 0; i < run.items.length; i++) {
-      if (run.cancelled) return sendTab(tabId, { type: 'HW_STOPPED' });
-      const item = run.items[i];
+    for (let i = 0; i < activeRun.items.length; i++) {
+      if (activeRun.cancelled || run !== activeRun) return;
+      const item = activeRun.items[i];
       // 面板逐题决策：skip=已写且正确（跳过） / rewrite=写错（用参考答案改写） / ask=问引擎
       if (item.q._decision === 'skip') {
         item.status = 'skipped';
@@ -242,18 +341,23 @@ async function startRun(questions, tabId) {
       try {
         const key = await cacheKeyOf(item.q);
         let ans = await cached(key);
+        if (activeRun.cancelled || run !== activeRun) return;
         const fromCache = !!ans;
         if (!ans) {
           const r = await askEngine(cfg, item.q);
+          if (activeRun.cancelled || run !== activeRun) return;
           ans = { answer: r.answer, note: r.note || null };
           await cacheSet(key, ans);
         }
+        if (activeRun.cancelled || run !== activeRun) return;
         item.status = 'answered';
         item.answer = ans;
         sendTab(tabId, { type: 'HW_ANSWER', payload: { index: i, answer: ans.answer, fromCache, note: ans.note } });
       } catch (e) {
+        if (activeRun.cancelled || run !== activeRun) return;
         item.status = 'failed';
         item.error = String(e.message || e);
+        item.raw = e.answerPreview;
         sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error } });
         // 风控/验证类错误：第一次就暂停队列，不去撞验证码
         if (RISKY_RE.test(item.error)) {
@@ -267,7 +371,7 @@ async function startRun(questions, tabId) {
         return pauseRun(tabId, item.error.slice(0, 140));
       }
       if (cfg.engine === 'bridge') {
-        // 模拟人工节奏：每题之间随机延迟，降低风控风险
+        // 按用户配置的间隔等待，控制连续请求频率
         const { delayMin = 3000, delayMax = 8000 } = cfg.bridge || {};
         const wait = delayMin + Math.random() * Math.max(0, delayMax - delayMin);
         await new Promise((r) => setTimeout(r, wait));
@@ -275,24 +379,27 @@ async function startRun(questions, tabId) {
         await new Promise((r) => setTimeout(r, 300));
       }
     }
-    const filled = run.items.filter((it) => it.status === 'filled').length;
-    const failed = run.items.filter((it) => it.status === 'failed').length;
-    const skipped = run.items.filter((it) => it.status === 'skipped').length;
+    if (activeRun.cancelled || run !== activeRun) return;
+    const filled = activeRun.items.filter((it) => it.status === 'filled').length;
+    const failed = activeRun.items.filter((it) => it.status === 'failed').length;
+    const skipped = activeRun.items.filter((it) => it.status === 'skipped').length;
     notify(failed ? `答题完成：填写 ${filled}、跳过 ${skipped}、失败 ${failed} 题` : `处理完成：填写 ${filled}、跳过 ${skipped}，请检查后手动提交`);
-    sendTab(tabId, { type: 'HW_DONE', payload: { total: run.items.length, filled, failed, skipped } });
+    sendTab(tabId, { type: 'HW_DONE', payload: { total: activeRun.items.length, filled, failed, skipped } });
   })();
   return { ok: true, count: questions.length, engine: cfg.engine };
 }
 
 async function rerunOne(index, tabId) {
   const cfg = await getConfig();
-  const item = run?.items[index];
+  const activeRun = run;
+  const item = activeRun?.tabId === tabId ? activeRun.items[index] : null;
   if (!item) return { ok: false, error: '题目不存在，请重新检测' };
   item.status = 'asking';
   item.error = null;
   sendTab(tabId, { type: 'HW_STATUS', payload: { index, status: 'asking' } });
   try {
     const r = await askEngine(cfg, item.q);
+    if (activeRun.cancelled || run !== activeRun) return { ok: false, error: '页面题目已失效，请重新检测' };
     item.status = 'answered';
     item.answer = r.answer;
     // 手动重答视为最新权威答案：覆盖旧缓存（包括之前的错误答案）
@@ -316,11 +423,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const payload = msg?.payload || {};
     const tabId = sender?.tab?.id;
     try {
-      if (type === 'GET_CONFIG') {
+      if (type === 'HW_ISSUE_ADD') {
+        await recordIssue(payload, sender);
+        sendResponse({ ok: true });
+      } else if (type === 'HW_ISSUE_LIST') {
+        await issueWrites;
+        sendResponse({ ok: true, ...await readIssuePage(payload.offset, payload.limit) });
+      } else if (type === 'HW_ISSUE_CLEAR') {
+        const clear = issueWrites.then(clearIssueHistory);
+        issueWrites = clear.catch(() => {});
+        await clear;
+        sendResponse({ ok: true });
+      } else if (type === 'HW_DETECT_QUESTIONS') {
+        sendResponse(await detectPage(payload, sender));
+      } else if (type === 'GET_CONFIG') {
         sendResponse({ ok: true, config: await getConfig() });
       } else if (type === 'SET_CONFIG') {
         const next = deepMerge(await getConfig(), payload);
         await chrome.storage.local.set({ config: next });
+        if (typeof payload.watchMuted === 'boolean' && tabId != null) {
+          await chrome.tabs.update(tabId, { muted: payload.watchMuted });
+        }
         sendResponse({ ok: true, config: next });
       } else if (type === 'CHECK_UPDATE') {
         sendResponse(await checkUpdate(payload.force, payload.cacheOnly));
@@ -333,10 +456,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse(await confirmUpdatePage(payload.transactionId, sender));
       } else if (type === 'OPEN_SETTINGS') {
         // 面板是 content script，没有 chrome.tabs 权限，由后台代开设置页
-        await chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') });
+        await chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') + (payload.section === 'diag' ? '#diag' : '') });
         sendResponse({ ok: true });
       } else if (type === 'HW_START') {
-        sendResponse(await startRun(payload.questions || [], tabId));
+        sendResponse(await startRun(payload.questions || [], tabId, sender.url || sender.tab?.url));
       } else if (type === 'HW_FILLED') {
         const it = run?.items[payload.index];
         if (!it) return sendResponse({ ok: true });
@@ -351,6 +474,63 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendTab(run.tabId, { type: 'HW_STATUS', payload: { index: payload.index, status: 'failed', error: it.error } });
           pauseRun(run.tabId, '填写失败，队列已暂停：' + it.error);
         }
+        sendResponse({ ok: true });
+      } else if (type === 'HW_WATCH_COURSES') {
+        const here = new URL(sender.url || sender.tab?.url || 'about:blank');
+        if (tabId == null || !/(^|\.)chaoxing\.com$/.test(here.hostname)) throw new Error('只能读取当前超星页面的课程清单');
+        // 个人中心把课程列表放在跨域 iframe 中；在各自隔离上下文读取 DOM，不请求站点接口。
+        const frames = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => globalThis.HW?.Watch?.courseLinks?.() || [] });
+        const courses = new Map();
+        for (const frame of frames) for (const course of frame.result || []) {
+          const old = courses.get(course.key);
+          if (!old || (old.total == null && course.total != null)) courses.set(course.key, course);
+        }
+        sendResponse({ ok: true, courses: [...courses.values()] });
+      } else if (type === 'HW_WATCH_START') {
+        /* 开始刷一门或几门课：courses 是内容脚本在列表页扫出来的，后台只负责排队与翻页 */
+        const courses = (payload.courses || []).filter((c) => c && c.key && c.scUrl);
+        if (!courses.length) return sendResponse({ ok: false, error: '没有选中课程' });
+        watchQueue = {
+          courses: courses.map((c) => ({ key: c.key, scUrl: c.scUrl, name: c.name || '' })),
+          index: 0,
+          tabId: tabId ?? null,
+          rate: Number(payload.rate) || 2,
+          autoRate: !!payload.autoRate,
+        };
+        await saveQueue(watchQueue);
+        const here = new URL(sender.url || sender.tab?.url || 'about:blank');
+        const inPlace = /(^|\.)chaoxing\.com$/.test(here.hostname) &&
+          /\/mycourse\/(studentstudy|studentcourse)$/.test(here.pathname) &&
+          `${here.searchParams.get('courseId') || here.searchParams.get('courseid')}|${here.searchParams.get('clazzid')}` === courses[0].key;
+        if (!inPlace) await watchGo(0);
+        sendResponse({ ok: true, count: courses.length, inPlace });
+      } else if (type === 'HW_WATCH_OPEN_CATALOG') {
+        const q = await loadQueue();
+        const course = q?.courses[q.index];
+        const url = new URL(payload.url);
+        if (!course || q.tabId !== tabId || !/(^|\.)chaoxing\.com$/.test(url.hostname) || url.protocol !== 'https:' ||
+            url.username || url.password || !/\/mycourse\/studentcourse$/.test(url.pathname) ||
+            `${url.searchParams.get('courseid')}|${url.searchParams.get('clazzid')}` !== course.key) throw new Error('课程目录与当前队列不一致');
+        // 沿用原生章节 iframe 的完整地址（含 stuenc），不自行拼接鉴权参数。
+        await chrome.tabs.update(tabId, { url: url.href });
+        sendResponse({ ok: true });
+      } else if (type === 'HW_WATCH_QUEUE_GET') {
+        /* 只把队列发给属主标签页——否则用户随手开一个超星页面，
+           那个页面也会来接力，把用户的浏览器抢去刷课（真机踩过：新开标签页直接被带去 5.3 播视频） */
+        const q = await loadQueue();
+        if (q && tabId != null && q.tabId != null && q.tabId !== tabId) {
+          sendResponse({ ok: true, queue: null });
+        } else {
+          sendResponse({ ok: true, queue: q });
+        }
+      } else if (type === 'HW_WATCH_COURSE_DONE') {
+        const q = await loadQueue();
+        if (q) await watchGo(q.index + 1);
+        sendResponse({ ok: true });
+      } else if (type === 'HW_WATCH_STOP') {
+        const q = await loadQueue();
+        await saveQueue(null);
+        if (q) sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { cancelled: true } });
         sendResponse({ ok: true });
       } else if (type === 'KEY_SAVE') {
         // 保存 Key 并记住：自动探测接口类型（并行尝试已知接口）→ 去重入库 → 设为当前使用
@@ -391,6 +571,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, list });
       } else if (type === 'HW_STOP') {
         if (run) run.cancelled = true;
+        const detection = detectingTabs.get(tabId);
+        if (detection) detection.cancelled = true;
         sendResponse({ ok: true });
       } else if (type === 'HW_RERUN') {
         sendResponse(await rerunOne(payload.index, tabId));

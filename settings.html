@@ -42,6 +42,16 @@
   .card{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:20px 22px}
   .hint{margin:0 0 10px;color:var(--text-2);text-wrap:pretty}
   .hint:last-of-type{margin-bottom:16px}
+  .issue-list{list-style:none;margin:12px 0 24px;padding:0}
+  .issue-list li{padding:12px 0;border-bottom:1px solid var(--line-soft)}
+  .issue-list summary{cursor:pointer;color:var(--text);overflow-wrap:anywhere}
+  .issue-list small{display:block;margin:4px 0;color:var(--text-2);font-variant-numeric:tabular-nums}
+  .issue-list pre{margin:10px 0 0;font:12px/1.7 system-ui,'Microsoft YaHei',sans-serif;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text-2)}
+  .diag-heading{margin:24px 0 10px;font-size:15px;font-weight:600}
+  #issueMsg:empty{display:none}
+  .issue-pages{display:flex;gap:8px;align-items:center;margin-top:12px}
+  .issue-pages[hidden]{display:none}
+  .issue-pages span{color:var(--text-2);font-variant-numeric:tabular-nums}
 
   .count{margin:0 0 14px;color:var(--text);font-variant-numeric:tabular-nums}
   .check{display:flex;align-items:flex-start;gap:8px;margin:0 0 4px;cursor:pointer;color:var(--text-2)}
@@ -139,6 +149,17 @@
 
       <section id="sec-diag" class="card" aria-labelledby="h-diag" hidden>
         <h2 id="h-diag">诊断</h2>
+        <p class="hint">只记录异常，每次问题独立保存在本机。记录不会自动淘汰；下方分页展示，导出包含全部历史。</p>
+        <p class="count" id="issueCount" role="status" aria-live="polite">正在读取异常记录…</p>
+        <div class="actions">
+          <button type="button" id="issueExport">导出异常记录</button>
+          <button type="button" class="ghost" id="issueRefresh">刷新</button>
+          <button type="button" class="ghost" id="issueClear">清空记录</button>
+        </div>
+        <div class="msg" id="issueMsg" role="status" aria-live="polite"></div>
+        <ol class="issue-list" id="issueList" aria-label="异常记录"></ol>
+        <div class="issue-pages" id="issuePages" hidden><button type="button" class="ghost" id="issuePrev">上一页</button><span id="issuePageLabel"></span><button type="button" class="ghost" id="issueNext">下一页</button></div>
+        <h3 class="diag-heading">页面结构</h3>
         <p class="hint">把最近打开的作业页面结构导出为 HTML 文件；站点适配失败时，把这个文件发给开发者即可排查。</p>
         <p class="hint">导出读取的是你最近访问过的那个网页，所以请先打开作业页面，再回到这里导出。</p>
         <div class="actions">

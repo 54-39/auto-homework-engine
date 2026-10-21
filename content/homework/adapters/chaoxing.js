@@ -12,13 +12,15 @@
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
 
   const CX = {
-    match() {
-      return !!document.querySelector('.questionLi[typename]');
+    match(doc = document) {
+      return !!doc.querySelector('.questionLi[typename]');
     },
-    extract() {
-      return [...document.querySelectorAll('.questionLi')].map((q, i) => {
+    extract(doc = document) {
+      return [...doc.querySelectorAll('.questionLi')].map((q, i) => {
         const id = (q.id || '').replace(/^question/, '');
-        const type = TYPE_MAP[q.getAttribute('typename')] || 'choice';
+        const code = q.querySelector('input[name="answertype' + id + '"]')?.value;
+        const type = TYPE_MAP[q.getAttribute('typename')] || { 0: 'choice', 1: 'multi', 2: 'blank', 3: 'judge', 4: 'subjective' }[code];
+        if (!type) return null;
         const stem = norm((q.querySelector('.mark_name, .Zy_TItle') || q).textContent).slice(0, 300);
         const stateInput = q.querySelector('input[name="answer' + id + '"]');
         if (type === 'subjective' || type === 'blank') {
@@ -58,7 +60,7 @@
           meta: { index: i, type, stem, options: labels.map((l) => ({ key: l.key, text: l.text })) },
           el: { inputs: [], labels, stateInput },
         };
-      });
+      }).filter(Boolean);
     },
   };
   window.HW.CXAdapter = CX;

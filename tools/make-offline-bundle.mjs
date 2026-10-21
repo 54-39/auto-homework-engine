@@ -28,6 +28,7 @@ const SKIP_DIRS = new Set(['.git', '.native-runtime', 'dist', 'node_modules', 'd
 const SKIP_FILES = new Set([
   '.crinfo', '.update-state.json', '.update-files.json', 'hot-reload.json',
   'tools/native-host.exe', 'package-lock.json',
+  'HANDOFF-course-watch.md', 'COURSE-RUN-REPORT.md',
 ]);
 const SKIP_PREFIX = ['.native-host', '.update-runner-', '.update-stage', '.build-probe', '.il-probe'];
 
@@ -48,6 +49,7 @@ function copyTree(from, to) {
   fs.mkdirSync(to, { recursive: true });
   for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
     if (entry.name.startsWith('.') && entry.name !== '.gitignore' && entry.name !== '.gitattributes') continue;
+    if (entry.name === '_locales' && from === path.join(ROOT, '_locales')) continue;
     if (SKIP_PREFIX.some((prefix) => entry.name.startsWith(prefix))) continue;
     const source = path.join(from, entry.name);
     const target = path.join(to, entry.name);

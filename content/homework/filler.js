@@ -11,8 +11,9 @@
   const plainLabel = (t) => norm(t).replace(/^[A-Za-z]?[\s.、．:：)）]*/, '').trim();
 
   function fire(el) {
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+    const EventType = el.ownerDocument.defaultView.Event;
+    el.dispatchEvent(new EventType('input', { bubbles: true }));
+    el.dispatchEvent(new EventType('change', { bubbles: true }));
   }
 
   const isVisible = (el) => {
@@ -43,6 +44,7 @@
     return classHit(li);
   }
   function stateOf(l) {
+    if (l.clickEl?.hasAttribute('aria-checked')) return l.clickEl.getAttribute('aria-checked') === 'true';
     return !!(l.input && l.input.checked) || looksSelected(l.clickEl) || looksSelected(l.input && l.input.closest('label'));
   }
   /* 学习：对比点击前后选项 class，把"正确答案选项新出现的类"记为该站点的选中标记 */
@@ -102,7 +104,12 @@
   }
 
   function setNativeValue(el, value) {
-    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    if (el.isContentEditable) {
+      fillRichEditor(null, value, el);
+      return;
+    }
+    const view = el.ownerDocument.defaultView;
+    const proto = el.tagName === 'TEXTAREA' ? view.HTMLTextAreaElement.prototype : view.HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
     fire(el);
   }
@@ -124,6 +131,36 @@
   }
 
   const lettersOf = (ans) => [...new Set(String(ans).toUpperCase().match(/[A-H]/g) || [])];
+
+  const blankFields = (q) => q.el.fields?.length ? q.el.fields : q.el.iframes?.length ? q.el.iframes : q.el.inputs;
+  function blankParts(answer, count) {
+    const source = String(answer);
+    const encoded = /^\[\s*"/.test(source);
+    let parts;
+    if (encoded) {
+      const values = JSON.parse(source);
+      if (!Array.isArray(values) || values.some((value) => typeof value !== 'string')) throw new Error('填空答案格式不正确');
+      parts = values.map(norm);
+    } else parts = source.split(/[;；\n]/).map(norm);
+    if (!encoded && parts.length === 1 && count > 1) {
+      const alt = parts[0].split(/[,，、]/).map(norm);
+      if (alt.length === count) parts = alt;
+    }
+    if (parts.length !== count || parts.some((p) => !p)) throw new Error(`填空答案数量与页面的 ${count} 个空不一致`);
+    return parts;
+  }
+
+  function selectOption(el, answer) {
+    const shared = HW.AIDetection?.sharedOptions(el);
+    if (shared) {
+      const matches = shared.filter((o) => o.text === norm(answer));
+      if (matches.length !== 1) throw new Error('共用选项答案与页面文字无法唯一匹配');
+      return matches[0];
+    }
+    const matches = [...el.options].filter((o) => !o.disabled && o.value !== '' && norm(o.textContent) === norm(answer));
+    if (el.multiple || matches.length !== 1) throw new Error('下拉答案与可选文字无法唯一匹配');
+    return matches[0];
+  }
 
   async function fill(q, answer) {
     const type = q.meta.type;
@@ -236,28 +273,27 @@
     }
 
     if (type === 'blank') {
-      // 超星填空题：每个空是一个 UEditor（隐藏 textarea 只是源码容器，页面交卷读的是编辑器正文）
-      const eds = q.el.iframes || [];
-      const inputs = q.el.inputs;
-      let parts = ans.split(/[;；\n]+/).map(norm).filter(Boolean);
-      const slots = eds.length || inputs.length;
-      if (parts.length === 1 && slots > 1) {
-        const alt = parts[0].split(/[,，、]+/).map(norm).filter(Boolean);
-        if (alt.length === slots) parts = alt;
+      const fields = blankFields(q);
+      const parts = blankParts(ans, fields.length);
+      // 先验证全部下拉值，再按页面顺序填写混合控件，避免错位或补写重复答案。
+      const choices = fields.map((el, i) => el.tagName === 'SELECT' || HW.AIDetection?.sharedOptions(el) ? selectOption(el, parts[i]) : null);
+      for (let i = 0; i < fields.length; i++) {
+        const el = fields[i];
+        if (choices[i]?.clickEl) {
+          const target = choices[i].clickEl;
+          if (!target.classList.contains('check_answer')) {
+            target.scrollIntoView({ block: 'center' });
+            target.click();
+            await new Promise((resolve) => setTimeout(resolve, 450));
+          }
+          if (el.querySelectorAll('.num_option.check_answer').length !== 1 || !target.classList.contains('check_answer')) throw new Error('共用选项点击后回读不一致');
+        } else if (choices[i]) {
+          Object.getOwnPropertyDescriptor(el.ownerDocument.defaultView.HTMLSelectElement.prototype, 'value').set.call(el, choices[i].value);
+          fire(el);
+          el.blur();
+        } else if (el.tagName === 'IFRAME') fillRichEditor(el, parts[i]);
+        else { setNativeValue(el, parts[i]); el.blur(); }
       }
-      if (!parts.length) throw new Error('填空答案为空');
-      /* 单空题只能填一个值：模型按题干下划线个数多给值时取第一个，
-         绝不把多个值拼成 "0.4；0.4" 塞进同一个空（第22题实测踩过） */
-      if (slots <= 1) parts = parts.slice(0, 1);
-      while (parts.length > slots && parts.length > 1) {
-        const tail = parts.splice(parts.length - 2, 2).join('；');
-        parts.push(tail);
-      }
-      if (eds.length) {
-        eds.forEach((fr, i) => fillRichEditor(fr, parts[Math.min(i, parts.length - 1)]));
-        return;
-      }
-      inputs.forEach((inp, i) => setNativeValue(inp, parts[Math.min(i, parts.length - 1)]));
       return;
     }
 
@@ -274,19 +310,25 @@
   }
 
   /* 往 iframe 富文本编辑器（UEditor 类）写入答案：优先 execCommand 键入，失败退回 innerHTML */
-  function fillRichEditor(iframeEl, text) {
+  function fillRichEditor(iframeEl, text, editable) {
+    const opener = iframeEl?.closest('.blankItemInp')?.querySelector('.InpDIV');
+    if (opener?.getClientRects().length) opener.click();
     let doc;
     try {
-      doc = iframeEl.contentDocument;
+      doc = editable ? editable.ownerDocument : iframeEl.contentDocument;
     } catch {
       throw new Error('富文本编辑器跨域不可写入');
     }
     if (!doc || !doc.body) throw new Error('富文本编辑器不可访问');
-    const body = doc.body;
+    const body = editable || doc.body;
     body.focus();
     let ok = false;
     try {
-      doc.execCommand('selectAll', false, null);
+      const range = doc.createRange();
+      range.selectNodeContents(body);
+      const selection = doc.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
       ok = doc.execCommand('insertText', false, text);
     } catch {
       ok = false;
@@ -299,8 +341,10 @@
         .map((l) => `<p>${esc}</p>`)
         .join('');
     }
-    body.dispatchEvent(new Event('input', { bubbles: true }));
-    body.dispatchEvent(new Event('change', { bubbles: true }));
+    fire(body);
+    // 超星在编辑器失焦时同步答案；脚本点提交不会自动使最后一个编辑器失焦。
+    body.blur();
+    iframeEl?.blur();
     if (!squash(body.textContent).includes(squash(text))) throw new Error('答案未写入富文本编辑器');
   }
 
@@ -346,7 +390,7 @@
       if (type === 'choice' || type === 'multi') {
         const wants = lettersOf(ans);
         const states = q.el.labels.map((l) => stateOf(l));
-        const canRead = !!learnedSelClass() || q.el.labels.some((l) => l.input);
+        const canRead = !!learnedSelClass() || q.el.labels.some((l) => l.input || l.clickEl?.hasAttribute('aria-checked'));
         if (!canRead && !states.some(Boolean)) return 'unknown';
         return q.el.labels.every((l, i) => states[i] === wants.includes(l.key));
       }
@@ -354,23 +398,28 @@
         const looksFalse = /错|误|×|✘|false/i.test(ans);
         const target = q.el.labels.find((l) => (looksFalse ? JUDGE_FALSE : JUDGE_TRUE).test(plainLabel(l.text)));
         if (!target) return 'unknown';
-        const canRead = !!learnedSelClass() || q.el.labels.some((l) => l.input);
+        const canRead = !!learnedSelClass() || q.el.labels.some((l) => l.input || l.clickEl?.hasAttribute('aria-checked'));
         const anySel = q.el.labels.some((l) => stateOf(l));
         if (!canRead && !anySel) return 'unknown';
         return stateOf(target);
       }
       if (type === 'blank') {
-        // 超星：正文在 UEditor iframe 里，隐藏 textarea 写没写都不算数
-        const eds = q.el.iframes || [];
-        if (eds.length) return eds.every((f) => squash(f.contentDocument?.body?.textContent));
-        return q.el.inputs.every((i) => norm(i.value));
+        const fields = blankFields(q);
+        const parts = blankParts(ans, fields.length);
+        return fields.every((el, i) => {
+          if (HW.AIDetection?.sharedOptions(el)) return el.querySelectorAll('.num_option.check_answer').length === 1 && selectOption(el, parts[i]).clickEl.classList.contains('check_answer');
+          if (el.tagName === 'SELECT') return el.selectedOptions.length === 1 && el.selectedOptions[0] === selectOption(el, parts[i]);
+          const value = el.tagName === 'IFRAME' ? el.contentDocument?.body?.textContent : el.isContentEditable ? el.textContent : el.value;
+          return norm(value) === parts[i];
+        });
       }
       if (type === 'subjective') {
         if (q.el.iframe) {
           const body = q.el.iframe.contentDocument?.body;
           return !!body && squash(body.textContent).length > 0;
         }
-        return !!norm(q.el.inputs[0]?.value);
+        const input = q.el.inputs[0];
+        return !!norm(input?.isContentEditable ? input.textContent : input?.value);
       }
     } catch {
       return false;

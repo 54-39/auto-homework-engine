@@ -192,7 +192,9 @@ async function run(q, endpoint, maxTokens, opts = {}) {
   const msgs = buildMessages(q);
   const cfg = { ...endpoint, apiKey: sanitizeKey(endpoint.apiKey) };
   let content = await callIface(cfg, msgs, maxTokens);
-  let answer = parseAnswer(q, content);
+  let answer;
+  try { answer = parseAnswer(q, content); }
+  catch (e) { e.answerPreview = content; throw e; }
   let note = '';
   // 多选题：自动二次复核（初答交给模型逐项复查，专治漏选）；verify2=false 时跳过
   if (q.type === 'multi' && answer && opts.verify2 !== false) {
@@ -234,7 +236,7 @@ async function run(q, endpoint, maxTokens, opts = {}) {
   return { answer, raw: content, note: note || undefined };
 }
 
-export async function answerWithAPI(q, cfg, opts = {}) {
+async function withEndpoint(cfg, task) {
   const apiKey = sanitizeKey(cfg?.apiKey);
   if (!apiKey) throw new Error('API Key 未填写：粘贴后点「保存」');
   const tail = apiKey.slice(-4);
@@ -242,7 +244,7 @@ export async function answerWithAPI(q, cfg, opts = {}) {
 
   // 手动指定接口类型且填了地址/模型 → 直接用（用户覆盖优先）
   if (manual && cfg.baseURL && cfg.model) {
-    return await run(q, { iface: cfg.iface, baseURL: cfg.baseURL, model: cfg.model, apiKey }, maxTokensFor(q), opts);
+    return await task({ iface: cfg.iface, baseURL: cfg.baseURL, model: cfg.model, apiKey });
   }
 
   // 自动：优先用记住的组合；失效（401/403/404）则重新探测一次
@@ -250,18 +252,26 @@ export async function answerWithAPI(q, cfg, opts = {}) {
   let endpoint = saved || (await detectEndpoint(apiKey, cfg.iface === 'anthropic' ? 'anthropic' : cfg.iface === 'openai' ? 'openai' : undefined));
   if (!saved) await saveEndpoint(tail, endpoint);
   try {
-    const r = await run(q, { ...endpoint, apiKey }, maxTokensFor(q), opts);
+    const r = await task({ ...endpoint, apiKey });
     if (!saved) r.note = '已自动匹配接口：' + hostOf(endpoint.baseURL) + '（模型 ' + endpoint.model + '，已记住）';
     return r;
   } catch (e) {
     if (e.status === 401 || e.status === 403 || e.status === 404) {
       const ep2 = await detectEndpoint(apiKey, undefined, endpoint);
       await saveEndpoint(tail, ep2);
-      const r = await run(q, { ...ep2, apiKey }, maxTokensFor(q), opts);
+      const r = await task({ ...ep2, apiKey });
       return { ...r, note: '已重新自动匹配接口：' + hostOf(ep2.baseURL) + '（模型 ' + ep2.model + '）' };
     }
     throw e;
   }
+}
+
+export function answerWithAPI(q, cfg, opts = {}) {
+  return withEndpoint(cfg, (endpoint) => run(q, endpoint, maxTokensFor(q), opts));
+}
+
+export function requestWithAPI(messages, cfg) {
+  return withEndpoint(cfg, async (endpoint) => ({ raw: await callIface(endpoint, messages, 4096) }));
 }
 
 export async function testAPI(cfg) {

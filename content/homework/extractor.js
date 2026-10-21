@@ -23,11 +23,11 @@
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
 
   /* 找题目块：按常见容器类名逐级尝试；命中过多输入的容器（整页包裹层）则继续降级 */
-  function findBlocks() {
+  function findBlocks(doc) {
     for (const sel of BLOCK_SELECTORS) {
       let els;
       try {
-        els = [...document.querySelectorAll(sel)];
+        els = [...doc.querySelectorAll(sel)];
       } catch {
         continue;
       }
@@ -81,7 +81,7 @@
   /* 题干 = 题目块中第一个输入框之前的文本（天然排除选项文字） */
   function stemBefore(block, firstInput) {
     try {
-      const range = document.createRange();
+      const range = block.ownerDocument.createRange();
       range.setStart(block, 0);
       range.setEndBefore(firstInput);
       return norm(range.toString());
@@ -135,14 +135,14 @@
     }
   }
 
-  function extract() {
+  function extract(doc = document) {
     // 超星专用适配器优先（答案状态从隐藏 answer input 读取，100% 可靠）
-    if (window.HW.CXAdapter && window.HW.CXAdapter.match()) {
-      const qs = window.HW.CXAdapter.extract();
+    if (window.HW.CXAdapter && window.HW.CXAdapter.match(doc)) {
+      const qs = window.HW.CXAdapter.extract(doc);
       qs.forEach((q, i) => (q.meta.index = i));
       return qs;
     }
-    const blocks = findBlocks();
+    const blocks = findBlocks(doc);
     const questions = [];
     blocks.forEach((block) => {
       // —— 选择 / 判断 ——
@@ -196,7 +196,7 @@
           const type = isJudge ? 'judge' : typeByCode[typeCode] || 'choice';
           let stem = '';
           try {
-            const range = document.createRange();
+            const range = block.ownerDocument.createRange();
             range.setStart(block, 0);
             range.setEndBefore(c);
             stem = norm(range.toString());
@@ -272,6 +272,7 @@
     return hit(el) || hit(el.closest && el.closest('li'));
   }
   function labelState(l) {
+    if (l.clickEl?.hasAttribute('aria-checked')) return l.clickEl.getAttribute('aria-checked') === 'true';
     return !!(l.input && l.input.checked) || learnedHit(l.clickEl) || learnedHit(l.input && l.input.closest('label'));
   }
 
@@ -313,16 +314,19 @@
       }
       if (t === 'blank') {
         // 超星填空题的正文在 UEditor iframe 里（隐藏 textarea 只是源码容器，交卷不读它）
-        const eds = q.el.iframes || [];
-        if (eds.length) return eds.map((f) => editorText(f)).filter(Boolean).join(';');
-        return q.el.inputs.map((i) => norm(i.value)).filter(Boolean).join(';');
+        const fields = q.el.fields?.length ? q.el.fields : q.el.iframes?.length ? q.el.iframes : q.el.inputs;
+        const values = fields.map((el) => el.tagName === 'IFRAME' ? editorText(el) :
+          el.tagName === 'SELECT' ? (el.value ? norm(el.selectedOptions[0]?.textContent) : '') :
+          HW.AIDetection?.sharedOptions(el)?.find((o) => o.clickEl.classList.contains('check_answer'))?.text || norm(el.isContentEditable ? el.textContent : el.value));
+        return values.some(Boolean) ? values.some((value) => /[;；\n]/.test(value)) ? JSON.stringify(values) : values.join(';') : '';
       }
       if (t === 'subjective') {
         if (q.el.iframe) {
           const b = q.el.iframe.contentDocument && q.el.iframe.contentDocument.body;
           return b ? norm(b.textContent).slice(0, 80) : '';
         }
-        return norm((q.el.inputs[0] && q.el.inputs[0].value) || '').slice(0, 80);
+        const input = q.el.inputs[0];
+        return norm(input?.isContentEditable ? input.textContent : input?.value).slice(0, 80);
       }
     } catch {
       return '';
