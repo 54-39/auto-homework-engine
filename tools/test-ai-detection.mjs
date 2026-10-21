@@ -62,6 +62,25 @@ try {
     globalThis.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: 'B' } }] }) });
     assert.equal((await answerWithAPI({ type: 'choice', stem: '选一项' }, cfg)).answer, 'B');
   });
+  await test('API返回完整同步通信时优先精确命中B，不与半同步通信冲突', async () => {
+    const q = { type: 'choice', stem: '发送方和接收方严格按照时钟节拍传输的是哪种通信方式？', options: [
+      { key: 'A', text: 'A 异步通信' }, { key: 'B', text: 'B 同步通信' },
+      { key: 'C', text: 'C 突发传送' }, { key: 'D', text: 'D 半同步通信' },
+    ] };
+    const content = '{"answers":["同步通信"]}';
+    for (const iface of ['openai', 'anthropic']) {
+      let count = 0;
+      globalThis.fetch = async () => {
+        count++;
+        return { ok: true, json: async () => iface === 'openai'
+          ? { choices: [{ message: { content } }] } : { content: [{ type: 'text', text: content }] } };
+      };
+      const result = await answerWithAPI(q, { ...cfg, iface });
+      assert.equal(result.answer, 'B');
+      assert.equal(result.raw, content);
+      assert.equal(count, 1, '匹配修复不能增加请求');
+    }
+  });
   await test('Anthropic 通道保留 system 和原始 JSON', async () => {
     let sent;
     globalThis.fetch = async (_, opts) => {

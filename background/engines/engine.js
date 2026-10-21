@@ -36,12 +36,14 @@ export function parseJSONAnswers(raw, q) {
 function jsonToAnswer(q, items) {
   if (q.type === 'choice' || q.type === 'multi') {
     const wanted = items.map((s) => norm(s));
+    const options = (q.options || []).map(o => ({ key: o.key,
+      text: norm(String(o.text || '').replace(/^[A-Ha-h][\s.、．:：)）]*/, '')) }));
     const letters = [];
     for (const w of wanted) {
-      const matches = (q.options || []).filter(o => {
-        const text = norm(String(o.text || '').replace(/^[A-Ha-h][\s.、．:：)）]*/, ''));
-        return w === text || (text && text.length >= 4 && (w.includes(text) || text.includes(w)));
-      });
+      // 完整文字先匹配，避免“同步通信”又命中“半同步通信”。
+      const exact = options.filter(o => w === o.text);
+      const matches = exact.length ? exact : options.filter(o =>
+        o.text && o.text.length >= 4 && (w.includes(o.text) || o.text.includes(w)));
       if (matches.length !== 1) return '';
       letters.push(matches[0].key);
     }

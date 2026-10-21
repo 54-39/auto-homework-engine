@@ -25,6 +25,16 @@ assert.deepEqual(parseAnswer(qChoice, '{"answers":["2"]}'), 'A');
 assert.deepEqual(parseAnswer(qChoice, '```json\n{"answers":["3"]}\n```'), 'B');
 assert.throws(() => parseAnswer(qChoice, '{"answers":["2","3"]}'), /AI 答案/);
 assert.equal(parseAnswer(qChoice, '瞎写的'), '', '不明确的答案不能猜选项');
+/* 完整选项优先：同步通信不能同时命中半同步通信。 */
+const qSync = { type: 'choice', stem: '发送方和接收方严格按照时钟节拍传输的是哪种通信方式？', options: [
+  { key: 'A', text: 'A 异步通信' }, { key: 'B', text: 'B 同步通信' },
+  { key: 'C', text: 'C 突发传送' }, { key: 'D', text: 'D 半同步通信' },
+] };
+assert.equal(parseAnswer(qSync, '{"answers":["同步通信"]}'), 'B');
+assert.equal(parseAnswer(qSync, '{"answers":["半同步通信"]}'), 'D');
+assert.equal(parseAnswer({ ...qSync, type: 'multi' }, '{"answers":["同步通信","半同步通信"]}'), 'BD');
+assert.throws(() => parseAnswer(qSync, '{"answers":["步通信"]}'), /AI 答案/, '只有片段且命中多个选项仍应停止');
+assert.throws(() => parseAnswer({ ...qSync, options: [qSync.options[1], { key: 'D', text: 'D 同步通信' }] }, '{"answers":["同步通信"]}'), /AI 答案/, '完全相同的多个选项不能猜');
 /* multi：完整文字反查，顺序无关 */
 assert.deepEqual(parseAnswer(qMulti, '{"answers":["4","2"]}'), 'AC');
 assert.deepEqual(parseAnswer(qMulti, '{"answers":["2","4"]}'), 'AC', '保序但内部排序输出');
