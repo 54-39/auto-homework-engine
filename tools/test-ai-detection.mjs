@@ -138,7 +138,9 @@ try {
   let handler;
   const sentMessages = [];
   const store = { config: { engine: 'api', api: cfg } };
+  let installed, startup;
   chrome.runtime = { getManifest: () => ({ version: '0.6.15' }), getURL: (p) => p, reload: () => {},
+    onInstalled: { addListener: fn => { installed = fn; } }, onStartup: { addListener: fn => { startup = fn; } },
     onMessage: { addListener: (fn) => { handler = fn; } } };
   chrome.storage.local = { get: async (k) => k === null ? { ...store } : Array.isArray(k) ? Object.fromEntries(k.map(key => [key, store[key]])) : { [k]: store[k] }, getKeys: async () => Object.keys(store), set: async (v) => Object.assign(store, v), remove: async k => { for (const key of Array.isArray(k) ? k : [k]) delete store[key]; } };
   chrome.notifications = { create: () => {}, onClicked: { addListener: () => {} } };
@@ -155,6 +157,19 @@ try {
   const call = (type, payload = {}, url = 'https://mooc1.chaoxing.com/work') => new Promise((resolve) =>
     handler({ type, payload }, { url, tab: { id: 31, url } }, resolve));
   const success = (content) => ({ ok: true, json: async () => ({ choices: [{ message: { content } }] }) });
+  await test('安装与浏览器启动为已打开的超星页面补加载，已有面板不重复注入', async () => {
+    const originalManifest=chrome.runtime.getManifest, originalQuery=chrome.tabs.query, originalScripting=chrome.scripting;
+    const script={matches:['*://*.chaoxing.com/*'],js:['content/homework/panel.js','content/homework/content.js']};
+    const injected=[];
+    chrome.runtime.getManifest=()=>({version:'0.9.4',content_scripts:[script]});
+    chrome.tabs.query=async spec=>{assert.deepEqual(spec.url,script.matches);return [{id:10},{id:11}];};
+    chrome.scripting={executeScript:async spec=>{
+      if(spec.func)return [{result:spec.target.tabId===11}];
+      assert.deepEqual(spec.files,script.js);injected.push(spec.target.tabId);return [];
+    }};
+    try { await installed();await startup();assert.deepEqual(injected,[10,10]); }
+    finally {chrome.runtime.getManifest=originalManifest;chrome.tabs.query=originalQuery;chrome.scripting=originalScripting;}
+  });
   await test('个人中心跨域课程清单逐框读取并去重，不接受非超星页面', async () => {
     const original = chrome.scripting;
     let calls = 0;

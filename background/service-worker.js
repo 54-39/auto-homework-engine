@@ -596,6 +596,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;
 });
 
+/* 新装／更新时，已打开的页面不会自动重放声明式内容脚本，补上悬浮入口。 */
+async function injectOpenHomeworkTabs() {
+  const script = chrome.runtime.getManifest().content_scripts?.find(s => s.matches.includes('*://*.chaoxing.com/*'));
+  if (!script) return;
+  const tabs = await chrome.tabs.query({ url: script.matches });
+  for (const tab of tabs) {
+    if (tab.id == null) continue;
+    try {
+      const [{ result: ready } = {}] = await chrome.scripting.executeScript({ target: { tabId: tab.id },
+        func: () => !!globalThis.HW?.Panel && !!document.getElementById('hw-panel-host') });
+      if (!ready) await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: script.js });
+    } catch (e) {
+      await recordIssue({ stage: '加载面板', message: String(e.message || e), url: tab.url }).catch(() => {});
+    }
+  }
+}
+chrome.runtime.onInstalled?.addListener(() => injectOpenHomeworkTabs().catch(() => {}));
+chrome.runtime.onStartup?.addListener(() => injectOpenHomeworkTabs().catch(() => {}));
+
 /* 保存当前版本供其他诊断使用；更新成功提示由设置页等到事务健康确认后显示。 */
 (async () => {
   const cur = chrome.runtime.getManifest().version;

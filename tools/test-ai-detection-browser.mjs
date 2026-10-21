@@ -150,18 +150,21 @@ async function browserChecks() {
     ok(HW.AIDetection.bind(s, []).pending.length > 0, 'unassigned fields silently disappeared');
   });
   await check('题干变化和同版式节点重建均使旧结果失效', () => {
+    const snapshot = HW.AIDetection.collect();
+    const questions = makeSpecs(snapshot);
+    HW.AIDetection.bind(snapshot, questions);
     const h = document.querySelector('#choice h3');
     const original = h.textContent;
     h.textContent = '替换后的题目';
-    ok(!HW.AIDetection.isCurrent(s));
+    ok(!HW.AIDetection.isCurrent(snapshot));
     let failed = false;
-    try { HW.AIDetection.bind(s, specs); } catch { failed = true; }
+    try { HW.AIDetection.bind(snapshot, questions); } catch { failed = true; }
     ok(failed);
     h.textContent = original;
     const el = document.querySelector('#ra');
     const clone = el.cloneNode(true);
     el.replaceWith(clone);
-    ok(!HW.AIDetection.isCurrent(s));
+    ok(!HW.AIDetection.isCurrent(snapshot));
     clone.replaceWith(el);
   });
   await check('AI 不可通过选择整页容器混用两道题的输入位置', () => {
@@ -455,7 +458,7 @@ async function browserChecks() {
     ok(HW.questions.length === 0 && ui.querySelector('.start').disabled);
     h.textContent = '1. 选一个正确选项';
     const error = await setDetectionUI('error');
-    ok(error.startDisabled && !error.detecting && /识别失败/.test(error.summary));
+    ok(error.startDisabled && !error.detecting && /未检测出题目/.test(error.summary));
   });
   await check('点击后展开且一次只显示一空的填空编辑器可全部识别并逐空填写', async () => {
     const section = document.createElement('section');
@@ -628,7 +631,8 @@ const fixture = `<!doctype html><meta charset="utf-8"><title>AI 识题模拟作�
 const sources = ['adapters/chaoxing.js', 'dropdown.js', 'extractor.js', 'ai-extractor.js', 'filler.js', '../course/watch.js', 'panel.js']
   .map((p) => fs.readFileSync(path.join(root, 'content/homework', p), 'utf8')).join('\n;\n');
 const html = fixture + `<script>${sources}</script><script>window.runDetectionChecks=${browserChecks.toString()};</script>`;
-const server = http.createServer((req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(req.url === '/visit/interaction' ? '<!doctype html><title>内嵌课程列表样例</title>' : html); });
+const inbox = `<!doctype html><meta charset="utf-8"><title>学习通知</title><style>body{font:14px system-ui;margin:32px}main{max-width:650px}li{padding:18px}label{display:block}</style><nav>消息导航</nav><main><h2>学习通知</h2><ul><li><label><input type="checkbox">我发出的</label></li><li><label><input type="checkbox">未完成</label></li><li><label><input type="checkbox">已完成作业</label></li></ul><input type="text" placeholder="搜索通知"><select><option>全部课程</option><option>未读通知</option></select><textarea placeholder="快捷回复"></textarea><p>课程名称：计算机组成原理；作业通知，请点击进入查看。</p></main><script>(${fixtureBoot.toString()})();</script><script>${sources};HW.Panel.init();</script>`;
+const server = http.createServer((req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(req.url === '/visit/interaction' ? '<!doctype html><title>内嵌课程列表样例</title>' : req.url === '/no-questions' ? inbox : html); });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const child = spawn(edge, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
   '--disable-crash-reporter', '--disable-breakpad', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore', windowsHide: true });
@@ -711,6 +715,42 @@ try {
     assert.ok(watch.left>=0 && watch.right<=watch.width && watch.top>=0 && watch.bottom<=watch.height && !watch.overflow && watch.log>=96);
     await evaluate('setPanelMode("homework")');
   }
+  const aiEmpty = await evaluate('setDetectionUI("empty")');
+  assert.equal(aiEmpty.summary, '未检测出题目');
+  assert.equal(aiEmpty.ready, 0); assert.equal(aiEmpty.pending, 0); assert.equal(aiEmpty.startDisabled, true);
+  results.push({ name: 'AI返回空列表显示未检测出题目，不从普通控件补造待确认项', ok: true });
+  await call('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/no-questions` });
+  for (let i = 0; i < 100 && !(await evaluate('document.title === "学习通知" && !!document.querySelector("#hw-panel-host")?.shadowRoot')); i++) await pause(50);
+  const inboxState = await evaluate(`(() => {
+    const ui=document.querySelector('#hw-panel-host').shadowRoot;
+    ui.querySelector('.panel').classList.remove('hidden');
+    return {ready:HW.questions.length,pending:ui.querySelectorAll('.pending').length,summary:ui.querySelector('.smsg').textContent,issue:testCalls.includes('HW_ISSUE_ADD')};
+  })()`);
+  assert.deepEqual(inboxState, { ready: 0, pending: 0, summary: '未检测出题目', issue: false });
+  results.push({ name: '通知页勾选框、搜索、筛选和回复不当作题目或待确认', ok: true });
+  for (const width of [1280,420]) {
+    await call('Emulation.setDeviceMetricsOverride', { width, height:800, deviceScaleFactor:1, mobile:false });
+    const shot=await call('Page.captureScreenshot',{format:'png'});
+    fs.writeFileSync(path.join(output, `ui-no-questions-${width}.png`),Buffer.from(shot.data,'base64'));
+  }
+  for (const asyncFailure of [false,true]) {
+    const state=await evaluate(`(async()=>{
+      const errors=[];window.addEventListener('unhandledrejection',e=>errors.push(String(e.reason)));
+      chrome.runtime.sendMessage=()=>${asyncFailure ? 'Promise.reject(new Error("Extension context invalidated."))' : '{throw new Error("Extension context invalidated.");}'};
+      const ui=document.querySelector('#hw-panel-host').shadowRoot;ui.querySelector('.detect').click();
+      for(let i=0;i<100&&ui.querySelector('.detect').disabled;i++)await new Promise(r=>setTimeout(r,20));
+      await new Promise(r=>setTimeout(r,30));
+      return {summary:ui.querySelector('.smsg').textContent,errors,issueWarning:!ui.querySelector('.issuewarn').classList.contains('hidden'),disabled:ui.querySelector('.detect').disabled};
+    })()`);
+    assert.match(state.summary,/未检测出题目.*刷新页面（F5）/);
+    assert.ok(!state.summary.includes('Extension context invalidated'));
+    assert.equal(state.issueWarning,false);assert.equal(state.disabled,false);assert.deepEqual(state.errors,[]);
+  }
+  results.push({ name: '同步与异步扩展上下文失效都显示中文刷新提示，不误报磁盘或留下未处理异常', ok: true });
+  const contextShot=await call('Page.captureScreenshot',{format:'png'});
+  fs.writeFileSync(path.join(output,'ui-context-invalid.png'),Buffer.from(contextShot.data,'base64'));
+  fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify(results, null, 2));
+  console.log('Additional UI checks:', JSON.stringify(inboxState));
   assert.ok(results.every((r) => r.ok), 'Browser checks failed; see .tmp-ai-tests/results.json');
   console.log(`\n${results.length} browser groups passed. Screenshots: ${output}`);
 } finally {

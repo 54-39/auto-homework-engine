@@ -6,6 +6,7 @@
   const esc = (s) => String(s).replace(/[&<>"\n]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\n': ' ' }[c]));
   const OMIT = 'script,style,noscript,nav,footer,[role="navigation"],[role="banner"],[role="search"],#hw-panel-host,.newTopic1,#posDiscussScroll,#searchChapterListByName';
   const TYPES = new Set(['choice', 'multi', 'judge', 'blank', 'subjective']);
+  const questionRoot = el => el?.closest('.questionLi,.TiMu,.mark_item,.q-item,.question-item,.question,.exam-question,.topic-item,fieldset');
   function imageText(img) {
     // 超星公式图的 data 是经过 URL 编码的 JSON 字符串，保留其 LaTeX 原文。
     if (img.matches('img.ans-latex-moudle')) {
@@ -210,6 +211,7 @@
     const pending = [];
     const pendingKeys = new Set();
     const pendingRoots = [];
+    const questionRoots = items.map(item => snapshot.refs.get(item.containerId)?.el).filter(Boolean);
     const occupied = new Map();
     const blocked = new Set();
     const addPending = (item, reason) => {
@@ -341,6 +343,8 @@
     }
     // AI 可能遗漏题目：真实答题控件仍未归属时，明确保留为待确认区域。
     for (const [id, { el, kind }] of snapshot.refs) {
+      // 通知勾选框、搜索和筛选控件不属于题目，不能据此报“待确认”。
+      if (!questionRoot(el) && !questionRoots.some(root => root.contains(el))) continue;
       if (kind === 'unavailable' || kind === 'unsupported') {
         addPending({ containerId: id, stem: kind === 'unavailable' ? '无法读取的嵌入区域' : '尚不支持的答题控件' }, kind === 'unavailable' ? '此区域不可读取，需要人工确认' : '此区域尚不能可靠填写，需要人工确认');
         continue;
@@ -357,5 +361,5 @@
     return { questions, pending };
   }
 
-  HW.AIDetection = { collect, bind, isCurrent, sharedOptions, imageText, textOf };
+  HW.AIDetection = { collect, bind, isCurrent, sharedOptions, imageText, textOf, questionRoot };
 })();

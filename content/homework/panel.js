@@ -3,6 +3,7 @@
 (function () {
   'use strict';
   const HW = (window.HW = window.HW || {});
+  if (HW.Panel) return;
 
   const CSS = `
     :host{all:initial;color-scheme:light;scrollbar-color:#C7D0DB transparent;scrollbar-width:thin}
@@ -469,12 +470,16 @@
     let detectionRequest = 0;
     let detectionObservers = [];
     let pageCheckTimer;
-    // 所有后台通信失败都转成可见的错误（插件更新后旧页面会报 Extension context invalidated）
-    const send = (type, payload) =>
-      chrome.runtime.sendMessage({ type, payload }).catch((e) => {
-        const msg = String(e && e.message ? e.message : e);
-        return { ok: false, error: /context/i.test(msg) ? '插件刚更新过，请刷新页面（F5）再试' : msg };
-      });
+    const CONTEXT_NOTICE = '插件已更新或重载，请刷新页面（F5）后重试';
+    const errorText = e => {
+      const msg = String(e?.message || e);
+      return /extension context invalidated/i.test(msg) ? CONTEXT_NOTICE : msg;
+    };
+    // sendMessage 在旧页面可能同步抛错，也可能返回被拒绝的 Promise。
+    const send = async (type, payload) => {
+      try { return await chrome.runtime.sendMessage({ type, payload }); }
+      catch (e) { return { ok: false, error: errorText(e) }; }
+    };
     const log = (m) => {
       const d = document.createElement('div');
       d.textContent = `[${new Date().toLocaleTimeString()}] ${m}`;
@@ -486,7 +491,7 @@
       const active = HW.Watch?.activeChapterId?.();
       const chapter = HW.Watch?.nodes?.().find(n => n.id === active)?.name || active || '';
       send('HW_ISSUE_ADD', { stage, message, chapter, ...details }).then(r => {
-        if (!r?.ok) showIssueFailure(r?.error || '请刷新扩展后重试');
+        if (!r?.ok && r?.error !== CONTEXT_NOTICE) showIssueFailure(r?.error || '请刷新扩展后重试');
       });
     }
     function showIssueFailure(message) {
@@ -1127,7 +1132,7 @@
             const labels = (q.el.labels || []).filter(l => snapshot.ids.has(l.input || l.clickEl));
             const fields = q.el.iframes?.length ? q.el.iframes : q.el.iframe ? [q.el.iframe] : q.el.inputs || [];
             const target = labels[0]?.input || labels[0]?.clickEl || fields[0];
-            const container = target?.closest('.questionLi,.TiMu,fieldset,section,article,[role="group"]') || target?.parentElement;
+            const container = HW.AIDetection.questionRoot(target);
             if (!snapshot.ids.has(container)) continue;
             items.push({ ...q.meta, containerId: snapshot.ids.get(container),
               options: labels.map(l => {
@@ -1192,9 +1197,10 @@
       setSummary('正在准备 AI 识题…', false);
       try {
         await send('HW_STOP');
-        const cfg = (await send('GET_CONFIG'))?.config;
+        const configResult = await send('GET_CONFIG');
+        const cfg = configResult?.config;
         if (requestId !== detectionRequest) return;
-        if (!cfg) throw new Error('无法读取引擎配置，请刷新页面后重新检测');
+        if (!cfg) throw new Error(configResult?.error || '无法读取引擎配置，请刷新页面后重新检测');
         if (cfg.engine === 'api' && !cfg.api?.apiKey) {
           await refreshKeyRow();
           throw new Error('请先保存 API Key，或切换到豆包桥接后重新检测');
@@ -1205,6 +1211,12 @@
         const result = await send('HW_DETECT_QUESTIONS', { requestId, batches: detectionSnapshot.batches });
         if (requestId !== detectionRequest) return;
         if (!result?.ok) throw new Error(result?.error || 'AI 识题失败，请重新检测');
+        if (Array.isArray(result.questions) && !result.questions.length) {
+          stopWatching();
+          detectionSnapshot = null;
+          renderDetected([], []);
+          return true;
+        }
         const bound = HW.AIDetection.bind(detectionSnapshot, result.questions);
         renderDetected(bound.questions, bound.pending);
         if (bound.pending.length) reportIssue('识题待确认', bound.pending.map(q => q.reason).join('；'), { question: bound.pending.map(q => q.stem).join('；') });
@@ -1213,9 +1225,10 @@
         stopWatching();
         detectionSnapshot = null;
         HW.questions = [];
-        setSummary('识别失败：' + e.message, true);
-        log('识别失败：' + e.message);
-        reportIssue('识题失败', e.message);
+        const message = errorText(e);
+        setSummary('未检测出题目：' + message, true);
+        log('检测未完成：' + message);
+        if (message !== CONTEXT_NOTICE) reportIssue('识题失败', message);
       } finally {
         if (requestId === detectionRequest) {
           detecting = false;
@@ -1234,7 +1247,7 @@
       setSummary(
         qs.length || pending.length
           ? `可处理 ${qs.length} 题` + (pending.length ? `，待确认 ${pending.length} 题` : '') + '：' + Object.entries(cnt).map(([k, v]) => `${TYPE_NAME[k] || k}${v}`).join('　')
-          : '未识别到题目，可点「检测题目」调用 AI',
+          : '未检测出题目',
         pending.length > 0,
       );
       els.shint.classList.toggle('hidden', !(qs.length + pending.length));
