@@ -11,10 +11,11 @@
     /* 浏览器自带表面跟随面板主题：选中态、键盘焦点环、滚动条（原生 Windows 样式与浅色卡片不搭） */
     ::selection{background:#DBE6FD;color:#111827}
     :focus-visible:not(input){outline:2px solid #2563EB;outline-offset:2px}
-    .fab{position:fixed;right:24px;bottom:24px;width:56px;height:56px;border-radius:50%;background:#2563EB;border:1px solid rgba(255,255,255,.35);color:#fff;
+    .fab{box-sizing:content-box;padding:0;font-family:inherit;position:fixed;right:24px;bottom:24px;width:56px;height:56px;border-radius:50%;background:#2563EB;border:1px solid rgba(255,255,255,.35);color:#fff;
       display:flex;align-items:center;justify-content:center;font-size:24px;cursor:pointer;user-select:none;
       box-shadow:0 6px 14px -2px rgba(15,23,42,.16);z-index:2147483646}
     .fab:hover{background:#1d4ed8}
+    .fab:focus-visible{outline:2px solid #1d4ed8;outline-offset:3px}
     .panel{position:fixed;right:24px;bottom:96px;width:360px;height:auto;min-height:380px;max-height:calc(100vh - 108px);overflow:hidden;display:flex;flex-direction:column;gap:8px;padding:14px;
       border-radius:14px;z-index:2147483646;color:#111827;
       background:
@@ -121,10 +122,10 @@
     button.act.ghost{background:#fff;color:#374151;border:1px solid #CCD2D9;font-weight:400}
     button.act:disabled{opacity:.45;cursor:not-allowed}
     .panel.watchmode .homework-only{display:none}
-    .watchview{display:flex;flex-direction:column;gap:12px;flex:0 1 auto;min-height:0}
+    .watchview{display:flex;flex-direction:column;gap:5px;flex:0 1 auto;min-height:0}
     .watchview>*{flex:none}
     .watchview .courselist{flex:1 1 140px;min-height:80px;max-height:170px}
-    .watchintro{padding:4px 0 10px;border-bottom:1px solid #DCE3ED}
+    .watchintro{padding:4px 0 6px;border-bottom:1px solid #DCE3ED}
     .watchheading{margin:0 0 4px;font-size:16px;font-weight:600;line-height:1.4;color:#111827}
     .watchcontext{margin:0;color:#4B5563;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
     .watchmeta{margin-top:6px;font-size:11px;color:#4B5563;font-variant-numeric:tabular-nums}
@@ -134,6 +135,9 @@
     .muteopt{display:flex;align-items:center;gap:6px;flex:none;min-height:32px;font-size:12px;color:#374151;white-space:nowrap;cursor:pointer}
     .muteopt input{width:14px;height:14px;margin:0;accent-color:#2563EB;cursor:pointer}
     .muteopt input:focus-visible{outline:2px solid #2563EB;outline-offset:2px}
+    .fourmode{display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;cursor:pointer}
+    .fourmode input{width:14px;height:14px;margin:0;accent-color:#2563EB}
+    .fourmode input:focus-visible{outline:2px solid #2563EB;outline-offset:2px}
     .watchline{min-height:36px;padding:9px 0 0;border-top:1px solid #DCE3ED;font-size:12px;color:#2563EB;font-weight:500;line-height:1.6;overflow-wrap:anywhere}
     .watchline.warn{color:#DC2626}
     .watchview .watchbtn{flex:none;width:100%;height:36px}
@@ -257,7 +261,7 @@
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = `
       <style>${CSS}</style>
-      <div class="fab" data-tip="点击收起/展开面板，按住可拖动位置">⚡</div>
+      <button type="button" class="fab" aria-label="打开或收起作业助手面板" data-tip="点击收起/展开面板，按住可拖动位置">⚡</button>
       <div class="tip hidden" role="tooltip"></div>
       <section class="panel hidden">
         <header data-tip="按住拖动移动面板；双击复位位置"><b>作业助手</b><span class="badge"></span><span class="spacer"></span>
@@ -332,6 +336,7 @@
             <div class="watchrate"><span>倍速</span><div class="dd rateslot"></div></div>
             <label class="muteopt" data-tip="当前课程页所有视频静音，后续章节沿用；取消后恢复声音"><input class="watchmute" type="checkbox" checked>全部静音</label>
           </div>
+          <label class="fourmode"><input class="watchfour" type="checkbox">每门从头完成 4 节（仅进度低于 35%）</label>
           <div class="courselist hidden"></div>
           <p class="watchempty hidden">请先打开超星课程列表，或进入要学习的课程。</p>
           <div class="watchline" role="status" aria-live="polite">准备就绪</div>
@@ -354,7 +359,7 @@
       modal: $('.keymodal'), msave: $('.msave'), mtemp: $('.mtemp'), mcancel: $('.mcancel'),
       subjmodal: $('.subjmodal'), subjbody: $('.subjbody'), subjcancel: $('.subjcancel'), subjkeep: $('.subjkeep'), subjrewrite: $('.subjrewrite'),
       detect: $('.detect'), start: $('.start'), stop: $('.stop'),
-      watch: $('.watchbtn'), watchmute: $('.watchmute'), watchline: $('.watchline'), courselist: $('.courselist'),
+      watch: $('.watchbtn'), watchmute: $('.watchmute'), watchfour: $('.watchfour'), watchline: $('.watchline'), courselist: $('.courselist'),
       moderow: $('.moderow'), watchview: $('.watchview'), watchheading: $('.watchheading'), watchcontext: $('.watchcontext'), watchmeta: $('.watchmeta'), watchempty: $('.watchempty'),
       summary: $('.summary'), smsg: $('.smsg'), shint: $('.shint'), list: $('.list'), log: $('.log'),
       updline: $('.updline'),
@@ -401,7 +406,9 @@
       const list = availableCourses();
       const active = nodes.find(n => n.id === HW.Watch?.activeChapterId?.());
       els.watchheading.textContent = list.length ? '选择课程' : nodes.length ? '当前课程' : '课程学习';
-      els.watchcontext.textContent = list.length ? '勾选课程开始学习，进入后显示剩余时间。' : active?.name || '打开课程或勾选清单，继续未完成的章节。';
+      els.watchcontext.textContent = list.length
+        ? els.watchfour.checked ? '未勾选则处理全部进度低于 35% 的课程。' : '勾选课程开始学习，进入后显示剩余时间。'
+        : active?.name || '打开课程或勾选清单，继续未完成的章节。';
       const left = nodes.map(n => HW.Watch.unfinishedOf(n.id));
       els.watchmeta.textContent = nodes.length ? `${nodes.length} 节 · ` + (left.some(n => n === null) ? '目录加载中' : `剩余 ${left.reduce((a, b) => a + b, 0)} 个任务点`) : list.length ? `共 ${list.length} 门课程` : '';
       if (HW.Watch?.running && nodes.length) {
@@ -425,15 +432,8 @@
       onChange: async (id) => {
         await send('SET_CONFIG', { watchRate: id }); // 记住倍速，下次打开还是它
         updateCourseTimes();
-        // 正在刷课时换档：脚本按新档重开一轮（start 内部先 stop，所以旧循环会自己退出）
-        if (HW.Watch?.running) {
-          HW.Watch.start({
-            ...(id === 'auto' ? { rate: 2, autoRate: true } : { rate: Number(id), autoRate: false }),
-            onLive: setWatchLine,
-            onNote: watchNote,
-            onStop: watchStopped,
-          });
-        }
+        // 原地换档，不重启课程循环，避免重新进入页签或重复处理任务点。
+        HW.Watch?.setRate?.(id === 'auto' ? 2 : Number(id), id === 'auto');
       },
     });
     /* 原生 title 提示在 Windows 上是系统气泡框（字体/圆角/箭头都不受控），改成本面板内的文字气泡：
@@ -464,8 +464,13 @@
     root.addEventListener('focusout', onLeave);
     let rows = [];
     let nativeDetection = true;
+    let preparingFonts = false;
     let stopRequested = false; // 停止后忽略后台迟到的答题消息
     let detectionSnapshot = null;
+    /* 上一次「页面读取」失败的真实原因：刷课日志只转发一句「没识别成功」，
+       真正的原因（字体还原不了／题目结构不认识）会丢在面板摘要里，
+       现场排查时等于没有信息（2026-10-22 传统文化测验就是这样白跑三轮）。 */
+    let lastDetectError = '';
     let detecting = false;
     let detectionRequest = 0;
     let detectionObservers = [];
@@ -504,9 +509,14 @@
       setBusy(false);
       log(notice.textContent);
     }
+    const reportedGrades = new Set();
     function reportGrade() {
       const grade = HW.Watch?.quizGrade?.();
-      if (grade && grade.score < grade.total) reportIssue('测验丢分', `测验得分 ${grade.score}/${grade.total}`, grade);
+      if (!grade || grade.score >= grade.total) return;
+      const key = [HW.Watch?.activeChapterId?.(), grade.attempt, grade.score, grade.total].join('|');
+      if (reportedGrades.has(key)) return;
+      reportedGrades.add(key);
+      reportIssue('测验丢分', `测验得分 ${grade.score}/${grade.total}`, grade);
     }
     HW.Panel.reportIssue = reportIssue;
     HW.Panel.reportGrade = reportGrade;
@@ -587,7 +597,7 @@
     };
     const watchNote = (text) => {
       log('刷课：' + text); updateWatchContext();
-      if (/没播完|没出现视频|尚未加载完成|仍有.*未完成|自动播放被拦|没找到|点不动|测验页.*(不提交|失败|超时)/.test(text)) reportIssue('刷课异常', text);
+      if (/没播完|没出现视频|尚未加载完成|仍有.*未完成|自动播放被拦|播放停滞|播放器错误|验证码|没找到|点不动|测验页.*(不提交|失败|超时)/.test(text)) reportIssue('刷课异常', text);
     };
     // 脚本自己停下（走完全课/跳不过去/出错）时把按钮和状态行也收回去，
     // 否则界面还显示「停止刷课」，用户点了才会知道早就停了。
@@ -596,23 +606,41 @@
       els.watch.textContent = '开始刷课';
       setWatchLine('');
     };
-    const toggleWatch = () => {
+    const toggleWatch = async () => {
       if (!$('.issuewarn').classList.contains('hidden')) return;
+      userStopped = false;
+      reviveCount = 0; reviveMark = ''; reviveAt = 0;
       if (!HW.Watch) {
         setWatchLine('刷课脚本未加载，请刷新页面（F5）', true);
         return;
       }
       if (HW.Watch.running) {
         HW.Watch.stop();
+        stopByUser();
+        /* 用户主动停止＝真的不想刷了：把队列也标成暂停，否则刷新页面/换页后
+           自动接续又会把它拉起来，跟「停止」的意思相反（看门狗也会照做）。 */
+        send('HW_WATCH_PAUSE', { reason: '已手动停止，点「开始刷课」继续' }).catch(() => {});
         els.watch.textContent = '开始刷课';
         setWatchLine('');
         log('刷课：已停止');
         return;
       }
       /* 课程列表页：勾了的课排队全自动刷 */
-      const picked = pickedCourses();
+      const queued = await send('HW_WATCH_QUEUE_GET');
+      if (queued?.queue && !pickedCourses().length) {
+        const resumed = await send('HW_WATCH_RESUME');
+        if (!resumed?.ok) { setWatchLine(resumed?.error || '接续失败', true); return; }
+        await HW.Watch.resumeQueued({ onLive: setWatchLine, onNote: watchNote, onStop: watchStopped });
+        els.watch.textContent = HW.Watch.running ? '停止刷课' : '开始刷课';
+        return;
+      }
+      const picked = selectedForWatch();
       if (picked.length) {
         startQueue(picked);
+        return;
+      }
+      if (els.watchfour.checked) {
+        setWatchLine('没有进度已知且低于 35% 的课程，请先打开课程列表', true);
         return;
       }
       /* 单门课也走后台排队：点目录是整页导航，页面一换状态就没了，
@@ -668,6 +696,10 @@
     }
     const courseComplete = c => HW.Watch.estimateCourseSeconds(c, 2, courseTimes[HW.Watch.courseTimeKey(c)]) === 0;
     const pickedCourses = () => courseItems.filter((c) => c.checked && !courseComplete(c));
+    const eligibleFour = c => Number.isFinite(c.done) && Number.isFinite(c.total) && c.total > 0 && c.done / c.total < .35;
+    const selectedForWatch = () => els.watchfour.checked
+      ? (pickedCourses().length ? pickedCourses() : courseItems).filter(c => eligibleFour(c) && !courseComplete(c))
+      : pickedCourses();
     function updateCourseTimes() {
       const latest = new Map(availableCourses().map(c => [c.key, c]));
       const completed = els.courselist.querySelector('.ccompleted');
@@ -688,8 +720,8 @@
         const label = Number.isFinite(c.total) ? `${c.done}/${c.total}` : '';
         if (prog.textContent !== label) prog.textContent = label;
         const done = courseComplete(c);
-        row.querySelector('input').disabled = done;
-        if (done) { c.checked = false; row.querySelector('input').checked = false; }
+        row.querySelector('input').disabled = done || (els.watchfour.checked && !eligibleFour(c));
+        if (done || (els.watchfour.checked && !eligibleFour(c))) { c.checked = false; row.querySelector('input').checked = false; }
         if (done && row.parentElement !== completed) completed.append(row);
         else if (!done && row.parentElement !== els.courselist) els.courselist.insertBefore(row, completed);
       });
@@ -730,6 +762,50 @@
       if (!els.panel.classList.contains('hidden') && els.mode.value === 'watch' && (embeddedCourses.length || hasCourseFrame())) refreshEmbeddedCourses();
     }, 3000);
 
+    /* ---------------- 看门狗：循环意外停住时自己接回去 ----------------
+       实况（2026-10-21）：赌徒的困惑那节视频停在 37 秒，循环按「点不起来」自己停了，
+       队列既没暂停也没结束，就这么挂着不动，谁也不会再叫它。没人在旁边盯着就不可能刷完。
+       这里每隔 30 秒看一眼：队列还在、没被暂停、当前页确实还有没做完的任务点，
+       但脚本没在跑 —— 就是断了，隔一段时间接一次。间隔递增，最多 3 次；
+       一旦位置/剩余数变了（有实质进展）就重新计数，避免无限重试触发风控。 */
+    let reviveAt = 0;
+    let reviveCount = 0;
+    let reviveMark = '';
+    let userStopped = false;
+    const stopByUser = () => { userStopped = true; };
+    /* 面板脚本是 all_frames 注入的，这段只能由顶层框架跑，
+       否则每个 iframe 都会各自来一次「接续」，同时开好几轮循环。 */
+    if (window.top === window) setInterval(async () => {
+      try {
+        if (HW.Watch?.running) { reviveCount = 0; reviveMark = ''; return; }
+        if (userStopped) return;
+        if (Date.now() < reviveAt) return;
+        if (HW.Watch?.pageKind?.() !== 'study') return; // 只在学习页接续，别在其他页面乱点
+        const r = await send('HW_WATCH_QUEUE_GET');
+        const q = r?.queue;
+        if (!q || q.paused) return;
+        const ids = q.courses?.[q.index]?.chapterIds;
+        if (!Array.isArray(ids) || !ids.length) return;
+        const left = ids.reduce((sum, id) => sum + (HW.Watch.unfinishedOf?.(id) || 0), 0);
+        if (!left) return; // 限定范围真的刷完了，不该接
+        const mark = `${HW.Watch.activeChapterId?.() || ''}:${left}`;
+        if (mark !== reviveMark) { reviveMark = mark; reviveCount = 0; }
+        if (reviveCount >= 5) {
+          setWatchLine('循环连续中断 5 次，已停止自动接续，请点「开始刷课」', true);
+          return;
+        }
+        reviveCount += 1;
+        reviveAt = Date.now() + 120000 * reviveCount; // 2 / 4 / 6 分钟，越往后越慢
+        log(`刷课：循环中断（还剩 ${left} 个任务点），第 ${reviveCount} 次自动接续`);
+        const resumed = await send('HW_WATCH_RESUME');
+        if (!resumed?.ok) return;
+        await HW.Watch.resumeQueued({ onLive: setWatchLine, onNote: watchNote, onStop: watchStopped });
+        if (HW.Watch.running) els.watch.textContent = '停止刷课';
+      } catch {
+        /* 扩展上下文失效或页面正在跳转：下一轮再看 */
+      }
+    }, 30000);
+
     /* 列表页的卡片是站点 JS 画的，等它画完再读；读完画成勾选清单 */
     const renderCourses = () => {
       const list = availableCourses();
@@ -752,7 +828,7 @@
       all.append(allBox, allName);
       allBox.addEventListener('change', () => {
         courseItems.forEach((c, i) => {
-          c.checked = allBox.checked && !courseComplete(c);
+          c.checked = allBox.checked && !courseComplete(c) && (!els.watchfour.checked || eligibleFour(c));
           const row = els.courselist.querySelector(`.crow[data-i="${i}"] input`);
           if (row) row.checked = c.checked;
         });
@@ -797,14 +873,15 @@
     /* 勾了就说明按钮是「刷这几门」，不勾就还是「刷当前这门课」 */
     const syncWatchTip = () => {
       if (HW.Watch?.running) return;
-      const n = pickedCourses().length;
-      els.watch.dataset.tip = n ? `依次刷完勾选的 ${n} 门课` : '按所选倍速播放视频，播完自动进入下一节';
-      els.watch.textContent = n ? `开始刷 ${n} 门` : '开始刷课';
+      const n = selectedForWatch().length;
+      els.watch.dataset.tip = els.watchfour.checked ? `只处理进度低于 35% 的课程，每门从第一节起核验 4 节；口语例外单列` : n ? `依次刷完勾选的 ${n} 门课` : '按所选倍速播放视频，播完自动进入下一节';
+      els.watch.textContent = n ? `开始刷 ${n} 门${els.watchfour.checked ? ' · 连续4节' : ''}` : '开始刷课';
     };
 
     const startQueue = async (picked) => {
       const r = await send('HW_WATCH_START', {
-        courses: picked.map((c) => ({ key: c.key, scUrl: c.entryUrl || c.scUrl, name: c.name })),
+        courses: picked.map((c) => ({ key: c.key, scUrl: c.entryUrl || c.scUrl, name: c.name, done: c.done, total: c.total })),
+        ...(els.watchfour.checked ? { targetRun: 4 } : {}),
         ...rateOpts(),
       });
       if (!r?.ok) {
@@ -850,9 +927,10 @@
     };
     const makeDraggable = (handle, target, key, onTap) => {
       handle.addEventListener('mousedown', (e) => {
-        if (e.target.closest('button, select, input')) return;
+        if (handle !== els.fab && e.target.closest('button, select, input')) return;
         if (target.classList.contains('expanded')) return; // 展开模式居中定位，不拖动
         e.preventDefault();
+        delete handle.dataset.hwDragged;
         const rect = target.getBoundingClientRect();
         const sx = e.clientX;
         const sy = e.clientY;
@@ -870,6 +948,7 @@
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
           if (moved) {
+            handle.dataset.hwDragged = '1';
             const r = target.getBoundingClientRect();
             try {
               localStorage.setItem(key, JSON.stringify({ x: Math.round(r.left), y: Math.round(r.top) }));
@@ -889,8 +968,16 @@
       }
     };
     makeDraggable(els.header, els.panel, 'hwPanelPos', null);
-    makeDraggable(els.fab, els.fab, 'hwFabPos', () => {
-      els.panel.classList.toggle('hidden');
+    makeDraggable(els.fab, els.fab, 'hwFabPos', null);
+    els.fab.addEventListener('click', (e) => {
+      if (e.detail === 0 || !els.fab.dataset.hwDragged) {
+        els.panel.classList.toggle('hidden');
+        if (!els.panel.classList.contains('hidden') && !els.panel.classList.contains('expanded')) {
+          const rect = els.panel.getBoundingClientRect();
+          clampApply(els.panel, rect.left, rect.top);
+        }
+      }
+      delete els.fab.dataset.hwDragged;
     });
     els.header.addEventListener('dblclick', () => {
       try {
@@ -1123,6 +1210,18 @@
       if (detecting || !els.stop.disabled) return false;
       nativeDetection = true;
       stopWatching();
+      if (HW.FontDecoder && !HW.FontDecoder.ready(document)) {
+        detectionSnapshot = null;
+        HW.questions = []; rows = []; els.list.replaceChildren(); els.start.disabled = true;
+        setSummary('正在还原页面字体…', false);
+        if (!preparingFonts) {
+          preparingFonts = true;
+          HW.FontDecoder.prepare(document).then(() => {
+            if (nativeDetection && !detecting && els.stop.disabled) readPageQuestions();
+          }, e => setSummary('页面字体未能还原：' + errorText(e), true)).finally(() => { preparingFonts = false; });
+        }
+        return false;
+      }
       try {
         const snapshot = HW.AIDetection.collect();
         const items = [];
@@ -1130,11 +1229,25 @@
           if (doc.body?.isContentEditable) continue; // 富文本编辑器正文不是另一份题目
           for (const q of HW.Extractor.extract(doc)) {
             const labels = (q.el.labels || []).filter(l => snapshot.ids.has(l.input || l.clickEl));
-            const fields = q.el.iframes?.length ? q.el.iframes : q.el.iframe ? [q.el.iframe] : q.el.inputs || [];
+            /* el.fields 是填空专用字段列表（超星多空填空的编辑器藏在 .textDIV 里，
+               既不是 inputs 也不是 iframe/iframes，之前漏读导致整题被当成未知）。 */
+            const fields = q.el.fields?.length ? q.el.fields
+              : q.el.iframes?.length ? q.el.iframes
+              : q.el.iframe ? [q.el.iframe] : q.el.inputs || [];
             const target = labels[0]?.input || labels[0]?.clickEl || fields[0];
             const container = HW.AIDetection.questionRoot(target);
             if (!snapshot.ids.has(container)) continue;
-            items.push({ ...q.meta, containerId: snapshot.ids.get(container),
+            /* 题干/选项里有还原不了的字形（font-decoder 已改为返回 U+FFFD）时，
+               只把这一题降级成「待人工」并留空：留空交卷不判错，整卷作废则永远刷不完。 */
+            const stemText = HW.FontDecoder?.decodeText(container, q.meta.stem) ?? q.meta.stem;
+            const charBad = /[\uFFFD]/.test(stemText) || labels.some((l) => /[\uFFFD]/.test(l.text || ''));
+            if (charBad) {
+              items.push({ type: 'unknown', containerId: snapshot.ids.get(container),
+                stem: stemText.slice(0, 120), options: [], inputIds: [],
+                reason: '题干/选项字形无法还原，本题留空' });
+              continue;
+            }
+            items.push({ ...q.meta, stem: stemText, containerId: snapshot.ids.get(container),
               options: labels.map(l => {
                 const plain = l.text.replace(/^[A-H][.、．:：)）\s]+/, '').trim();
                 let key = l.key;
@@ -1152,7 +1265,7 @@
               return root === el || (q.type !== 'unknown' && root && (root.contains(el) || el.contains(root)));
             });
             if (containerId && !represented) items.push({ type: 'unknown', containerId,
-              stem: (el.querySelector('.mark_name,.Zy_TItle') || el).textContent.trim().slice(0, 300), options: [], inputIds: [],
+              stem: HW.AIDetection.textOf(el.querySelector('.mark_name,.Zy_TItle') || el).slice(0, 300), options: [], inputIds: [],
               reason: '页面题型暂未识别，可点「检测题目」调用 AI' });
           }
         }
@@ -1169,7 +1282,8 @@
         rows = [];
         els.list.replaceChildren();
         setBusy(false);
-        setSummary('页面题目暂未识别，可点「检测题目」调用 AI', true);
+        lastDetectError = errorText(e);
+        setSummary('页面题目暂未识别：' + lastDetectError, true);
         return false;
       }
     }
@@ -1205,6 +1319,8 @@
           await refreshKeyRow();
           throw new Error('请先保存 API Key，或切换到豆包桥接后重新检测');
         }
+        await HW.FontDecoder?.prepare(document);
+        if (requestId !== detectionRequest) return;
         detectionSnapshot = HW.AIDetection.collect();
         watchPage(detectionSnapshot);
         log('开始 AI 识题（' + engineName() + '，共 ' + detectionSnapshot.batches.length + ' 批）');
@@ -1240,6 +1356,10 @@
     }
     els.detect.addEventListener('click', detectQuestions);
 
+    /* 原生读取会在每次 iframe load / DOM 变化后自动重跑，日志里刷出一大片
+       「页面读取完成：可处理 0 题」，把刷课那些真正有用的行冲没了（2026-10-21 实测）。
+       结果没变就不重复记。 */
+    let lastReadSig = '';
     function renderDetected(qs, pending, source = 'AI 识题') {
       HW.questions = qs;
       const cnt = {};
@@ -1278,7 +1398,15 @@
         els.list.appendChild(r);
       });
       if (pending.length && source === '页面读取') els.smsg.textContent += '；可点「检测题目」调用 AI';
-      log(`${source}完成：可处理 ${qs.length} 题，待确认 ${pending.length} 题`);
+      const sig = `${source}|${qs.length}|${pending.length}|${qs.map((q) => q.meta.type).join(',')}`;
+      /* 面板脚本在每一层框架里都有实例，各层会各自记一条一样的「页面读取完成」，
+         日志被刷满、刷课那些真正有用的行全被淹掉。原生读取的日志只留顶层那一条。 */
+      const quietRead = source === '页面读取' && window.top !== window;
+      /* 空读（0 题 0 待确认）不打日志：它在非题目页每几秒就刷一条，
+           把真正有用的行全淹了（用户 2026-10-22 抱怨日志太吵）。 */
+      const emptyRead = source === '页面读取' && !qs.length && !pending.length;
+      if (!quietRead && !emptyRead && (source !== '页面读取' || sig !== lastReadSig)) log(`${source}完成：可处理 ${qs.length} 题，待确认 ${pending.length} 题`);
+      lastReadSig = sig;
       els.start.disabled = !qs.length;
     }
 
@@ -1397,10 +1525,41 @@
     async function runHomework() {
       autoRun = true; // 无人值守：自己点选项导致的签名变化不算「页面已变化」
       try {
+        await HW.FontDecoder?.prepare(document);
         const okDetect = readPageQuestions();
-        if (!okDetect) throw new Error('没识别成功，不提交测验');
-        if (!HW.questions?.length) throw new Error('这一页没有可处理的题目，不提交测验');
-        if (els.list.querySelector('.item.pending')) throw new Error('还有待确认题目，请手动点「检测题目」调用 AI，不提交测验');
+        if (!okDetect) throw new Error('没识别成功，不提交测验' + (lastDetectError ? '：' + lastDetectError : ''));
+        if (!HW.questions?.length) {
+          /* 全部题目都被降级成待确认（字形无法还原/图片/AI 读不出）时，原来直接放弃整份测验。
+             用户 2026-10-22 明确「先刷完，不强求正确率」：先走一次 AI 识题，
+             仍读不出就留空提交——留空交卷不判错，整卷作废则这一节永远完不成。
+             不再按 tip 文案放行：AI 识题后 pending 的 reason 会变成各种措辞，按文案过滤必然漏。 */
+          const pendings = [...els.list.querySelectorAll('.item.pending')];
+          if (!pendings.length) throw new Error('这一页没有可处理的题目，不提交测验');
+          log(`刷课：${pendings.length} 题读不出，先试 AI 识题，读不出就留空提交`);
+          const done = await detectQuestions();
+          if (!done) throw new Error('AI 识题没成功，不提交测验');
+          if (!HW.questions?.length) {
+            reportIssue('识题待确认', `${pendings.length} 题全部无法读取，已留空提交`);
+            return `题目无法读取（${pendings.length} 题），已留空提交`;
+          }
+        }
+        if (els.list.querySelector('.item.pending')) {
+          /* 无人值守不能停下来等用户点按钮：原生没读全的题（公式图选选项、多空填空等）
+             直接自动走一次 AI 识题 —— 这就是「检测题目」按钮本身的能力，只是原来只由点击触发。
+             实测 2026-10-21：抓阄先抽后抽那节 5 题可处理 / 1 题待确认，不自动补就叫停了整轮。 */
+          log('刷课：有题目原生没读全，自动调用 AI 识题');
+          const done = await detectQuestions();
+          if (!done) throw new Error('AI 识题没成功，不提交测验');
+          if (!HW.questions?.length) throw new Error('AI 识题后仍然没有可处理的题目，不提交测验');
+          const still = [...els.list.querySelectorAll('.item.pending')];
+          /* 用户 2026-10-22 明确「先刷完，不强求正确率」：AI 也没读全的题一律留空提交，
+             不再按类型放行（原来只有图片题放行，字形乱码题会把整轮卡死）。 */
+          if (still.length) {
+            log(`刷课：${still.length} 题读不出（AI 也没读全），留空提交`);
+            reportIssue('识题待确认', `${still.length} 题读不出（AI 也没读全），留空提交`,
+              { question: still.map((el) => (el.querySelector('.stem')?.textContent || '').slice(0, 60)).join('；') });
+          }
+        }
         const started = await startAnswering({ auto: true });
         if (!started) throw new Error('没能开始填写，不提交测验');
         // 等后台把这一页的题填完（HW_DONE / HW_STOPPED 都会把按钮解锁）
@@ -1414,7 +1573,12 @@
         const filled = (HW.questions || []).filter((q) => ['filled', 'fixed', 'skipped'].includes(q._status)).length;
         const failed = (HW.questions || []).filter((q) => q._status === 'failed').length;
         if (els.detect.disabled || !els.stop.disabled) throw new Error('答题超时，不提交测验');
-        if (failed || filled !== HW.questions.length) throw new Error(`填写未完成（已填 ${filled}，失败 ${failed}），不提交测验`);
+        if (failed || filled !== HW.questions.length) {
+          /* 用户 2026-10-22：先刷完。个别题填写失败（如「共用选项点击后回读不一致」）
+             不再作废整卷：已填的保留，失败题留空，照常提交；分数不再卡 80%。 */
+          log(`刷课：${failed} 题填写失败，留空随卷提交`);
+          reportIssue('填写失败', `${failed} 题填写失败，留空随卷提交`);
+        }
         return `填了 ${filled} 题`;
       } finally {
         autoRun = false;
@@ -1427,6 +1591,7 @@
     HW.Panel.runHomework = runHomework;
 
     els.watch.addEventListener('click', toggleWatch);
+    els.watchfour.addEventListener('change', () => { updateCourseTimes(); updateWatchContext(); });
     els.watchmute.addEventListener('change', async () => {
       const muted = els.watchmute.checked;
       HW.Watch?.setMuted(muted);
@@ -1539,7 +1704,8 @@
         els.watch.textContent = '开始刷课';
         setWatchLine('');
         if (payload.cancelled) log('刷课：排队已取消');
-        else log(`刷课：${payload.count} 门课都走完了（提交与最终成绩请自行核对）`);
+        else if (payload.targetRun === 4) log(`刷课：${payload.count}/${payload.total} 门课程开头 4 节已核验（口语例外单列）`);
+        else log(payload.limited ? `刷课：${payload.count} 门课的本次限定小节已完成` : `刷课：${payload.count} 门课都走完了（提交与最终成绩请自行核对）`);
         syncWatchTip();
       }
     });

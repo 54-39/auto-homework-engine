@@ -107,6 +107,47 @@ async function queueChecks() {
     ok(entered && entered.id === '901', '进课点错了节点：' + (entered && entered.id));
   });
 
+  await check('只认课程开头四节，前面有问卷等普通缺口不能被后四节掩盖', () => {
+    const entries = [
+      { id: '1', name: '第一节', done: true }, { id: '2', name: '第二节', done: true },
+      { id: '3', name: '学情调查', done: false }, { id: '4', name: '第四节', done: true },
+      { id: '5', name: '第五节', done: true }, { id: '6', name: '第六节', done: true },
+      { id: '7', name: '第七节', done: true }, { id: '8', name: '第八节', done: true },
+    ];
+    const next = HW.Watch.fourWindow(entries);
+    ok(next.start === 0 && next.chapterIds.join(',') === '1,2,3,4', '跳过了前面的普通任务');
+    ok(HW.Watch.fourWindow(entries, [0]).incomplete, '问卷未完成却报达标');
+    entries[2].done = true;
+    const done = HW.Watch.fourWindow(entries);
+    ok(done.complete && done.chapterIds.join(',') === '1,2,3,4', '漏认开头四节完成');
+    entries[2].done = false; entries[2].name = '口语练习';
+    const oral = HW.Watch.fourWindow(entries, [0]);
+    ok(oral.complete && oral.exceptions.length === 1 && oral.exceptions[0].id === '3', '明确口语例外未单列');
+  });
+
+  await check('连续四节队列先锁定范围，平台目录核验后才报达标', async () => {
+    history.replaceState({}, '', '/mooc2-ans/mycourse/studentcourse?courseid=1&clazzid=2');
+    document.body.innerHTML = `<div id="catalog">${[901, 902, 903, 904].map(id =>
+      `<div class="catalog_title" aria-labelledby="tab_cur${id}"><a class="clicktitle">第${id}节</a><div class="catalog_task"><div class="catalog_state"></div></div></div>`).join('')}</div>`;
+    const course = { key: '1|2', name: '示范课' };
+    let scope = null, done = null, clicks = 0;
+    document.querySelector('.clicktitle').addEventListener('click', () => { clicks++; });
+    chrome.runtime.sendMessage = async msg => {
+      if (msg.type === 'HW_WATCH_QUEUE_GET') return { ok: true, queue: { courses: [course], index: 0, targetRun: 4 } };
+      if (msg.type === 'HW_WATCH_SCOPE_SET') { scope = msg.payload; return { ok: true }; }
+      if (msg.type === 'HW_WATCH_COURSE_DONE') { done = msg.payload; return { ok: true }; }
+      return { ok: true };
+    };
+    try {
+      ok(await HW.Watch.resumeQueued({}));
+      ok(scope?.chapterIds.join(',') === '901,902,903,904' && scope.start === 0, '未锁定相邻四节');
+      ok(clicks === 1 && done === null, '未完成就报达标或未点击平台目录');
+      document.querySelectorAll('.catalog_state').forEach(el => el.classList.add('icon_yiwanc'));
+      ok(await HW.Watch.resumeQueued({}));
+      ok(done?.status === 'complete' && done.chapterIds.join(',') === '901,902,903,904', '目录完成标记未决定达标');
+    } finally { history.replaceState({}, '', '/'); }
+  });
+
   await check('有排队时，页面一加载就接着干（不需要用户再点）', async () => {
     document.body.innerHTML = `<div id="catalog">
       <div class="catalog_title" aria-labelledby="tab_cur901">

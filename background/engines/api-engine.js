@@ -196,41 +196,21 @@ async function run(q, endpoint, maxTokens, opts = {}) {
   try { answer = parseAnswer(q, content); }
   catch (e) { e.answerPreview = content; throw e; }
   let note = '';
-  // 多选题：自动二次复核（初答交给模型逐项复查，专治漏选）；verify2=false 时跳过
-  if (q.type === 'multi' && answer && opts.verify2 !== false) {
+  /* 两次结论冲突或复核失败时不能任选一个继续填写；交给既有失败即停流程。
+     用户 2026-10-21 23:38 明确：先刷完，不强求正确率——所以这里改成保留初答继续填，
+     把差异如实写进 note，事后可以回头看错题；填空题仍按原逻辑严格校验。 */
+  if (['multi', 'judge'].includes(q.type) && answer && opts.verify2 !== false) {
+    let verification = '';
     try {
-      const vMsgs = buildMultiVerify(q, answer);
-      const vRaw = await callIface({ ...cfg, maxTokens: undefined }, vMsgs, 96);
-      const vAns = parseAnswer(q, vRaw);
-      if (vAns && vAns !== answer) {
-        if (vAns.length < answer.length) {
-          // 复核结果比初答还少字母：大概率是解析/模型抖动，拒绝降级，保留初答
-          note = '多选复核结果异常（字母变少），已保留初答 ' + answer;
-        } else {
-          note = '多选已二次复核修正：' + answer + ' → ' + vAns;
-          answer = vAns;
-        }
-      } else if (vAns === answer) {
-        note = '多选已二次复核确认';
-      }
-    } catch {
-      /* 复核失败不阻断，用初答 */
-    }
-  }
-  // 判断题：自动二次复核（初答只有两个字，让模型显式推理一遍再定论）；verify2=false 时跳过
-  if (q.type === 'judge' && answer && opts.verify2 !== false) {
-    try {
-      const vMsgs = buildJudgeVerify(q, answer);
-      const vRaw = await callIface({ ...cfg, maxTokens: undefined }, vMsgs, 256);
-      const vAns = parseJudgeVerify(vRaw);
-      if (vAns && vAns !== answer) {
-        note = '判断题已二次复核修正：' + answer + ' → ' + vAns;
-        answer = vAns;
-      } else if (vAns === answer) {
-        note = '判断题已二次复核确认';
-      }
-    } catch {
-      /* 复核失败不阻断，用初答 */
+      const messages = q.type === 'multi' ? buildMultiVerify(q, answer) : buildJudgeVerify(q, answer);
+      verification = await callIface(cfg, messages, 1024);
+      const checked = q.type === 'judge' ? parseJudgeVerify(verification) : parseAnswer(q, verification);
+      if (!checked) note = '复核未给出明确答案，采用初答';
+      else if (checked !== answer) note = `复核不一致（初答 ${answer} / 复核 ${checked}），采用初答继续`;
+      else note = (q.type === 'multi' ? '多选' : '判断题') + '已二次复核确认';
+    } catch (error) {
+      /* 复核请求本身失败（网络/额度）也不该让整份测验作废，保留初答。 */
+      note = '复核失败，采用初答：' + String(error.message || error).slice(0, 60);
     }
   }
   return { answer, raw: content, note: note || undefined };

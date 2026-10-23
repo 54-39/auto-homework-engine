@@ -1,0 +1,15 @@
+Source Han Sans CN Normal glyph fingerprint index
+
+The SHA-256 to Unicode index in glyph-map.json is generated from the publicly
+distributed SourceHanSansCN-Normal.ttf, and contains no course or user data.
+Font distribution used to generate the index:
+https://github.com/lincanbin/Material-Design-Avatars/blob/master/src/fonts/SourceHanSansCN-Normal.ttf
+Original font project: https://github.com/adobe-fonts/source-han-sans
+
+Copyright (c) 2014 Adobe Systems Incorporated. All Rights Reserved.
+This version of the font is licensed under the Apache License, Version 2.0.
+The font itself is not bundled. See Apache-2.0.txt for the license text.
+
+Rebuild: node tools/build-font-map.mjs <SourceHanSansCN-Normal.ttf>
+Only unique matches after Unicode NFKC normalization are retained.
+Unsupported or ambiguous glyphs are not guessed.

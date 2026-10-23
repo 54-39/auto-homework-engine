@@ -21,6 +21,9 @@
     return r.width > 0 && r.height > 0;
   };
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  /* 读一块 DOM 的可见文字：能拿到 AIDetection 时顺便还原公式图与混淆字体（它负责 imageText/字体解码）。
+     AIDetection 在本文件之后加载，只能在调用时取，不能提前解构。 */
+  const richText = (node) => (HW.AIDetection?.textOf ? HW.AIDetection.textOf(node) : norm(node?.textContent || ''));
 
   /* 找题目块：按常见容器类名逐级尝试；命中过多输入的容器（整页包裹层）则继续降级 */
   function findBlocks(doc) {
@@ -170,12 +173,14 @@
         const stateInput = block.querySelector(
           'input[type=hidden][name^="answer"]:not([name^="answertype"])',
         );
+        /* 选项文字可能整段是公式图（超星 ans-latex-moudle），此时 li 的 textContent 只有字母，
+           所以字母后允许直接结束；真正的文字也交给 richText 把公式读回来。 */
         const cands = [...block.querySelectorAll('ul, ol, div')].filter((c) => {
           const kids = [...c.children];
           return (
             kids.length >= 2 &&
             kids.length <= 10 &&
-            kids.every((k) => /^[A-H](?=[\s.、．:：)）])/.test(norm(k.textContent)))
+            kids.every((k) => /^[A-H](?=$|[\s.、．:：)）])/.test(norm(k.textContent)))
           );
         });
         const innermost = cands.filter((c) => !cands.some((o) => o !== c && c.contains(o)));
@@ -183,7 +188,15 @@
           const kids = [...c.children];
           const labels = kids.map((k, idx) => {
             const mark = judgeMark(k);
-            return { key: LETTERS[idx], text: mark || norm(k.textContent), input: null, clickEl: k };
+            const key = LETTERS[idx];
+            let text = mark || richText(k);
+            /* 选项字母（.num_option）和正文一起被读进来时会出现「A A 发生时…」，
+               AI 返回的往往是「A 发生时…」，两边对不上就会被判成不匹配。先剥掉开头的字母。 */
+            if (!mark) {
+              const stripped = text.replace(new RegExp('^' + key + '\\s*[.、．:：)）]?\\s*'), '').trim();
+              if (stripped) text = stripped;
+            }
+            return { key, text, input: null, clickEl: k };
           });
           const plain = (t) => t.replace(/^[A-Za-z]?[\s.、．:：)）]*/, '').trim();
           const isJudge =
@@ -195,15 +208,21 @@
           const typeByCode = { 0: 'choice', 1: 'multi', 3: 'judge' };
           const type = isJudge ? 'judge' : typeByCode[typeCode] || 'choice';
           let stem = '';
-          try {
-            const range = block.ownerDocument.createRange();
-            range.setStart(block, 0);
-            range.setEndBefore(c);
-            stem = norm(range.toString());
-          } catch {
-            /* setEndBefore 失败时走下面兜底 */
+          /* 超星题干在 .Zy_TItle/.mark_name 里：走 textOf 才能把公式图和混淆字体一起还原，
+             纯 range.toString() 会丢掉公式、留下乱码字形。 */
+          const titleEl = block.querySelector('.Zy_TItle, .mark_name');
+          if (titleEl) stem = richText(titleEl) || '';
+          if (stem.length < 4) {
+            try {
+              const range = block.ownerDocument.createRange();
+              range.setStart(block, 0);
+              range.setEndBefore(c);
+              stem = norm(range.toString());
+            } catch {
+              /* setEndBefore 失败时走下面兜底 */
+            }
           }
-          if (stem.length < 4) stem = norm(block.querySelector(STEM_SELECTORS)?.textContent || '');
+          if (stem.length < 4) stem = richText(block.querySelector(STEM_SELECTORS)) || '';
           const meta = { type, stem: stem.slice(0, 500) };
           meta.options = labels.map((l) => ({ key: l.key, text: l.text }));
           questions.push({ meta, el: { inputs: [], labels, stateInput: stateInput || undefined } });
@@ -222,6 +241,25 @@
           meta: { type: 'blank', stem: norm(textWithBlanks(block)).slice(0, 500), blanks: textInputs.length },
           el: { inputs: textInputs, labels: [] }, // labels 统一存在（填空无选项）
         });
+      }
+
+      /* 超星多空填空：每个空是 .blankItemDiv，真正的编辑器藏在 .textDIV 里且默认 display:none，
+         所以既看不到 text 输入框，也过不了富文本 iframe 的可见性过滤（这题原先整题被当成未知）。
+         按站点自己的空位结构取字段，填写器会先点 .InpDIV 再写入。 */
+      const blankDivs = [...block.querySelectorAll('.blankItemDiv')];
+      const blankEditors = blankDivs
+        .map((d) => d.querySelector('.textDIV iframe') || d.querySelector('textarea'))
+        .filter(Boolean);
+      if (!textInputs.length && blankEditors.length) {
+        questions.push({
+          meta: {
+            type: 'blank',
+            stem: richText(block.querySelector('.Zy_TItle, .mark_name')) || norm(textWithBlanks(block)).slice(0, 500),
+            blanks: blankEditors.length,
+          },
+          el: { inputs: [], labels: [], fields: blankEditors },
+        });
+        return; // 这一块已按填空处理完，不再走简答分支
       }
 
       // —— 简答：优先 iframe 富文本编辑器（UEditor 类），否则每个 textarea 独立成题 ——

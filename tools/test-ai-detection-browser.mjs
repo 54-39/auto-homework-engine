@@ -409,12 +409,11 @@ async function browserChecks() {
     ok(!HW.questions.some(q => q.meta.stem === '内嵌原生题目'));
     ok(!testCalls.includes('HW_DETECT_QUESTIONS'));
   });
-  await check('刷课遇到待确认题目暂停，AI 识题仍需用户手动点击', async () => {
-    const before = testCalls.filter(t => t === 'HW_DETECT_QUESTIONS').length;
+  await check('刷课遇到待确认题目自动尝试一次 AI 识题，仍无可处理题目时不提交', async () => {
+    window.testMode = 'empty';
     let error;
     try { await HW.Panel.runHomework(); } catch (e) { error = e.message; }
-    ok(/待确认/.test(error || ''), error);
-    ok(testCalls.filter(t => t === 'HW_DETECT_QUESTIONS').length === before, '刷课擅自调用 AI 检测');
+    ok(/AI 识题后仍然没有可处理的题目/.test(error || ''), error);
     ok(!testCalls.includes('HW_START'));
   });
   nativeFixture.remove();
@@ -562,6 +561,17 @@ async function browserChecks() {
     completed.querySelector('summary').click();
     ok(!completed.open);
   });
+  await check('连续四节入口只选进度低于 35% 的课程', async () => {
+    await setPanelMode('watch');
+    const option = ui.querySelector('.watchfour');
+    option.click();
+    ok(option.checked, '连续四节选项未选中');
+    ok(ui.querySelector('.watchbtn').textContent.includes('连续4节'), '启动按钮未说明模式');
+    ok(ui.querySelector('.crow[data-i="0"] input').checked, '33% 的课程被错误排除');
+    ok(ui.querySelector('.crow[data-i="2"] input').disabled, '已完成课程仍可选');
+    option.click();
+    await setPanelMode('homework');
+  });
   await check('个人中心内嵌课程列表可读，切换列表后保留勾选，进度异步更新用时', async () => {
     const first = HW.Watch.courseLinks()[0];
     window.frameCourseResults = [first, { ...first, key: '804|901', courseid: '804', name: '内嵌页面课程', done: 0, total: 2 }];
@@ -708,11 +718,14 @@ try {
   for (const width of [1280, 420]) {
     await call('Emulation.setDeviceMetricsOverride', { width, height: 800, deviceScaleFactor: 1, mobile: false });
     await evaluate('setPanelMode("watch")');
+    await evaluate('document.querySelector("#hw-panel-host").shadowRoot.querySelector(".watchfour").click()');
     const shot = await call('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(path.join(output, `ui-watch-${width}.png`), Buffer.from(shot.data, 'base64'));
-    const watch = await evaluate(`(() => {const s=document.querySelector('#hw-panel-host').shadowRoot,p=s.querySelector('.panel'),r=p.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,height:innerHeight,width:innerWidth,overflow:p.scrollHeight>p.clientHeight,log:s.querySelector('.logwrap').getBoundingClientRect().height};})()`);
+    const watch = await evaluate(`(() => {const s=document.querySelector('#hw-panel-host').shadowRoot,p=s.querySelector('.panel'),r=p.getBoundingClientRect(),button=s.querySelector('.watchbtn').getBoundingClientRect(),log=s.querySelector('.logwrap').getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,height:innerHeight,width:innerWidth,overflow:p.scrollHeight>p.clientHeight,log:log.height,buttonBottom:button.bottom,logTop:log.top};})()`);
     console.log('UI watch geometry', width, watch);
     assert.ok(watch.left>=0 && watch.right<=watch.width && watch.top>=0 && watch.bottom<=watch.height && !watch.overflow && watch.log>=96);
+    assert.ok(watch.buttonBottom <= watch.logTop, 'watch button overlaps the log area');
+    await evaluate('document.querySelector("#hw-panel-host").shadowRoot.querySelector(".watchfour").click()');
     await evaluate('setPanelMode("homework")');
   }
   const aiEmpty = await evaluate('setDetectionUI("empty")');

@@ -185,6 +185,26 @@ import { exportIssueHistory, ISSUE_PREFIX } from './background/issue-history.js'
         // 章节题在 #iframe 里，只导顶层文档会丢掉真正的题目 DOM；同源 iframe 就地展开
         func: () => {
           const copy = document.documentElement.cloneNode(true);
+          // 动态字体规则可能只在CSSOM里，outerHTML不会保存insertRule的内容。
+          const fontInfo = (doc, target) => {
+            const rules = [];
+            const unreadable = [];
+            const read = list => {
+              for (const rule of list) {
+                if (rule.type === CSSRule.FONT_FACE_RULE || /font-cxsecret/.test(rule.selectorText || '')) rules.push(rule.cssText);
+                else if (rule.cssRules) read(rule.cssRules);
+              }
+            };
+            for (const sheet of doc.styleSheets) {
+              try { read(sheet.cssRules); } catch { if (sheet.href) unreadable.push(sheet.href); }
+            }
+            const data = doc.createElement('script');
+            data.type = 'application/json';
+            data.setAttribute('data-hw-font-diagnostic', '');
+            data.textContent = JSON.stringify({ baseURI: doc.baseURI, rules, unreadable,
+              fonts: [...doc.fonts].map(font => ({ family: font.family, status: font.status })) }).replace(/</g, '\\u003c');
+            target.appendChild(data);
+          };
           const fill = (live, clone) => {
             const lc = [...live.children];
             [...clone.children].forEach((c, i) => {
@@ -199,12 +219,19 @@ import { exportIssueHistory, ISSUE_PREFIX } from './background/issue-history.js'
                 [...doc.body.childNodes].forEach((n) => box.appendChild(n.cloneNode(true)));
                 c.replaceWith(box);
                 fill(doc.body, box);
+                // 内嵌测验的字体定义在head，正文展开后也要保留诊断所需的头部。
+                const head = document.createElement('template');
+                head.setAttribute('data-hw-frame-head', '');
+                if (doc.head) head.content.appendChild(doc.head.cloneNode(true));
+                fontInfo(doc, head.content);
+                box.prepend(head);
                 return;
               }
               fill(l, c);
             });
           };
           fill(document.documentElement, copy);
+          fontInfo(document, copy.querySelector('head') || copy);
           return '<!DOCTYPE html>\n' + copy.outerHTML;
         },
       });

@@ -23,14 +23,38 @@
   const VIDEO_WAIT = 12000; // 进视频页后等 <video> 出现
   const DWELL_TEXT = 4000; // 阅读／PPT 类停留时长
   const QUIZ_TIMEOUT = 240000; // 一道测验最多等多久（AI 识题＋逐题填写）
-  const MAX_KICK_FAIL = 5; // 连续几次点不起播放就停手，不跟播放器拉扯
+  const MAX_KICK_FAIL = 2; // 播放未能启动时停止，不反复点播放器
+  const CHAPTER_GAP = 20000; // 相邻两节切换的最小间隔，避免连续快速切页被平台风控
+  const RETRY_PAUSE = 20000; // 发现没刷完的节，隔一会儿再补，不和上一轮连成一片
+  const TAB_GAP = 2000; // 同一节里切换页签前的额外停顿
+  const SUBMIT_GAP = 6000; // 填完答案到点提交之间的停顿，别让提交像脚本一样 instantaneous
+  /* 所有间隔都加随机抖动：固定节律本身就是机器特征。 */
+  const jitter = (ms, pct = 0.35) => Math.round(ms * (1 + (Math.random() * 2 - 1) * pct));
+
+  /* 英文课程（大学英语等）的小节/页签名保持平台原文（用户 2026-10-22：节名不要翻译），
+     只是太长的截断，别在日志里整段整段刷；插件的提示语本身全中文。 */
+  const shortName = (n) => {
+    const s = String(n || '');
+    return s.length > 18 ? s.slice(0, 16) + '…' : s;
+  };
 
   const STOP = { stop: true };
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const fmtRate = (n) => String(Math.round(n * 100) / 100);
 
+  function checkVerification() {
+    for (const doc of docs()) {
+      const text = doc.body?.innerText || '';
+      if (!/9010[\s\S]{0,100}验证码|操作异常[\s\S]{0,100}验证码/.test(text)) continue;
+      if (![...doc.querySelectorAll('input')].some(el => visible(el) && /验证码/.test(el.placeholder || ''))) continue;
+      const error = new Error('学习通要求手动完成验证码，已暂停并保留队列');
+      error.code = 'HW_VERIFICATION_REQUIRED';
+      throw error;
+    }
+  }
+
   /* 本页 + 所有同源 iframe 的 document（跨域读不到的跳过） */
-  function docs() {
+  function docs(root = document) {
     const out = [];
     const walk = (doc, depth) => {
       if (!doc || depth > MAX_DEPTH) return;
@@ -41,11 +65,14 @@
         if (d) walk(d, depth + 1);
       }
     };
-    walk(document, 0);
+    walk(root, 0);
     return out;
   }
 
-  const allVideos = () => docs().flatMap((d) => [...d.querySelectorAll('video')]);
+  /* 音频任务点（ananas/modules/audio/index_new.html）用的是同一个 video.js 播放器，
+     只是媒体元素是 <audio>。大学英语 6 节里有 4 个任务点是音频，只认 <video> 的话
+     这些节永远刷不完（2026-10-21 实测：Active reading 剩 4 个点，其中就有音频）。 */
+  const allVideos = () => docs().flatMap((d) => [...d.querySelectorAll('video, audio')]);
   function finishedVideo(v) {
     try {
       let frame = v.ownerDocument.defaultView.frameElement;
@@ -84,11 +111,16 @@
   const usable = (v) => v.readyState > 0 || v.currentTime > 0 || (isFinite(v.duration) && v.duration > 0);
 
   const PLAYER_UI = '.video-js,.vjs-tech,.vjs-big-play-button,.vjs-playback-rate';
+  /* 没有 src 的媒体元素不是任务点：openGauss 每张卡里都常驻一个
+     <audio src="">（MEDIA_ELEMENT_ERROR，err=4），以前 findVideo() 会把它当播放器，
+     于是整节误判成「视频页」，真的空卡反而没人管（2026-10-22 现场诊断）。 */
+  const hasSource = (v) => !!(v.currentSrc || v.getAttribute('src') || v.querySelector('source[src]'));
+
   function findVideo(ended) {
     /* 播完的（ended）不再认：一个页签里可能不止一个视频任务点（阅读卡里两幅画
        各带一个介绍短片，2026-10-20 实测），第一个播完要接着看第二个，
        不能抱着已结束的那个反复 kick 重播。 */
-    const list = pendingVideos().filter((v) => !v.ended && !ended?.has(v));
+    const list = pendingVideos().filter((v) => !v.ended && !ended?.has(v) && hasSource(v));
     for (const v of list) {
       if (usable(v)) return v;
     }
@@ -132,6 +164,437 @@
       }, i * 400);
     });
     return icons.length;
+  }
+
+  /* 非视频任务点（阅读／文档／PPT）的角标。第一站那节就是视频看完了、
+     还剩一个非视频点没完成（2026-10-21 实测：父元素没有 .ans-job-finished）。 */
+  function textJobs() {
+    const out = [];
+    for (const d of docs()) {
+      try { out.push(...d.querySelectorAll('.ans-job-icon:not(.ans-job-video)')); } catch { /* 跨域文档跳过 */ }
+    }
+    return out;
+  }
+
+  function textJobsDone() {
+    const jobs = textJobs();
+    if (!jobs.length) return true; // 没有这类角标就不用滚
+    return jobs.every((ic) => !!(ic.parentElement && ic.parentElement.classList.contains('ans-job-finished')));
+  }
+
+  /* 学情调查／问卷：卡片是站点自己的「投票」模块（ananas/modules/zt/vote）。
+     封面本身没有 iframe 问卷，必须点一下 #render，站点才会在顶层页面把
+     #voteIframe 指到 mobilelearn 的问卷页并显示 .voteContainer。
+     问卷页在 mobilelearn 域下，顶层读不到，由 content/course/survey.js 在那一帧里填写提交；
+     这里只负责点开、并等站点自己把任务点记账（目录角标归零）再算完成。 */
+  function surveyCard() {
+    for (const d of docs()) {
+      let el = null;
+      try { el = d.querySelector('#render'); } catch { continue; }
+      if (el && /\/ananas\/modules\/zt\/vote\//.test(d.URL || '')) return el;
+    }
+    return null;
+  }
+
+  const SURVEY_RELOAD_KEY = 'hwSurveyReloaded';
+  const surveyReloaded = (id) => {
+    try { return sessionStorage.getItem(SURVEY_RELOAD_KEY) === String(id); } catch { return true; }
+  };
+
+  async function openSurveyCard() {
+    const card = surveyCard();
+    if (!card) return false;
+    const chapter = activeChapterId();
+    /* 问卷提交成功后，站点自己会 parent.postMessage({"cmd":"callBackFinishJob"}) 上报任务点完成。
+       这是站点脚本在服务端返回 result==1 之后发的，比“我点过提交了”硬得多。 */
+    let receipt = false;
+    const onMessage = (e) => {
+      try {
+        const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+        if (data && data.cmd === 'callBackFinishJob') receipt = true;
+      } catch { /* 不是站点的完成任务通知 */ }
+    };
+    window.addEventListener('message', onMessage);
+    try {
+      live('问卷：打开投票卡片…');
+      try { card.click(); } catch { return false; }
+      for (let i = 0; i < 90 && on; i++) {
+        await step(1000);
+        if (chapter && activeChapterId() !== chapter) return true;
+        if (chapter && unfinishedOf(chapter) === 0) return true;
+        if (!receipt) continue;
+        receipt = false;
+        note('问卷已提交（站点回执），核对目录计数');
+        await step(3000);
+        if (!chapter || unfinishedOf(chapter) === 0) return true;
+        /* 目录树是整页加载时画的，站点提交后不会重画：刷新一次拿平台最新计数。
+           只刷一次，避免和问卷来回拉锯；刷完还是 1 就如实记成未完成。 */
+        if (!surveyReloaded(chapter)) {
+          try { sessionStorage.setItem(SURVEY_RELOAD_KEY, String(chapter)); } catch { /* 存不了就不刷 */ }
+          note('学情调查已提交，刷新目录核对平台计数');
+          setTimeout(() => location.reload(), 600);
+          return true;
+        }
+      }
+      note('问卷卡片没等到平台回执，留给人工核对');
+      return false;
+    } finally {
+      window.removeEventListener('message', onMessage);
+    }
+  }
+
+  /* 万能兜底：任务点反复计不上时，把卡片里站点自己的入口按钮点一遍，再滚一遍到底。
+     各门课的阅读/文档卡片结构差异很大（有的是「开始学习」，有的是「继续」，有的藏在折叠里），
+     与其一门门写适配，不如把站点自己暴露的入口都点一次——点的都是它自己的控件，不伪造状态。
+     用户 2026-10-21：先刷完，别一门门卡住。 */
+  async function nudgeCard() {
+    /* 「开始实训／进入实验／开始答题」这类入口也要点：openGauss 的【练】页签就是
+       实训模块，只有点进去站点才记账（2026-10-22 审计）。长度限制放宽到 12，
+       这些词本身就 4~6 个字。 */
+    const CLICK = /^(播放|开始|继续|进入|开始学习|立即学习|查看|展开|更多|开始实训|进入实训|开始实验|进入实验|开始练习|开始答题|开始做题|去实训|去实验|去完成|去学习|立即答题|继续实验|继续实训|进入练习)$/;
+    let clicked = 0;
+    for (const d of docs()) {
+      let list;
+      try { list = d.querySelectorAll('button,a,span,div[class*="btn"],div[class*="play"]'); } catch { continue; }
+      for (const el of list) {
+        const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!t || t.length > 12 || !CLICK.test(t) || !visible(el)) continue;
+        try { el.click(); clicked++; } catch { /* 换下一个 */ }
+        if (clicked >= 3) break;
+      }
+      if (clicked >= 3) break;
+    }
+    if (clicked) { await step(jitter(1200)); await readThrough(20000); }
+    return clicked;
+  }
+
+  /* 站点在「本节还有任务点没完成」时会弹一个「提示」框挡住整页：
+     「去学习」＝留在本节继续做，「下一节」＝直接跳走。
+     脚本以前不认这个框：要么干等，要么被后面的点击顺手带成「下一节」——用户 2026-10-21
+     截图反馈的就是这个，表现为「卡住」或「莫名跳过」。一律选「去学习」：欠账不能用跳节绕过。 */
+  function unfinishedDialog() {
+    for (const d of docs()) {
+      let box = null;
+      try { box = d.querySelector('.maskDiv.jobFinishTip'); } catch { continue; }
+      if (box && visible(box)) return box;
+    }
+    /* 结构变了就按文案找，但**必须真的可见**：这个框常驻在 DOM 里、默认 display:none，
+       只按文字找会对着一个空壳反复点，日志还会误报「已处理提示框」。 */
+    for (const d of docs()) {
+      let hit = null;
+      try {
+        for (const el of d.querySelectorAll('.maskDiv,.popDiv')) {
+          const t = (el.textContent || '').replace(/\s+/g, '');
+          if (t.includes('当前章节还有任务点未完成') && visible(el)) { hit = el; break; }
+        }
+      } catch { continue; }
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  async function dismissUnfinishedDialog() {
+    const box = unfinishedDialog();
+    if (!box) return false;
+    /* 站点自己的三个按钮：上一节 / 下一节 / 去学习（a.btnBlue，onclick=scroll2Job）。
+       一律选「去学习」：欠账不能靠跳节绕过。找按钮时也按可见性过滤，别点到隐藏的。 */
+    const go = [...box.querySelectorAll('.popBottom a,button,span')]
+      .filter((el) => visible(el) && /^去学习$/.test((el.textContent || '').trim())).pop();
+    if (go) {
+      try { go.click(); } catch { return false; }
+      note('站点提示本节还有任务点，已选「去学习」留在本节继续');
+      await step(jitter(1200));
+      return true;
+    }
+    const close = box.querySelector('.popClose');
+    if (close && visible(close)) {
+      try { close.click(); } catch { return false; }
+      note('站点提示框没有「去学习」按钮，已关闭提示框');
+      await step(jitter(800));
+      return true;
+    }
+    return false;
+  }
+
+  /* 空壳卡：cards iframe 的 body 只有隐藏 input 和一堆 script，正文一个字都没有，
+     附件区只有 100px 高的空 iframe。站点偶尔就下发成这种半成品（2026-10-22 现场诊断：
+     num=3/5 的帧 readyState=complete 但 innerText 只有空格、.card=0）。
+     这种页再怎么滚也不会记账，先让它自己重画一次；同一节同一页签只做一次。 */
+  const cardReloaded = new Set();
+  function cardLooksEmpty(doc) {
+    if (!doc?.body) return false;
+    if ((doc.body.innerText || '').trim().length) return false;
+    if (doc.querySelector('.card,.ans-attach-ct,video,canvas,.TiMu,.questionLi')) return false;
+    /* 大尺寸 iframe 说明正文在子框架里，不算空壳 */
+    return ![...doc.querySelectorAll('iframe')].some((f) => f.clientHeight > 150);
+  }
+  async function ensureCardRendered(tabIndex) {
+    const frame = document.querySelector('#iframe');
+    if (!frame) return true;
+    const chapter = activeChapterId();
+    const sameCard = () => activeChapterId() === chapter && document.querySelector('#iframe') === frame;
+    const ready = () => {
+      try {
+        const doc = frame.contentDocument;
+        return !!doc?.body && doc.URL !== 'about:blank' && doc.readyState !== 'loading' && !cardLooksEmpty(doc);
+      } catch { return false; }
+    };
+    /* complete 也可能只是空壳脚本刚启动：先等异步正文，别重载正在渲染的卡片。 */
+    const waitRendered = async () => {
+      const deadline = Date.now() + 12000;
+      while (on && sameCard() && Date.now() < deadline) {
+        if (ready()) return true;
+        await step(400);
+      }
+      return sameCard() && ready();
+    };
+    if (await waitRendered()) return true;
+    if (!sameCard()) return false;
+    const key = (currentCourse()?.key || '') + ':' + (chapter || '') + ':' + tabIndex;
+    if (cardReloaded.has(key)) return false;
+    cardReloaded.add(key);
+    note('这一页是空壳卡，让站点重画一次');
+    try {
+      /* 直接重载原地址；停止信号不能把页面留在 about:blank。 */
+      frame.src = frame.src;
+    } catch { return false; }
+    await step(400);
+    if (await waitRendered()) return true;
+    if (!sameCard()) return false;
+    let state = '文档不可读';
+    try {
+      const doc = frame.contentDocument;
+      if (doc) state = `${doc.readyState}，正文 ${(doc.body?.innerText || '').trim().length} 字，子框架 ${doc.querySelectorAll('iframe').length} 个`;
+    } catch { /* 跨域文档只报告不可读 */ }
+    note(`重画后仍未渲染（${state}），跳过这一页，不计完成`);
+    return false;
+  }
+
+  /* 讨论任务点：卡片是 ananas 的话题模块（ananas/modules/insertbbs），
+     内层 #topicMainDiv 的 data 属性就是话题页地址（groupweb 域，跨域读不到内容）。
+     直接点它开不了新页（程序化点击没有 user gesture，会被弹窗拦截），
+     所以把话题地址交给后台开标签页；回帖由 content/course/bbs.js 在那个标签页里完成。 */
+  /* bbs.js 回帖成功后经后台转发 HW_BBS_NOTIFY；把 completeTopic 消息补进
+     insertbbs 那层窗口——正常由话题页 postMessage 给 opener，而话题页是
+     扩展开的标签页、没有 opener。回帖是真的发到服务器了，这条消息只是
+     把「已完成」如实通知给卡片自己的完成链路。 */
+  /* 收到回帖通知就自增：openBbsCard 用它判断「这一张卡的回复已经真的发出去了」。 */
+  let bbsNotifySeq = 0;
+  if (window.top === window && !HW._bbsNotifyHooked) {
+    HW._bbsNotifyHooked = true;
+    try {
+      chrome.runtime.onMessage.addListener((msg) => {
+        if (msg?.type !== 'HW_BBS_NOTIFY') return;
+        bbsNotifySeq++;
+        const jobId = String(msg.payload?.jobId || '');
+        if (!/^\d+$/.test(jobId) || String(activeChapterId()) !== String(msg.payload?.knowledgeId)) return;
+        for (const d of docs()) {
+          for (const f of d.querySelectorAll('iframe')) {
+            if ((f.src || '').includes('/ananas/modules/insertbbs/') && String(f.getAttribute('jobid')) === jobId) {
+              try { f.contentWindow.postMessage({ opType: 'completeTopic' }, '*'); } catch { /* 跨域就算了 */ }
+            }
+          }
+        }
+        /* ② 服务端记账补发（2026-10-22 接口分析结论）：JC.completed 只改本地状态、
+           零网络调用——讨论的账平台靠回帖请求自带 job 上下文，而我们从独立话题页发的
+           回帖没有这套上下文。补发一次 readv2（与阅读任务同款记账接口），
+           参数在 AttachmentSetting/mArg/卡片 DOM 里，只有页面自己读得到 → 注入 <script> 执行。 */
+        try {
+          const q = new URLSearchParams(location.search);
+          const courseId = q.get('courseId') || '';
+          const clazzId = q.get('clazzid') || '';
+          const chapter = activeChapterId() || '';
+          const cards = document.querySelector('#iframe');
+          const cd = cards?.contentDocument;
+          if (cd && chapter) {
+            const sc = cd.createElement('script');
+            sc.textContent = `(function(){
+              try {
+                var ibs = Array.from(document.querySelectorAll('iframe[src*="insertbbs"]')).find(function(f) { return f.getAttribute('jobid') === '${jobId}'; });
+                var jobid = ibs ? ibs.getAttribute('jobid') : null;
+                if (ibs) {
+                  try {
+                    var inner = ibs.contentDocument.getElementById('frame_content');
+                    if (inner) { var iu = new URL(inner.src, 'https://mooc1.chaoxing.com'); jobid = iu.searchParams.get('jobid') || jobid; }
+                  } catch (e) {}
+                }
+                if (!jobid) { document.documentElement.setAttribute('data-readv2-err', 'no jobid'); return; }
+                var setting = window.AttachmentSetting || null;
+                var mArg = window.mArg || null;
+                var def = (mArg && mArg.defaults) || (setting && setting.defaults) || {};
+                var knowledgeid = (def.knowledgeid || '') + '' || '${chapter}';
+                var courseid = (def.courseid || '') + '' || '${courseId}';
+                var clazzid = (def.clazzId || def.clazzid || '') + '' || '${clazzId}';
+                var jtoken = '';
+                var atts = (mArg && mArg.attachments) || (setting && setting.attachments) || [];
+                for (var i = 0; i < atts.length; i++) {
+                  var a = atts[i] || {}; var pr = a.property || {};
+                  if ((pr.jobid || a.jobid || '') + '' === jobid + '') { jtoken = a.jtoken || pr.jtoken || ''; break; }
+                }
+                var url = '/ananas/job/readv2?jobid=' + jobid + '&knowledgeid=' + knowledgeid + '&courseid=' + courseid + '&clazzid=' + clazzid + (jtoken ? '&jtoken=' + jtoken : '');
+                fetch(url, { credentials: 'include' }).then(function (r) { return r.text(); }).then(function (t) {
+                  document.documentElement.setAttribute('data-readv2', String(t).slice(0, 160));
+                }).catch(function (e) { document.documentElement.setAttribute('data-readv2-err', String(e).slice(0, 120)); });
+              } catch (e) { document.documentElement.setAttribute('data-readv2-err', String(e).slice(0, 120)); }
+            })();`;
+            cd.documentElement.appendChild(sc);
+            setTimeout(() => { try { sc.remove(); } catch {} }, 4000);
+          }
+        } catch { /* 注入失败就只留 postMessage 那条链 */ }
+      });
+    } catch { /* 监听器注册失败不影响其它流程 */ }
+  }
+
+  /* 同一节里试过的讨论卡记在这里。站点不会给跨标签页回帖的卡片挂 .ans-job-finished
+     （2026-10-23 实测：1.2 连续几轮都是「等满 90 秒仍无回执」，而这一节的任务点数
+     确实按 9→8、8→7…往下掉），所以只靠这个类既认不出完成、也会反复返回同一张卡。
+     卡片本身没法用来区分：站点的讨论卡没有 jobid 属性，几张卡的 iframe 地址完全相同，
+     卡片外层标题也是空的——只有卡片里那层 frame_content 的地址带得出 jobid。 */
+  const bbsTried = new Set();
+  const bbsKeyOf = (h) => {
+    const f = h.querySelector('iframe');
+    if (!f) return 'no-frame';
+    const jid = f.getAttribute?.('jobid') || '';
+    if (jid) return 'job:' + jid;
+    try {
+      const d = f.contentDocument;
+      if (d) {
+        for (const doc of docs(d)) {
+          const fc = doc.getElementById?.('frame_content');
+          if (fc?.src) {
+            const id = new URL(fc.src, location.href).searchParams.get('jobid');
+            if (id) return 'job:' + id;
+          }
+        }
+      }
+    } catch { /* 跨域或还没加载 */ }
+    /* 实在读不到 jobid 才退回「文档地址 + 同文档内序号」，至少不会把整节卡死 */
+    const owner = h.ownerDocument;
+    const idx = owner ? [...owner.querySelectorAll('.ans-attach-ct')].indexOf(h) : -1;
+    return 'idx:' + (owner?.URL || '') + '#' + idx;
+  };
+  function bbsCard() {
+    for (const d of docs()) {
+      for (const h of d.querySelectorAll('.ans-attach-ct')) {
+        const src = h.querySelector('iframe')?.src || '';
+        if (src.includes('/ananas/modules/insertbbs/') && !h.classList.contains('ans-job-finished')
+          && !bbsTried.has(bbsKeyOf(h))) return h;
+      }
+    }
+    return null;
+  }
+
+  async function openBbsCard() {
+    const card = bbsCard();
+    if (!card) return false;
+    /* 认领这张卡：即使后面某一步失败也不会在同一轮里重试同一张（否则会重复回帖）。 */
+    bbsTried.add(bbsKeyOf(card));
+    const chapter = activeChapterId();
+    const before = unfinishedOf(chapter);
+    const seq0 = bbsNotifySeq;
+    /* topicMainDiv 不在 insertbbs 那层文档里，在它内层 bbscircle 文档里——
+       必须跨全部同源文档找，只看第一层 iframe 会拿到 null（2026-10-22 实测）。 */
+    let topicDoc = null;
+    try { topicDoc = card.querySelector('iframe')?.contentDocument; } catch { /* 跨域时停止 */ }
+    const main = (topicDoc ? docs(topicDoc) : []).map(d => d.getElementById?.('topicMainDiv')).find(Boolean);
+    const topicUrl = main?.getAttribute('data') || '';
+    let u;
+    try { u = new URL(topicUrl); } catch { note('讨论卡没有话题地址，留给人工核对'); return false; }
+    if (!/(^|\.)chaoxing\.com$/.test(u.hostname)) { note('讨论话题地址不在超星域，留给人工核对'); return false; }
+    const inner = topicDoc?.getElementById('frame_content');
+    if (inner) {
+      const iu = new URL(inner.src, location.href);
+      for (const key of ['jobid', 'knowledgeid', 'enc', 'utenc', 'courseid', 'clazzId', 'ut', 'isJob']) {
+        const value = iu.searchParams.get(key);
+        if (value) u.searchParams.set(key, value);
+      }
+    }
+    live('讨论：打开话题页…');
+    const opened = await chrome.runtime.sendMessage({ type: 'HW_WATCH_OPEN_TOPIC', payload: { url: u.href } });
+    if (!opened?.ok) { note('话题页没能打开：' + (opened?.error || '未知错误')); return false; }
+    /* 回帖后站点走 opType=completeTopic 的消息链把角标翻绿；等不到就如实记 gap。 */
+    /* 回执只认三个都可信的信号：卡片自己被站点挂上完成类、本节任务点数下降、
+       或者话题页回帖后由后台转回通知。等不到就不再空耗，如实记 gap。 */
+    for (let i = 0; i < 90 && on; i++) {
+      await step(1000);
+      if (chapter && activeChapterId() !== chapter) return true;
+      if (card.classList.contains('ans-job-finished')) return true;
+      if (bbsNotifySeq > seq0) { note('讨论已回帖并收到回帖通知'); return true; }
+      if (before !== null && unfinishedOf(chapter) < before) { note('讨论已计入本节任务点数'); return true; }
+    }
+    note('讨论卡没等到完成回执，留给人工核对');
+    return false;
+  }
+
+  /* 站点的阅读类任务点要“真的读过”：长文档只停在顶部或中部不算完成，
+     必须把内容滚到底。这里按视口一屏一屏往下滚，并派发 wheel 事件，
+     直到站点把任务点标成已完成；滚不动了就再等一会儿让它记账。 */
+  /* 每个文档的可滚容器按文档缓存：只在第一次遇到时量一遍，避免每次滚动都全量扫元素
+     （全量扫会反复触发排版，把整页拖慢——早期 PDF 卡顿就是这么来的）。 */
+  const scrollCache = new Map();
+  function scrollTargets(d) {
+    const cached = scrollCache.get(d);
+    if (cached) return cached;
+    let deep = [];
+    try {
+      /* 实训／文档／PPT 模块不在 /knowledge/cards 下，原来的判断只给 cards 扫内部容器，
+         这些页签就永远只滚根节点，站点不给记账（2026-10-22 审计）。这里对非顶层文档
+         按常见容器类名有上限地找一遍，最多 6 个。 */
+      const pool = d === document ? null : [...d.querySelectorAll('[class*="scroll"],[class*="content"],#content,main,article,body>div')];
+      if (pool) {
+        deep = pool.filter((el) => el.clientHeight > 80 && el.scrollHeight > el.clientHeight + 40).slice(0, 6);
+      } else {
+        deep = [...d.querySelectorAll('*')].filter((el) =>
+          el.clientHeight > 80 && el.scrollHeight > el.clientHeight + 40).slice(0, 6);
+      }
+    } catch { deep = []; }
+    scrollCache.set(d, deep);
+    return deep;
+  }
+
+  async function readThrough(maxMs = 45000) {
+    const started = Date.now();
+    const dl = started + maxMs;
+    let stuck = 0;
+    let scrollable = false; // 这一页有没有任何一个能滚的地方
+    live('阅读任务点：翻页中…');
+    while (on && Date.now() < dl) {
+      if (textJobsDone()) return true;
+      let moved = false;
+      for (const d of docs()) {
+        try {
+          const view = d.documentElement.clientHeight || 600;
+          const stepPx = Math.max(240, Math.floor(view * 0.85));
+          const targets = [d.scrollingElement || d.documentElement];
+          // 课程正文、PDF 预览器、实训模块都可能有自己的滚动容器
+          if (/\/knowledge\/cards/.test(d.URL || '')) {
+            targets.push(...[...d.querySelectorAll('*')].filter(el =>
+              el.clientHeight > 80 && el.scrollHeight > el.clientHeight + 40));
+          } else {
+            targets.push(...scrollTargets(d));
+          }
+          if (targets.some((el) => el && el.scrollHeight > el.clientHeight + 40)) scrollable = true;
+          for (const el of targets) {
+            if (!el) continue;
+            const before = el.scrollTop;
+            el.scrollTop = before + stepPx;
+            if (el.scrollTop > before) moved = true;
+            el.dispatchEvent(new WheelEvent('wheel', { deltaY: stepPx, bubbles: true }));
+          }
+        } catch { /* 跨域文档跳过 */ }
+      }
+      /* 空壳卡（附件区只有 100px 高的空 iframe、正文一个字都没有）滚不动，
+         以前照样空转满 45 秒，4 节×多轮全浪费在这上面。8 秒还没发现可滚区域就收工。 */
+      if (!scrollable && Date.now() - started > 8000) return textJobsDone();
+      if (moved) { stuck = 0; await step(800); continue; }
+      stuck++;
+      if (stuck >= 3) {
+        await step(4000); // 到底了：等站点上报
+        return textJobsDone();
+      }
+      await step(1500);
+    }
+    return textJobsDone();
   }
 
   /* ---------------- 目录：把课程所有任务点按页面顺序列出来 ---------------- */
@@ -315,7 +778,42 @@
         anchor: a,
       });
     }
+    /* 新版目录（2026-10-22 用户浏览器实测）：站点把目录画成 role=link 的 div/a 列表，
+       没有 .catalog_title/.checkbox。章节号是 8 位以上长数字，页面里的计数都是
+       两三位数，按长度区分；完成状态看文字（旧版绿 ✓ 的新版直接写「已完成」）。
+       解析不到 id 的行不收——宁可漏收让上层自愈，也不能拿错 id 跳错节。 */
+    if (!out.length) {
+      for (const el of document.querySelectorAll('[role="link"]')) {
+        const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!text) continue;
+        const html = el.outerHTML || '';
+        const m = /(?:chapterId|knowledgeid|knowledgeId|cid|data-id)[=:"'\\s]+(\d{8,})/.exec(html)
+          || /(\d{8,})/.exec(html);
+        if (!m) continue;
+        out.push({
+          id: m[1],
+          name: text.slice(0, 40),
+          done: /已完成/.test(text),
+          anchor: el.querySelector('a') || el,
+        });
+      }
+    }
     return out;
+  }
+
+  function fourWindow(entries, attempted = []) {
+    const four = entries.slice(0, 4);
+    if (four.length !== 4) return null;
+    const chapterIds = four.map(e => e.id);
+    if (four.every(e => e.done)) return { complete: true, chapterIds, exceptions: [] };
+    const exceptions = four.filter(e => !e.done && /口语/.test(e.name))
+      .map(e => ({ id: e.id, name: e.name }));
+    if (attempted.includes(0)) {
+      return four.every(e => e.done || exceptions.some(x => x.id === e.id))
+        ? { complete: true, chapterIds, exceptions }
+        : { incomplete: true, chapterIds, exceptions };
+    }
+    return { start: 0, chapterIds, left: four.filter(e => !e.done).length };
   }
 
   /* 进课程：点目录里第一个没做完的节点（真实点击，和用户自己点一样） */
@@ -363,6 +861,8 @@
      列表页 → 进第一门勾的课；课程目录页 → 点第一个没做完的节点；章节学习页 → 逐节刷。
      一门课走完再让后台跳到下一门。全程还是点站点自己的链接。 */
   let multi = null;
+  let lastEnterAt = 0; // 上一次切换章节的时间，用来卡 CHAPTER_GAP
+  let resumeRetry = 0; // 目录渲染慢时的接续重试次数
 
   async function askQueue() {
     try {
@@ -372,9 +872,85 @@
     return null;
   }
 
-  async function reportCourseDone(key) {
-    try { await chrome.runtime.sendMessage({ type: 'HW_WATCH_COURSE_DONE', payload: { key } }); }
+  async function reportCourseDone(key, details = {}) {
+    try { await chrome.runtime.sendMessage({ type: 'HW_WATCH_COURSE_DONE', payload: { key, ...details } }); }
     catch { /* 后台不在就只能停在这里 */ }
+  }
+
+  async function verifyFourFromCatalog(q, opts) {
+    const course = q.courses[q.index];
+    const entries = await until(() => catalogEntries().length ? catalogEntries() : null, 15000);
+    if (!entries) {
+      /* 目录没渲染先自愈一次：刷新后 resumeQueued 重入本函数（flag 防死循环）。 */
+      if (!sessionStorage.getItem('hwCatRetry')) {
+        try { sessionStorage.setItem('hwCatRetry', '1'); } catch { }
+        opts?.onNote?.('课程目录未渲染，刷新一次再核验');
+        setTimeout(() => location.reload(), 800);
+        return;
+      }
+      try { sessionStorage.removeItem('hwCatRetry'); } catch { }
+      const reason = '课程目录未加载，连续 4 节状态无法核验';
+      await chrome.runtime.sendMessage({ type: 'HW_WATCH_PAUSE', payload: { reason } });
+      opts?.onNote?.(reason);
+      return;
+    }
+    try { sessionStorage.removeItem('hwCatRetry'); } catch { }
+    const window = fourWindow(entries, course.attempted || []);
+    if (window?.complete) {
+      const exceptions = window.exceptions || [];
+      opts?.onNote?.(exceptions.length
+        ? `开头 4 节已核验；${exceptions.length} 个口语小节按例外跳过：${exceptions.map(e => e.name).join('、')}`
+        : `平台目录确认开头连续 4 节已完成：${window.chapterIds.join('、')}`);
+      await reportCourseDone(course.key, { status: exceptions.length ? 'complete_with_exceptions' : 'complete',
+        chapterIds: window.chapterIds, exceptions });
+      return;
+    }
+    if (!window || window.incomplete) {
+      /* attempted 里有 0，说明这门课之前跑过一轮。以前一律直接记「未达标」，
+         上一轮没跑完（关窗口、刷新、队列恢复）的课就被白白跳过——2026-10-21 实测：
+         openGauss 开头 4 节 22 个任务点被一句「记录为未达标」跳过去。
+         这里每门课再给一轮机会，跑完还缺才记未达标。 */
+      const ids = window?.chapterIds || [];
+      if (ids.length === 4) {
+        const retry = await chrome.runtime.sendMessage({ type: 'HW_WATCH_RETRY_ONCE', payload: { key: course.key } });
+        if (retry?.ok && retry.first) {
+          const saved = await chrome.runtime.sendMessage({ type: 'HW_WATCH_SCOPE_SET', payload: { key: course.key, start: 0, chapterIds: ids } });
+          if (saved?.ok) {
+            opts?.onNote?.('开头 4 节还没做完，本轮重新补一遍');
+            try { entries[0]?.anchor?.click(); } catch { opts?.onNote?.('未能打开第 1 节，请手动检查'); }
+            return;
+          }
+        }
+      }
+      opts?.onNote?.('课程开头 4 节仍有普通任务未完成，记录为未达标');
+      await reportCourseDone(course.key, { status: 'incomplete', chapterIds: ids });
+      return;
+    }
+    const saved = await chrome.runtime.sendMessage({ type: 'HW_WATCH_SCOPE_SET', payload: {
+      key: course.key, start: window.start, chapterIds: window.chapterIds } });
+    if (!saved?.ok) {
+      opts?.onNote?.('保存连续小节范围失败：' + (saved?.error || '未知错误'));
+      return;
+    }
+    opts?.onNote?.(`从课程开头处理前 4 节（尚未完成 ${window.left} 节）`);
+    const target = entries[window.start].anchor;
+    try { target.click(); } catch { opts?.onNote?.('未能打开选定小节，请手动检查'); }
+  }
+
+  async function returnToCatalog() {
+    const cur = currentCourse();
+    if (!cur) return false;
+    const back = [...document.querySelectorAll('a[href]')].find(a => {
+      if (!visible(a) || (a.textContent || '').trim() !== '返回课程') return false;
+      try {
+        const url = new URL(a.href);
+        return /\/mycourse\/stu$/.test(url.pathname) &&
+          `${url.searchParams.get('courseid') || url.searchParams.get('courseId')}|${url.searchParams.get('clazzid')}` === cur.key;
+      } catch { return false; }
+    });
+    if (back) { back.click(); return true; }
+    const r = await chrome.runtime.sendMessage({ type: 'HW_WATCH_OPEN_CATALOG', payload: { url: cur.scUrl } });
+    return !!r?.ok;
   }
 
   /* 等某个条件成立（页面是 JS 画的，脚本跑起来时目录常常还没渲染出来） */
@@ -394,6 +970,17 @@
     const q = await askQueue();
     if (!q) return false;
     multi = q;
+    try { checkVerification(); }
+    catch (e) {
+      if (e.code !== 'HW_VERIFICATION_REQUIRED') throw e;
+      await chrome.runtime.sendMessage({ type: 'HW_WATCH_PAUSE', payload: { reason: e.message } });
+      q.paused = e.message;
+    }
+    if (q.paused) {
+      opts?.onNote?.(q.paused);
+      opts?.onLive?.('已暂停：' + q.paused);
+      return true;
+    }
     if (/\/mycourse\/stu$/.test(location.pathname)) {
       const tab = await until(() => [...document.querySelectorAll('a,button,li,span,div')]
         .find(el => visible(el) && el.textContent.replace(/\s+/g, ' ').trim() === '章节'), 12000);
@@ -404,29 +991,76 @@
       if (frame) {
         const result = await chrome.runtime.sendMessage({ type: 'HW_WATCH_OPEN_CATALOG', payload: { url: frame.src } });
         if (!result?.ok) opts?.onNote?.('课程目录未能打开，保留队列：' + (result?.error || '页面未就绪'));
-      } else opts?.onNote?.('课程首页没有加载章节目录，保留队列，请手动打开章节');
+      } else {
+        /* 章节页签/目录 iframe 没加载出来：以前只留一句 note 就死等人工。
+           先自愈刷新一次（flag 防死循环），刷新后 resumeQueued 重入。 */
+        if (!sessionStorage.getItem('hwStuRetry')) {
+          try { sessionStorage.setItem('hwStuRetry', '1'); } catch { }
+          opts?.onNote?.('课程首页章节目录未就绪，刷新一次再试');
+          setTimeout(() => location.reload(), 800);
+          return true;
+        }
+        try { sessionStorage.removeItem('hwStuRetry'); } catch { }
+        opts?.onNote?.('课程首页没有加载章节目录，保留队列，请手动打开章节');
+      }
       return true;
     }
     // 章节目录常在 document_idle 之后才由站点画出来，不能把暂时的 other 当成不用接续。
     const kind = await until(() => {
       const k = pageKind();
       return k === 'study' || k === 'catalog' ? k : null;
-    }, 15000);
+    }, 20000);
     if (kind === 'catalog') {
-      const next = await until(() => enterCourse(), 12000);
-      if (!next) await reportCourseDone(q.courses[q.index] && q.courses[q.index].key);
+      if (q.targetRun === 4) {
+        await verifyFourFromCatalog(q, opts);
+        return true;
+      }
+      const next = await until(() => enterCourse(), 15000);
+      if (!next) {
+        /* 目录解析成功才算这门课走完；解析为空多半是新版目录/渲染慢，
+           刷新一次自愈（flag 防死循环），不能把整门课静默跳过（昨晚漏 12 节的根因之一）。 */
+        if (catalogEntries().length) await reportCourseDone(q.courses[q.index] && q.courses[q.index].key);
+        else if (!sessionStorage.getItem('hwCatRetry')) {
+          try { sessionStorage.setItem('hwCatRetry', '1'); } catch { }
+          opts?.onNote?.('目录未解析出节点，刷新一次再试');
+          setTimeout(() => location.reload(), 800);
+        }
+      }
       return true;
     }
     if (kind === 'study') {
-      const ok = await until(() => nodes().length > 0, 15000);
+      if (q.targetRun === 4 && !q.courses[q.index]?.chapterIds?.length) {
+        await returnToCatalog();
+        return true;
+      }
+      /* 目录是站点异步画的，偶尔比脚本慢很多。以前等 15 秒就放弃，整轮就停在这一页不动
+         （2026-10-21 实测：换了章节后队列直接摆烂）。改成等 45 秒，还不行就过几秒重试，
+         最多 3 次；真拿不到才报错保留队列。 */
+      const ok = await until(() => nodes().length > 0, 45000);
       if (!ok) {
         const o = opts || {};
+        if (resumeRetry < 3) {
+          resumeRetry += 1;
+          if (o.onNote) o.onNote(`目录还没出来，${resumeRetry}/3 次重试接续`);
+          setTimeout(() => { resumeQueued(opts).catch(() => { }); }, 6000);
+          return true;
+        }
+        resumeRetry = 0;
         if (o.onNote) o.onNote('这一页没等到目录，保留队列，请刷新后接续');
         return true;
       }
-      start({ rate: q.rate, autoRate: q.autoRate, onLive: opts && opts.onLive, onNote: opts && opts.onNote, onStop: opts && opts.onStop });
+      resumeRetry = 0;
+      start({ rate: q.rate, autoRate: q.autoRate, chapterIds: q.courses[q.index]?.chapterIds,
+        onLive: opts && opts.onLive, onNote: opts && opts.onNote, onStop: opts && opts.onStop });
       return true;
     }
+    /* 页面还没进入可用状态（刚跳转/还在画）：也给一次延迟重试的机会。 */
+    if (resumeRetry < 3) {
+      resumeRetry += 1;
+      setTimeout(() => { resumeQueued(opts).catch(() => { }); }, 6000);
+      return true;
+    }
+    resumeRetry = 0;
     return false;
   }
 
@@ -437,19 +1071,18 @@
   let lastRateTry = 0;
   let rateBusy = false;
   let menuSupport = null; // null=还没确认；true=菜单里有这档；false=没有
-  let seekTried = false; // 每个视频只试一次「能不能拖进度条」
   let menuClickedRate = 0; // 已经用播放器菜单切到过的档位，用来避免反复点菜单
 
   /* 找倍速菜单里对应的那一项。菜单项文本形如 "2x" / "1.5x" / "1x, 选择"，
      字幕那几项的文本以中文开头，正则匹配不到，不会点错。
      只认展开后看得见的项：菜单没打开时 videojs 里的项点在隐藏容器里，点了不算数。 */
-  function menuItem(want, root) {
+  function menuItem(want, root, loose) {
     for (const d of root ? [root] : docs()) {
       let items;
       try { items = d.querySelectorAll('.vjs-menu-item'); } catch { continue; }
       for (const li of items) {
         const m = /^([\d.]+)\s*x/i.exec((li.textContent || '').trim());
-        if (m && Math.abs(Number(m[1]) - want) < 0.01 && visible(li)) return li;
+        if (m && Math.abs(Number(m[1]) - want) < 0.01 && (loose || visible(li))) return li;
       }
     }
     return null;
@@ -470,9 +1103,11 @@
     return max;
   }
 
-  /* 切倍速：优先点播放器自己的菜单项（等于用户手点一遍），菜单里没这档才退回写 playbackRate。
-     autoRate 时不看用户选的数字，直接跟播放器菜单里最高那一档走——
-    多数课只给到 2x，选 4x 没有意义（用户 2026-10-19 反馈）。 */
+  /* 每个视频、每个目标档位只尝试一次原生菜单；不强写倍速，不与站点重置拉扯。
+     站点偶尔会把 playbackRate 重置回 1x，所以允许「再纠正 2 次、间隔 45 秒」，
+     既不放弃速度，也不会变成每 500ms 弹一次菜单的机器行为。 */
+  let rateFixes = 0;
+  let rateNoted = false; // 已经提示过「这门没有倍速」，只提示一次
   async function applyRate(v) {
     if (!v || v.ended) return;
     if (autoRate) {
@@ -480,14 +1115,14 @@
       if (m && Math.abs(m - rate) > 0.01) rate = m;
     }
     if (Math.abs(v.playbackRate - rate) < 0.01) return; // 已经是目标倍速
-    /* 想用播放器自己的菜单切一次（等于用户手点一遍），但每种倍速只点一次：
-       点过之后再被播放器重置就直接写 playbackRate —— 既不会每轮都把菜单弹出来，
-       又能守住倍速（videojs 换源后会把 rate 打回 1，那时菜单项也已经是选中态，点了没用）。 */
-    const wantMenu = menuSupport !== false && Math.abs(menuClickedRate - rate) > 0.01;
+    const driftedRetry = rateFixes < 3 && Date.now() - lastRateTry >= 20000;
+    const wantMenu = menuSupport !== false && (Math.abs(menuClickedRate - rate) > 0.01 || driftedRetry);
     // 菜单路线：限速 2.5s 一次，免得每 500ms 把播放器菜单弹一遍
     if (wantMenu && !rateBusy && Date.now() - lastRateTry >= 2500) {
       lastRateTry = Date.now();
+      menuClickedRate = rate;
       rateBusy = true;
+      rateFixes += 1;
       let toggle = null;
       let opened = false;
       let clicked = false;
@@ -500,8 +1135,11 @@
           if (!item) {
             try { toggle.click(); } catch { /* 控件可能正被重建 */ }
             opened = true;
-            await wait(150);
+            await wait(350);
             item = menuItem(rate, v.ownerDocument);
+            /* 有的皮肤给菜单容器加了 transition，350ms 还量不到尺寸（宽高为 0），
+               但项本身是存在的、点了就生效 —— 这时候放宽可见性要求再找一次。 */
+            if (!item) item = menuItem(rate, v.ownerDocument, true);
           }
           if (item) {
             menuSupport = true;
@@ -511,6 +1149,12 @@
             await wait(150);
           } else {
             menuSupport = false; // 站点菜单里确实没有这一档
+            /* 有的课播放器把倍速菜单整个留空（站点按课程配置关掉了），
+               这时候只能按 1x 播；提一句就够，别每个视频都念一遍。 */
+            if (!rateNoted) {
+              rateNoted = true;
+              note('这门的播放器没提供倍速选项（站点限制），按 1x 播放');
+            }
           }
         }
       } finally {
@@ -520,31 +1164,34 @@
       if (Math.abs(v.playbackRate - rate) < 0.01) return; // 点菜单就生效了
       if (opened && !clicked && toggle) { try { toggle.click(); } catch { /* 菜单关不上就算了 */ } }
     }
-    try { v.playbackRate = rate; } catch { /* 个别内核拒绝超范围值，下轮再试 */ }
   }
 
   /* 让视频播起来：只点播放器自己的播放按钮（用户手点的等价动作）。
      浏览器在「没有用户手势」的页面（比如脚本自己 F5 之后）会拦掉 play()，
-     这时点多少遍都没用，所以连续失败到上限就停手、只提示一次，不再每 2 秒弹一条
+     这时点多少遍都没用，所以最多尝试两次后停手、只提示一次
     （真实页面 2026-10-20 实测：F5 后连刷 9 条「视频点不起来」）。 */
   function kick(v) {
     if (!v || v.ended || !v.paused) return;
     if (kickFails >= MAX_KICK_FAIL) return; // 已经放弃这一节，别再点
-    if (Date.now() - lastKick < 1500) return; // tick 很密，别一直重试
+    if (Date.now() - lastKick < 4000) return;
     lastKick = Date.now();
     try { v.muted = muted; } catch { /* 静音设不上也不影响后面点按钮 */ }
-    const btn = pick('.vjs-big-play-button', v.ownerDocument) || pick('.vjs-play-control', v.ownerDocument);
+    const doc = v.ownerDocument;
+    const btn = pick('.vjs-big-play-button', doc) || pick('.vjs-play-control', doc);
     if (btn) { try { btn.click(); } catch { /* 控件可能正好被重建，忽略 */ } }
     setTimeout(() => {
       if (!on || !v.paused) { kickFails = 0; return; }
-      if (++kickFails >= MAX_KICK_FAIL) {
-        note('视频点不起来：请在页面里点一下播放（这一节先跳过）');
-        return;
-      }
-      try {
-        const p = v.play();
-        if (p) p.catch(() => { /* 还是被拦就只能等用户手点 */ });
-      } catch { /* 直接调也失败就只能等用户手点 */ }
+      /* 有的课把播放按钮画在 canvas 里、或者被遮罩挡住，点按钮没反应。
+         再点一次画面本身——原生播放器点画面就是播放/暂停，仍然是模拟点击，
+         不改任何播放器状态（2026-10-21 赌徒的困惑实测：按钮点了两轮还在 37 秒停着）。 */
+      try { v.click(); } catch { /* 画面被别的层盖住时忽略 */ }
+      setTimeout(() => {
+        if (!on || !v.paused) { kickFails = 0; return; }
+        if (++kickFails >= MAX_KICK_FAIL) {
+          note('视频点不起来：已停止，请在页面里手动播放后继续');
+          stop();
+        }
+      }, 1200);
     }, 900);
   }
 
@@ -575,25 +1222,9 @@
     for (const v of allVideos()) v.muted = muted;
   }
 
-  /* 有些课的进度条是能拖的：站点只看「看过」，不逐秒校验时长。
-     试一次跳到最后，1.2 秒后看有没有被弹回去——弹回去就是不让拖，老老实实播完。
-     每个视频只试一次，免得跟 seekBarControl 插件反复拉扯。 */
-  async function maybeSeek(v) {
-    if (seekTried || !v || !isFinite(v.duration) || v.duration < 60) return;
-    seekTried = true;
-    const ctrl = pick('.vjs-progress-control', v.ownerDocument);
-    if (!ctrl) return;
-    if (ctrl && /vjs-disabled/.test(ctrl.className)) return; // 站点自己把进度条禁了
-    const target = v.duration * 0.98;
-    const bar = ctrl.querySelector('.vjs-progress-holder') || ctrl;
-    const rect = bar.getBoundingClientRect();
-    if (!rect.width) return;
-    const Mouse = v.ownerDocument.defaultView.MouseEvent;
-    const point = { bubbles: true, clientX: rect.left + rect.width * 0.98, clientY: rect.top + rect.height / 2, button: 0 };
-    for (const type of ['mousedown', 'mouseup', 'click']) bar.dispatchEvent(new Mouse(type, point));
-    await step(1200);
-    if (v.currentTime >= target - 3) note('这一节能拖进度条，已跳到最后');
-    else note('这一节不让拖进度条，正常播完');
+  function setRate(value, automatic = false) {
+    rate = Math.min(16, Math.max(0.25, Number(value) || 2));
+    autoRate = !!automatic;
   }
 
   /* ---------------- 页签：切到第 n 个，并等它加载完 ---------------- */
@@ -602,6 +1233,8 @@
     const li = tabList()[tabIndex];
     if (!li) return false;
     if (!tabActive(li)) {
+      /* 页签切换也给个随机停顿：同一节里连点四个页签太像脚本。 */
+      await step(jitter(TAB_GAP));
       try { li.click(); } catch { return false; }
       await step(TAB_WAIT);
     } else {
@@ -611,6 +1244,7 @@
     if (!frame) return true;
     const chapter = activeChapterId();
     const deadline = Date.now() + 45000;
+    let softUntil = 0;
     while (on && Date.now() < deadline) {
       frame = document.querySelector('#iframe');
       let card;
@@ -618,9 +1252,20 @@
       if (card?.body && card.readyState === 'complete') {
         const url = new URL(card.URL, location.href);
         const expected = new URL(frame.src || location.href, location.href);
-        if (frame.hasAttribute('srcdoc') || !expected.pathname.includes('/knowledge/cards') ||
-            (url.pathname.includes('/knowledge/cards') && url.searchParams.get('knowledgeid') === chapter && Number(url.searchParams.get('num')) === tabIndex)) {
+        if (frame.hasAttribute('srcdoc')) return true;
+        const isCards = expected.pathname.includes('/knowledge/cards');
+        if (isCards && url.pathname.includes('/knowledge/cards') &&
+            url.searchParams.get('knowledgeid') === chapter && Number(url.searchParams.get('num')) === tabIndex) {
           return true;
+        }
+        if (!isCards) {
+          /* 实训／实验／投票这类不是 cards 模块。原来这里立刻返回 true，页签内容还没画出来
+             就被当成「处理过了」——openGauss 的【练】页签就是这样空过的（2026-10-22 审计）。
+             改成等正文真的出现，最多 8 秒；等不到也放行，不能让一个模块把整轮拖住。 */
+          if (!softUntil) softUntil = Date.now() + 8000;
+          const body = (card.body.innerText || '').trim();
+          if (body.length > 20 || card.querySelector('video,audio,iframe,form,input,canvas')) return true;
+          if (Date.now() > softUntil) return true;
         }
       }
       await step(300);
@@ -645,12 +1290,14 @@
   /* ---------------- 主循环 ---------------- */
 
   let on = false;
+  let scopeChapters = null;
   let gen = 0; // 每次 start/stop 自增：旧循环发现代号变了就自己退出
   let rate = 2;
   let courseTiming = null;
   let autoRate = false; // 倍速跟播放器菜单里最高档走，不看用户选的数字
   let muted = true;
   let guard = 0; // 只在看视频时开着的守倍速定时器
+  let lastForegroundAsk = 0; // 上一次请求「把窗口提到前台」的时间，防重复打扰
   let stopGuard = 0; // 停止后守 5 秒，防止站点自己把播放接回去
   let live = () => {};
   let note = () => {};
@@ -661,6 +1308,7 @@
     const my = gen;
     await wait(ms);
     if (!on || my !== gen) throw STOP;
+    checkVerification();
   }
 
   async function watchVideo() {
@@ -672,6 +1320,7 @@
        的又是没播完的状态，everEnded 永远置不上位，脚本陪着同一个视频无限
        重播（1.2 节 9:45 的视频实测连播 5 轮都不前进，2026-10-20）。
        所以同时挂 ended 事件监听，事件一定接得住。 */
+    let lastBeatAt = 0; // 上一次写「播放中」心跳的时间，只用来让人看出脚本还活着
     const endedEls = new Set(); // 播完过的视频元素，用来识别「同一个又重播」
     const hooked = new Set();
     let myGuard = 0;
@@ -700,16 +1349,17 @@
       clearInterval(guard);
       // 每次只操作尚未播完的视频，播放器控件限定在该视频的 iframe 中。
       myGuard = setInterval(() => {
-        if (!on) return;
+        if (!on || document.hidden) return;
         const v = findVideo(endedEls);
         if (!v) return;
         if (v.paused) kick(v); else kickFails = 0;
         applyRate(v);
       }, TICK);
       guard = myGuard;
-      let giveUpSince = 0;
       let current = null;
-      let videoStarted = 0;
+      let lastPosition = 0;
+      let lastAdvance = 0;
+      let hiddenSince = 0;
       while (on) {
         if (chapter && activeChapterId() !== chapter) return false;
         hookEnded();
@@ -718,27 +1368,54 @@
         if (v) {
           if (v !== current) {
             current = v;
-            giveUpSince = 0;
-            videoStarted = Date.now();
+            lastPosition = v.currentTime;
+            lastAdvance = Date.now();
             kickFails = 0; lastKick = 0; lastRateTry = 0;
-            menuSupport = null; menuClickedRate = 0; seekTried = false;
+            menuSupport = null; menuClickedRate = 0; rateFixes = 0;
             try { v.ownerDocument.defaultView.frameElement?.scrollIntoView({ block: 'center' }); } catch { /* 框架刚换页 */ }
           }
-          if (!seekTried) await maybeSeek(v);
-          const pct = v.duration ? Math.round((v.currentTime / v.duration) * 100) : 0;
-          live(`${fmtRate(rate)}x ${pct}%`);
-          await applyRate(v);
-          /* 自动播放被浏览器拦掉时（脚本自己 F5 之后没有用户手势），点多少遍播放都
-             没用。放弃后赶紧离开这一节，别把整门课堵在这儿（真实页面 2026-10-20 实测）。 */
-          if (v.paused && kickFails >= MAX_KICK_FAIL && !(v.readyState === 0 && !v.error && Date.now() - videoStarted < 60000)) {
-            if (!giveUpSince) giveUpSince = Date.now();
-            else if (Date.now() - giveUpSince > 4000) {
-              note('这一节自动播放被拦，跳过');
+          if (v.currentTime > lastPosition + 0.2) {
+            lastPosition = v.currentTime;
+            lastAdvance = Date.now();
+          }
+          if (document.hidden && v.paused) {
+            /* 窗口恢复不了前台（用户在别的窗口打字/系统拒绝拉起）会无限等——
+               10 分钟还回不来就停止并保留队列，交给自动接续，别把整轮挂死。 */
+            if (!hiddenSince) hiddenSince = Date.now();
+            if (Date.now() - hiddenSince > 600000) {
+              note('课程窗口超过 10 分钟回不到前台，停止并保留队列，稍后自动接续');
+              stop();
               return false;
             }
-          } else {
-            giveUpSince = 0;
+            lastAdvance = Date.now();
+            live('课程窗口不可见，等待恢复后续播');
+            /* 页面被切到后台/窗口被最小化时，站点自己会暂停播放，内容脚本也点不动。
+               无人值守时没人来恢复窗口，整轮就卡死在这里（2026-10-21 实测两次）。
+               交给后台把队列标签页重新提到前台：只做一次，两分钟内不重复打扰。 */
+            if (Date.now() - lastForegroundAsk > 120000) {
+              lastForegroundAsk = Date.now();
+              chrome.runtime.sendMessage({ type: 'HW_WATCH_FOREGROUND' }).catch(() => {});
+              note('课程窗口被切到后台，已请求恢复到前台续播');
+            }
+            await step(1000);
+            continue;
           }
+          hiddenSince = 0;
+          if (v.error || Date.now() - lastAdvance >= 150000) {
+            note(v.error ? '播放器错误，已停止并保留队列，请核对页面' : '播放停滞超过150秒（可能网络卡住），已停止并保留队列，稍后会自动接续');
+            stop();
+            return false;
+          }
+          const pct = v.duration ? Math.round((v.currentTime / v.duration) * 100) : 0;
+          live(`${fmtRate(v.playbackRate)}x ${pct}%`);
+          /* 长时间播放时日志一行不动，看着像卡死（用户 2026-10-21 直接问了「卡了你知道不」）。
+             每分钟记一行心跳，带上还剩多少时间，让人一眼看出它活着。 */
+          if (Date.now() - lastBeatAt > 60000) {
+            lastBeatAt = Date.now();
+            const rest = v.duration ? Math.max(0, Math.round((v.duration - v.currentTime) / (v.playbackRate || 1) / 60)) : null;
+            note(`播放中：${fmtRate(v.playbackRate)}x ${pct}%${rest != null ? `（本视频还剩约 ${rest} 分钟）` : ''}`);
+          }
+          await applyRate(v);
         } else {
           /* 没有可守的视频了：要么全部播完（返回成功），要么本来就没有（等不到）。
              everEnded 已由 ended 事件置位，不受轮询窗口漏检影响。 */
@@ -823,6 +1500,7 @@
       const score = text.match(/本次成绩\s*([\d.]+)\s*分/);
       const total = text.match(/满分\s*[:：]?\s*([\d.]+)/);
       if (score && total) return { score: Number(score[1]), total: Number(total[1]),
+        attempt: Number(text.match(/第\s*(\d+)\s*次作答/)?.[1]) || null,
         question: d.querySelector('.TiMu .fontLabel,.mark_name')?.innerText || '',
         answer: text.split('我的答案：')[1]?.slice(0, 1200) || '' };
     }
@@ -839,6 +1517,10 @@
       note('测验页：没找到「提交」按钮，这一节不算完成');
       return false;
     }
+    /* 填完先停一会儿再提交：真实用户不会瞬间交卷，固定零延迟也是机器特征。 */
+    live('测验页：检查完再提交…');
+    await step(jitter(SUBMIT_GAP));
+    if (!on) return false;
     try { btn.click(); } catch { note('测验页：提交按钮点不动'); return false; }
     live('测验页：提交中…');
     // 站点会弹一层「确认提交？」对话框，按钮是「确定」（不是「提交」）
@@ -846,11 +1528,26 @@
       await step(500);
       const yes = findConfirm();
       if (yes) {
+        await step(jitter(1200)); // 确认框也停一下再点，别零延迟
         try { yes.click(); } catch { /* 对话框可能刚被换掉 */ }
         await step(1500);
         const okText = docs().map((d) => d.body?.innerText || '').join(' ');
         if (/任务点已完成|已完成/.test(okText)) note('测验页：已提交，任务点已完成');
         else note('测验页：已点提交，结果请在页面上核对');
+        let grade = quizGrade();
+        for (let check = 0; check < 10 && on && !grade; check++) { await step(250); grade = quizGrade(); }
+        if (grade) {
+          note(`测验成绩：${grade.score}/${grade.total}`);
+          // 内层作业iframe的load事件不跨文档冒泡，不能只靠顶层load监听记录丢分。
+          HW.Panel?.reportGrade?.();
+          /* 用户 2026-10-22 明确「先刷完，不强求正确率」：低分只记日志，不再暂停整轮
+             （留空提交的卷子分数必然低，暂停只会让任务点永远计不上）。 */
+          if (multi?.targetRun === 4 && grade.total > 0 && grade.score / grade.total < .8) {
+            note(`测验仅得 ${grade.score}/${grade.total}（低于 80%）。按「先刷完」约定不暂停，错题自己回头核对`);
+          }
+        } else if (multi?.targetRun === 4) {
+          note('测验已提交但成绩尚未返回，继续下一节');
+        }
         return true;
       }
     }
@@ -887,8 +1584,17 @@
       const r = await P.runHomework({ timeout: QUIZ_TIMEOUT });
       note('测验页：' + (r || '已填写'));
     } catch (e) {
-      note('测验页：' + ((e && e.message) || e));
-      stop();
+      /* 这一份测验读不出来（字形无法唯一还原、图片题、结构不认识…）：
+         不提交、也不算完成，但**不要停整轮**——停下来就永远刷不完剩下的课，
+         而限定的这几节本来就有「补刷一轮、仍不行就记下继续」的兜底。
+         真正需要人来的只有验证码，那条在 checkVerification 里会暂停。（2026-10-21） */
+      note('测验页：这份跳过，不提交 —— ' + ((e && e.message) || e));
+      try {
+        await chrome.runtime.sendMessage({
+          type: 'HW_ISSUE_ADD',
+          payload: { stage: '刷课测验', message: String((e && e.message) || e).slice(0, 120) },
+        });
+      } catch { /* 记不上也要继续往下走 */ }
       return false;
     }
     if (!on) return;
@@ -937,14 +1643,14 @@
   }
 
   function discussText(cur, excerpt) {
-    return `学习了「${cur.name}」这一节。` +
+    return `学习了「${shortName(cur.name)}」这一节。` +
       (excerpt ? `材料里提到：${excerpt}。` : '') +
       '我的体会是：把这些道理放到自己的学习和生活里对照，从小事做起，慢慢就有自己的理解。';
   }
 
   async function runDiscuss(cur) {
     if (postedSet().has(String(cur.id))) {
-      note(`讨论：这一节发过帖子了，不重复发：${cur.name}`);
+      note(`讨论：这一节发过帖子了，不重复发：${shortName(cur.name)}`);
       return;
     }
     const tit2 = document.querySelector('#tit2');
@@ -985,7 +1691,7 @@
       try { btn.click(); } catch { note('讨论页：回复按钮点不动'); return; }
       await step(1200);
       rememberPosted(cur.id);
-      note(`讨论：已在「${cur.name}」回复了一条讨论`);
+      note(`讨论：已在「${shortName(cur.name)}」回复了一条讨论`);
       return;
     }
     const newBtn = document.querySelector('#content2 .newTopic_bnt');
@@ -1008,15 +1714,22 @@
       try { pub.click(); } catch { note('讨论页：发布按钮点不动'); return; }
       await step(1500);
       rememberPosted(cur.id);
-      note(`讨论：已在「${cur.name}」发了一条新话题`);
+      note(`讨论：已在「${shortName(cur.name)}」发了一条新话题`);
       return;
     }
     note('讨论页：这一节没有可发的讨论（可能只许老师发帖），跳过');
   }
 
-  async function courseLoop(pass = 0) {
+  async function courseLoop() {
     const my = gen;
-    const list = nodes();
+    checkVerification();
+    const catalog = nodes();
+    let list = scopeChapters ? catalog.filter(n => scopeChapters.has(n.id)) : catalog;
+    if (scopeChapters && list.length !== scopeChapters.size) {
+      note('本次限定的小节未完整加载，停止并保留队列，请刷新目录后核对');
+      stop();
+      return;
+    }
     if (!list.length) {
       note('这个页面上没找到课程目录（需要停在章节学习页）');
       stop();
@@ -1035,7 +1748,7 @@
     let timing = timingKey ? (await chrome.storage.local.get(timingKey).catch(() => ({})))[timingKey] : null;
     courseTiming = timing;
     const leftText = () => {
-      const jobs = remainingJobs();
+      const jobs = scopeChapters ? list.reduce((sum, n) => sum + (unfinishedOf(n.id) || 0), 0) : remainingJobs();
       if (!jobs) return '剩余：快了';
       const elapsed = (Date.now() - startedAt) / 1000;
       const done = Math.max(1, list.length ? (i + skipped) : 1);
@@ -1048,8 +1761,13 @@
       for (const n of list) { if (unfinishedOf(n.id) !== null) return true; }
       return false;
     };
-    note(`从第 1/${list.length} 节开始（从头刷）· ${leftText()}`);
-    while (on && my === gen && i < list.length) {
+    note(`${scopeChapters ? `本次限定 ${list.length} 个小节` : `从第 1/${list.length} 节开始（从头刷）`}· ${leftText()}`);
+    for (let pass = 0; pass < 2; pass++) {
+      i = 0;
+      skipped = 0;
+      while (on && my === gen && i < list.length) {
+      checkVerification();
+      await dismissUnfinishedDialog(); // 挡在切节前的「还有任务点未完成」提示，选「去学习」
       const cur = list[i];
       if (unfinishedOf(cur.id) === 0) {
         skipped++;
@@ -1060,15 +1778,34 @@
       const chapterStartedAt = Date.now();
       const nowId = activeChapterId();
       if (nowId !== cur.id) {
-        live(`进入 ${cur.name}`);
+        live(`进入 ${shortName(cur.name)}`);
+        /* 章节之间留足间隔：用户 2026-10-21 反馈连续快速切页容易被平台风控。 */
+        const gap = CHAPTER_GAP - (Date.now() - lastEnterAt);
+        if (lastEnterAt && gap > 0) {
+          const waitMs = jitter(gap);
+          live(`等待 ${Math.ceil(waitMs / 1000)} 秒再进入下一节…`);
+          await step(waitMs);
+        }
+        lastEnterAt = Date.now();
         if (!clickNode(cur.id)) {
           note(`第 ${i + 1} 节目的项找不到了，停止`);
           stop();
           return;
         }
         const dl = Date.now() + NODE_WAIT;
-        while (on && activeChapterId() !== cur.id && Date.now() < dl) await step(300);
+        let blocked = false;
+        while (on && activeChapterId() !== cur.id && Date.now() < dl) {
+          /* 站点有时不让离开还有任务点的章节，弹「是否去完成」挡住切节。
+             点掉它（去学习）；被拦住的这一节本轮先放弃，别把整轮停在这里。 */
+          if (await dismissUnfinishedDialog()) blocked = true;
+          await step(300);
+        }
         if (activeChapterId() !== cur.id) {
+          if (blocked) {
+            note(`站点拦住切节（本节还有任务点），先跳过第 ${i + 1} 节，本轮结束再补`);
+            i++;
+            continue;
+          }
           note(`第 ${i + 1} 节没打开，停止`);
           stop();
           return;
@@ -1077,9 +1814,28 @@
       }
       // 三个页签依次过；有「本章讨论」页签（dct4）的节多走一个
       let jumped = false; // 页面转去了别的章节（站点自动下一节 / 用户手动点节）
+      /* 换节后站点会重建页签条，偶尔比 activeChapterId 晚一拍。以前这里直接取长度，
+         拿到 0 就一个页签都不走、整节被跳过——2026-10-21 实测：openGauss 任务1.2
+         明明还有 9 个任务点，日志里 0 秒就「检查完」了。等它画出来再数。 */
+      await until(() => (tabList().length ? true : null), 12000);
       const tabs = tabList().length;
-      for (let t = 0; t < tabs && on; t++) {
-        if (!(await goto(t))) break;
+      if (!tabs) {
+        note(`第 ${i + 1} 节的页签没加载出来，先跳过：${shortName(cur.name)}`);
+        i++;
+        continue;
+      }
+      let tabFail = 0;
+      for (let t = 0; on && t < tabList().length; t++) {
+        /* 切页签前先处理站点的「还有任务点未完成」提示框：它盖在整页上，
+           不点掉的话后面的点击全落在遮罩上，表现为「卡住」或「被带到下一节」。 */
+        await dismissUnfinishedDialog();
+        /* 页签数每轮重算：站点换卡会重建 .prev_ul，早先取的长度会过期（2026-10-22 审计）。
+           单个页签超时不再直接 break 掉剩下的页签，最多容忍一个。 */
+        if (!(await goto(t))) {
+          if (++tabFail < 2) { note(`页签 ${t + 1} 没加载出来，先试下一个`); continue; }
+          note('页签连续加载失败，本节剩余页签先跳过');
+          break;
+        }
         if (activeChapterId() !== cur.id) {
           /* 页面自己跳走了：站点看完视频自动进下一节（正常推进），或者用户手动
              点了目录里别的节。两种都认账——转去处理当前打开的这一节，别把
@@ -1088,23 +1844,63 @@
           jumped = true;
           break;
         }
+        const rendered = await ensureCardRendered(t);
+        if (activeChapterId() !== cur.id) {
+          jumped = true;
+          break;
+        }
+        if (!rendered) {
+          live(`${shortName(cur.name)}｜第 ${t + 1} 页是空壳卡，跳过`);
+          continue;
+        }
         const kind = classify();
-        live(`${cur.name}｜${tabList()[t]?.textContent.trim() || '任务'}`);
+        live(`${shortName(cur.name)}｜${tabList()[t]?.textContent.trim() || '任务'}`);
         if (kind === 'video') {
           /* 视频早就看完、剩下的是「本章讨论」这类别的任务点的节，不重看视频——
              站点在任务点角标的父元素上挂 .ans-job-finished，照抄它的判定
              （5.3 节 2026-10-20 实测：每次路过都把 15 分钟的视频重看一遍）。 */
           if (videoJobsDone()) {
-            note(`这一节视频都已完成，不重看：${cur.name}`);
+            note(`这一节视频都已完成，不重看：${shortName(cur.name)}`);
           } else {
             const done = await watchVideo();
             if (!done) note('视频没播完就离开了');
-            else note(`视频看完：${cur.name}`);
+            else note(`视频看完：${shortName(cur.name)}`);
             await step(1200);
           }
           if (activeChapterId() !== cur.id) {
             jumped = true;
             break; // 站点自动进下一节
+          }
+        } else if (kind === 'text' && bbsCard()) {
+          /* 讨论任务点：用户 2026-10-22 反馈「讨论点不会打开」。点开话题页、回一条
+             切题短帖（bbs.js 在话题页里完成），这里等平台把角标翻绿再算完成。
+             回帖成功后站点会重绘卡片区、甚至自己跳到下一个页签，紧接着再查
+             bbsCard() 常常是空的。2026-10-23 实测：原来每节因此只做掉一张卡。
+             这里回到本页签重新取卡，直到真的没有待完成卡；最多 12 张封顶。 */
+          let bbsTries = 0;
+          while (on && activeChapterId() === cur.id && bbsTries++ < 12) {
+            if (!bbsCard()) {
+              if (!(await goto(t))) break;
+              if (!(await until(() => bbsCard(), 8000))) break;
+            }
+            if (!(await openBbsCard())) { note(`讨论没能自动完成：${shortName(cur.name)}`); break; }
+            note(`讨论已回帖：${shortName(cur.name)}`);
+          }
+          await step(1200);
+          if (activeChapterId() !== cur.id) {
+            jumped = true;
+            break;
+          }
+        } else if (kind === 'text' && surveyCard()) {
+          /* 学情调查／调查问卷：用户 2026-10-21 明确要求本人能填的问卷也要做。
+             页面读不到问卷内部，靠 survey.js 在问卷页自己那一帧填写提交，
+             这里只等目录角标归零（平台回执）再算完成。 */
+          if (await openSurveyCard()) note(`问卷已提交：${shortName(cur.name)}`);
+          else note('问卷没能在 60 秒内计上完成，留给人工核对：' + cur.name);
+          await step(1200);
+          if (activeChapterId() !== cur.id) {
+            jumped = true;
+            break;
           }
         } else if (kind === 'quiz') {
           await runQuiz();
@@ -1119,11 +1915,34 @@
              只停留 4 秒就走的话任务点永远不计。先滚动把懒加载的视频带出来，
              出现了就走视频流程播完；真没有才纯停留。 */
           if (videoJobs().length && !videoJobsDone()) {
-            if (revealJobs() && (await watchVideo())) note(`阅读页里的视频看完：${cur.name}`);
+            if (revealJobs() && (await watchVideo())) note(`阅读页里的视频看完：${shortName(cur.name)}`);
             else note('阅读页里的视频没播完就离开了');
             await step(1200);
           } else {
-            await step(DWELL_TEXT);
+            /* 音频任务点（大学英语里很多）没有 .ans-job-video 角标，走不到上面那个分支，
+               但它一样是 video.js 播放器，播放按钮/倍速完全相同。先滚一遍让懒加载的
+               播放器冒出来，再等它把播放器 UI 画出来（实测要 3~5 秒，等 600ms 太早，
+               会误判成纯文本页然后一直不播）。 */
+            revealJobs();
+            const media = await until(() => findVideo(), 15000);
+            if (media) {
+              if (await watchVideo()) note(`阅读页里的音视频看完：${shortName(cur.name)}`);
+              else note('阅读页里的音视频没播完就离开了');
+              await step(1200);
+            } else {
+              await step(DWELL_TEXT);
+            }
+          }
+          /* 剩下的非视频任务点（阅读/文档/PPT）常和视频同在一个页签里：只停几秒站点不计，
+             必须把内容滚到底才算读过（2026-10-21 第一站实测：视频已完成，仍剩 1 个点）。
+             这个检查放在视频分支之外，否则视频一播完就跳过去，永远走不到。 */
+          if (!textJobsDone()) {
+            if (await readThrough(45000)) note(`阅读任务点已完成：${shortName(cur.name)}`);
+            else {
+              const nudged = await nudgeCard();
+              if (textJobsDone()) note(`阅读任务点已完成：${shortName(cur.name)}`);
+              else note(`阅读任务点还没计上，留给收尾复查：${shortName(cur.name)}${nudged ? `（已试点 ${nudged} 个入口）` : ''}`);
+            }
           }
         }
       }
@@ -1144,22 +1963,84 @@
         courseTiming = timing;
         await chrome.storage.local.set({ [timingKey]: timing }).catch(() => {});
       }
-      if (left > 0) note(`注意：${cur.name} 还剩 ${left} 个任务点没完成（本节日志见上），稍后整课过完会再从第一节补刷`);
-      live(`已完成 ${i}/${list.length} 节 · ${leftText()}`);
+      if (left > 0) {
+        const reason = `${shortName(cur.name)} 还剩 ${left} 个任务点未完成，已停止换节，请排查后继续`;
+        await chrome.runtime.sendMessage({ type: 'HW_WATCH_PAUSE', payload: { reason } });
+        stop();
+        note(reason);
+        return;
+      }
+      const completed = list.filter(n => unfinishedOf(n.id) === 0).length;
+      live(`${scopeChapters ? '本次' : ''}已完成 ${completed}/${list.length} 节 · ${leftText()}`);
     }
     if (on && my === gen) {
       note(`本轮目录已检查（跳过已完成 ${skipped} 节）`);
-      const pending = nodes().filter((n) => unfinishedOf(n.id) > 0);
-      const remain = pending.reduce((sum, n) => sum + unfinishedOf(n.id), 0);
+      if (scopeChapters && list.some(n => unfinishedOf(n.id) === null)) {
+        stop();
+        if (multi?.targetRun === 4) {
+          note('学习页有小节无任务计数，返回平台目录核验');
+          if (!await returnToCatalog()) note('返回目录核验失败，队列保留在本页');
+          return;
+        }
+        note('限定小节的完成状态无法确认，保留队列，不报完成');
+        return;
+      }
+      let pending = nodes().filter((n) => (!scopeChapters || scopeChapters.has(n.id)) && unfinishedOf(n.id) > 0);
+      let remain = pending.reduce((sum, n) => sum + unfinishedOf(n.id), 0);
+      // 播放器完成回执先到，目录角标可能晚几秒更新；先复查再决定是否补刷或暂停。
+      if (scopeChapters && remain > 0) {
+        for (let check = 0; check < 10 && on && my === gen && remain > 0; check++) {
+          await step(500);
+          pending = nodes().filter(n => scopeChapters.has(n.id) && unfinishedOf(n.id) > 0);
+          remain = pending.reduce((sum, n) => sum + unfinishedOf(n.id), 0);
+        }
+      }
       if (remain > 0) {
         if (pass === 0) {
-          note(`还剩 ${remain} 个任务点，再从第一节补刷一遍…`);
-          live('补刷中…');
-          return courseLoop(1);
+          /* 不跳过没刷完的节：只把还差任务点的节挑出来补一遍（用户 2026-10-21 要求：
+             有一节没完成就直接跳过不行）。补之前先停一会儿，别和上一轮连成一片触发风控。 */
+          list = pending.slice();
+          note(`准备补刷未完成的 ${list.length} 个小节：${list.map((n) => n.name).join('、')}`);
+          live(`补刷 ${list.length} 节`);
+          await step(RETRY_PAUSE);
+          continue;
+        }
+        /* 补刷一轮还是没做完（多数是阅读/文档类任务点，站点自己不计完成）：
+           不在这里无限重来 —— 同一节反复进出既刷不动进度，也是最像机器人的行为
+           （2026-10-21 实测：赌徒的困惑 / 抓阄两节互相来回切了 20 分钟，任务点数一动不动）。
+           记成「待人工」，接着刷下一门，最后统一报告。 */
+        const gaps = pending.map((n) => ({ name: n.name, remain: unfinishedOf(n.id) || 0 }));
+        note(`这 ${gaps.length} 个小节补刷后仍未完成，先记下继续：${gaps.map((g) => g.name).join('、')}`);
+        live(`跳过 ${gaps.length} 节待人工`);
+        try {
+          const cur = multi && multi.courses[multi.index];
+          const got = await chrome.storage.local.get('watchGaps').catch(() => ({}));
+          const all = (got.watchGaps || []).filter((g) => g.course !== (cur ? cur.name : ''));
+          all.push({ course: cur ? cur.name : (timingCourse && timingCourse.name) || '', sections: gaps, at: Date.now() });
+          await chrome.storage.local.set({ watchGaps: all.slice(-20) }).catch(() => {});
+        } catch { /* 记不上也不影响继续刷 */ }
+        if (multi) {
+          if (multi.targetRun === 4) {
+            await chrome.runtime.sendMessage({ type: 'HW_WATCH_FOUR_GAP', payload: {
+              key: multi.courses[multi.index]?.key, sections: gaps } });
+            stop();
+            if (!await returnToCatalog()) note('返回目录核验失败，队列保留在本页');
+            return;
+          }
+          await reportCourseDone(multi.courses[multi.index]?.key || '');
+          return;
         }
         stop();
-        note(`仍有 ${remain} 个任务点未完成：${pending.map((n) => n.name).join('、')}，保留队列，不报完成`);
-        live(`剩余 ${remain} 个任务点，请核对日志`);
+        return;
+      }
+      if (scopeChapters) {
+        stop();
+        note(`本次限定的 ${list.length} 个小节已完成，其余小节未纳入本次任务`);
+        if (multi?.targetRun === 4) {
+          if (!await returnToCatalog()) note('返回目录核验失败，队列保留在本页');
+          return;
+        }
+        if (multi) await reportCourseDone(multi.courses[multi.index]?.key || '');
         return;
       }
       if (multi) {
@@ -1172,7 +2053,9 @@
       }
       note(`整门课已走完一遍（跳过已完成 ${skipped} 节，提交与最终成绩请自行核对）`);
       stop();
+      return;
     }
+  }
   }
 
   /* 停止后站点可能自己把播放接回去（播放器有断点续播/自动播放），
@@ -1194,13 +2077,21 @@
     if (!on) stopGuard = setInterval(beat, 300);
   }
 
+  /* 谁停的：循环偶尔会「无声无息」地退出，队列既没暂停也没结束，只能靠看门狗重新拉起来。
+     把最近几次 stop() 的调用栈记在内存里（不发网络、不写存储），排查时一眼看到凶手。 */
+  const stopTrace = [];
   function stop() {
     const was = on;
     on = false;
     gen++;
     clearInterval(guard);
     guard = 0;
-    if (was) holdPaused();
+    if (was) {
+      const stack = String(new Error().stack || '').split('\n').slice(1, 4).map((s) => s.trim().slice(0, 90));
+      stopTrace.push({ at: new Date().toISOString().slice(11, 19), stack });
+      if (stopTrace.length > 5) stopTrace.shift();
+      holdPaused();
+    }
     live('已停止');
     if (was) {
       try { onStop(); } catch { /* 面板回调出错不影响脚本收尾 */ }
@@ -1209,16 +2100,28 @@
 
   function start(opts) {
     stop();
+    scopeChapters = Array.isArray(opts?.chapterIds) && opts.chapterIds.length
+      ? new Set(opts.chapterIds.map(String)) : null;
     rate = Math.min(16, Math.max(0.25, Number(opts && opts.rate) || 2));
+    rateNoted = false; // 换课/重开都重新判断这门能不能倍速
     autoRate = !!(opts && opts.autoRate);
     live = (opts && opts.onLive) || (() => {});
     note = (opts && opts.onNote) || (() => {});
     onStop = (opts && opts.onStop) || (() => {});
+    bbsTried.clear(); // 新一轮重新认领讨论卡
     on = true;
     gen++;
     live('准备中…');
-    courseLoop().catch((e) => {
+    courseLoop().catch(async (e) => {
       if (e === STOP) return;
+      if (e.code === 'HW_VERIFICATION_REQUIRED') {
+        stop();
+        try { await chrome.runtime.sendMessage({ type: 'HW_WATCH_PAUSE', payload: { reason: e.message } }); }
+        catch { /* 当前页已停；后台不可用时不发起后续页面操作 */ }
+        note(e.message);
+        live('已暂停：请在网页手动完成验证码后继续');
+        return;
+      }
       note('刷课出错：' + ((e && e.message) || e));
       stop();
     });
@@ -1238,16 +2141,78 @@
     },
     formatCourseTime: fmtLeft,
     catalogEntries,
+    fourWindow,
     enterCourse,
     pageKind,
     currentCourse,
     quizGrade,
     setMuted,
+    setRate,
     findVideo,
     nodes,
     unfinishedOf,
     activeChapterId,
+    get chapterIds() { return scopeChapters ? [...scopeChapters] : null; },
     get running() { return on; },
+    get stopTrace() { return stopTrace.slice(); },
     get rate() { return rate; },
   };
+
+  /* ---------- 文档/PDF 任务点：由预览器自己的框架去翻页 ----------
+     文档、PPT、PDF 的阅读任务点长在跨域框架里（pan-yz.chaoxing.com/screen/… 或
+     ananas/modules/pdf/…），顶层页面拿不到里面的滚动容器，站点只认框架自己报的阅读进度。
+     所以谁在那个框架里，谁就自己把内容过一遍：滚到底、没有滚动条就点下一页。
+     只在「后台队列正在跑」时动手，用户自己点开文档看的时候不会被打扰。 */
+  const DOC_FRAME = /pan-yz\.chaoxing\.com\/screen|ananas\/modules\/(pdf|ppt|doc|image|insertdoc)/;
+  async function readDocFrame() {
+    let q = null;
+    try { q = (await chrome.runtime.sendMessage({ type: 'HW_WATCH_QUEUE_GET' }))?.queue; } catch { return; }
+    if (!q || q.paused) return;
+    const deadline = Date.now() + 240000;
+    let lastTop = -1;
+    let stuck = 0;
+    let boxes = [];
+    let tick = 0;
+    while (Date.now() < deadline) {
+      /* 队列被停掉/换课了就别再翻（每 4 拍问一次，别把后台消息刷成心跳） */
+      if (tick % 4 === 0) {
+        try {
+          const now = (await chrome.runtime.sendMessage({ type: 'HW_WATCH_QUEUE_GET' }))?.queue;
+          if (!now || now.paused) return;
+        } catch { return; }
+      }
+      tick++;
+      /* 扫全文档一次挺贵，页面没换就复用上次找到的滚动容器 */
+      if (!boxes.length || tick % 6 === 0) {
+        boxes = [...document.querySelectorAll('*')].filter((el) => {
+          try { return el.scrollHeight > el.clientHeight + 40 && el.clientHeight > 80; } catch { return false; }
+        });
+      }
+      let moved = false;
+      for (const el of boxes) {
+        const next = Math.min(el.scrollHeight, el.scrollTop + Math.max(120, el.clientHeight * 0.8));
+        if (next > el.scrollTop + 4) { el.scrollTop = next; moved = true; }
+      }
+      const doc = document.scrollingElement || document.documentElement;
+      if (!boxes.length && doc && doc.scrollHeight > doc.clientHeight + 40 && doc.scrollTop + doc.clientHeight < doc.scrollHeight - 4) {
+        doc.scrollTop += Math.max(120, doc.clientHeight * 0.8);
+        moved = true;
+      }
+      if (!moved) {
+        /* 没有可滚的地方：找「下一页 / 下一张」这类原生按钮点一下 */
+        const btn = [...document.querySelectorAll('button,a,[role="button"],[class*="next"],[class*="arrow"]')].find((el) => {
+          const t = (el.getAttribute('aria-label') || el.title || el.textContent || '').trim();
+          const cls = (el.className || '').toString();
+          return /下一页|下一张|next/i.test(t) || /next|swiper-button-next|arrow-right/i.test(cls);
+        });
+        if (btn) { try { btn.click(); } catch { /* 按钮被重建 */ } }
+      }
+      const top = boxes.length ? boxes[0].scrollTop : (doc ? doc.scrollTop : 0);
+      stuck = Math.abs(top - lastTop) < 4 ? stuck + 1 : 0;
+      lastTop = top;
+      if (stuck >= 40) return; // 一分钟都没动：到底了或翻不动，收手
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+  if (DOC_FRAME.test(location.href)) readDocFrame().catch(() => { /* 文档框架异常不影响主流程 */ });
 })();

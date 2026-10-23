@@ -15,11 +15,23 @@
         if (typeof latex === 'string' && latex.trim() && latex.length <= 12000) return '$' + latex.trim() + '$';
       } catch { /* 公式元数据损坏时仍按未读取的图片处理 */ }
     }
+    /* 手绘/公式编辑器存的是 MathML（同样是 URL 编码的 JSON 字符串）。
+       转成纯文字（∪、∩、‾ 这类符号都在），能读就不该再报「未读取的图片」。 */
+    if (img.matches('img.ans-edrawmath-moudle')) {
+      try {
+        const markup = JSON.parse(decodeURIComponent(img.getAttribute('data') || ''));
+        if (typeof markup === 'string' && markup.trim()) {
+          const text = norm(new DOMParser().parseFromString(markup, 'text/html').body?.textContent || '');
+          if (text) return text;
+        }
+      } catch { /* 解析失败按未读取处理 */ }
+    }
     return norm(img.alt);
   }
   function textOf(el) {
+    if (!el) return '';
     const read = node => {
-      if (node.nodeType === 3) return node.data;
+      if (node.nodeType === 3) return HW.FontDecoder?.decodeNode(node) ?? node.data;
       if (node.nodeType !== 1) return '';
       if (node.tagName === 'IMG') return imageText(node);
       return [...node.childNodes].map(read).join('');
@@ -49,6 +61,7 @@
   };
 
   function collect() {
+    if (HW.FontDecoder && !HW.FontDecoder.ready(document)) throw new Error('页面字体尚未还原，请稍候或导出页面结构');
     const refs = new Map();
     const ids = new WeakMap();
     const documents = new Set([document]);
@@ -96,7 +109,7 @@
       const attrs = [`ref="${id}"`];
       if (kind) attrs.push(`kind="${kind}"`);
       for (const name of ['role', 'type', 'typename', 'aria-label']) {
-        const v = el.getAttribute(name);
+        const v = name === 'aria-label' ? HW.FontDecoder?.decodeText(el, el.getAttribute(name) || '') ?? el.getAttribute(name) : el.getAttribute(name);
         if (v) attrs.push(`${name}="${esc(v.slice(0, 120))}"`);
       }
       // 超星编号和题型编码只作为额外上下文，不据此决定识别结果。
@@ -130,7 +143,7 @@
       } else if (!native && !el.isContentEditable && kind !== 'editor') {
         for (const child of el.childNodes) {
           if (child.nodeType === 3) {
-            const text = norm(child.data);
+            const text = norm(HW.FontDecoder?.decodeNode(child) ?? child.data);
             if (text) children.push(esc(text));
           } else if (child.nodeType === 1) {
             const tree = walk(child);
@@ -328,7 +341,7 @@
           ? cx.querySelector('input[type="hidden"][name^="answer"]:not([name^="answertype"])') : null;
         const q = {
           meta: { type: item.type, stem: fields.some((el) => sharedOptions(el))
-              ? norm(container.querySelector('.Zy_TItle')?.innerText) + '\n' + stem : stem,
+              ? textOf(container.querySelector('.Zy_TItle')) + '\n' + stem : stem,
             writing: item.writing, blanks: item.type === 'blank' ? targetIds.length : 0,
             options: labels.map((l) => ({ key: l.key, text: l.text })),
             slotOptions: item.type === 'blank' ? fields.map((el) => el.tagName === 'SELECT'

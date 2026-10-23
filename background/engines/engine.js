@@ -32,18 +32,52 @@ export function parseJSONAnswers(raw, q) {
   return items;
 }
 
+/* LaTeX 命令 → Unicode：模型常直接回 ∪ ∩ ⊆ 这类符号，而页面选项是 \cup \cap \subseteq。 */
+const LATEX_SYM = {
+  cup: '∪', cap: '∩', subseteq: '⊆', subset: '⊂', supseteq: '⊇', supset: '⊃',
+  emptyset: '∅', varnothing: '∅', in: '∈', notin: '∉', ni: '∋',
+  times: '×', div: '÷', cdot: '·', pm: '±', leq: '≤', geq: '≥', neq: '≠', approx: '≈',
+  infty: '∞', rightarrow: '→', to: '→', Rightarrow: '⇒', leftrightarrow: '↔',
+  forall: '∀', exists: '∃', sum: 'Σ', prod: 'Π', angle: '∠', perp: '⊥', parallel: '∥',
+  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', theta: 'θ', lambda: 'λ',
+  mu: 'μ', pi: 'π', rho: 'ρ', sigma: 'σ', tau: 'τ', phi: 'φ', omega: 'ω',
+  Delta: 'Δ', Sigma: 'Σ', Omega: 'Ω', Phi: 'Φ', Theta: 'Θ', Lambda: 'Λ',
+};
+
 /* JSON 契约答案 → 填写器格式：选项文字反查字母；判断题归一化为 对/错 */
 function jsonToAnswer(q, items) {
+  /* 比较用的规范化：统一 LaTeX 与 Unicode 写法，再去掉 $、转义反斜杠和全部空白。
+     题干/选项里的公式保留成 $\{1,2\}$ / $A \cup B$，模型通常回 "{1,2}" / "A ∪ B"，不统一就永远对不上。 */
+  const cmp = (s) => norm(String(s || ''))
+    .replace(/\\([{}()%$&#_])/g, '$1')
+    .replace(/\\(?:left|right|quad|qquad)\b/g, '')
+    .replace(/\\(?:,|;|!)/g, '')
+    .replace(/\\([A-Za-z]+)/g, (m, w) => LATEX_SYM[w] || m)
+    .replace(/\$/g, '')
+    .replace(/\s+/g, '');
   if (q.type === 'choice' || q.type === 'multi') {
-    const wanted = items.map((s) => norm(s));
+    const wanted = items.map((s) => cmp(s));
     const options = (q.options || []).map(o => ({ key: o.key,
-      text: norm(String(o.text || '').replace(/^[A-Ha-h][\s.、．:：)）]*/, '')) }));
+      text: cmp(String(o.text || '').replace(/^[A-Ha-h][\s.、．:：)）]*/, '')) }));
     const letters = [];
+    /* 有些模型直接回选项字母（"A" 或 "ABCD"），不必再拿文字反查。 */
+    if (wanted.every((w) => /^[A-Ha-h]$/.test(w))) {
+      const picked = wanted.map((w) => w.toUpperCase());
+      return q.type === 'choice' ? picked[0] : [...new Set(picked)].sort().join('');
+    }
+    if (wanted.length === 1 && /^[A-Ha-h]{2,8}$/.test(wanted[0])) {
+      return [...new Set(wanted[0].toUpperCase().split(''))].sort().join('');
+    }
     for (const w of wanted) {
       // 完整文字先匹配，避免“同步通信”又命中“半同步通信”。
-      const exact = options.filter(o => w === o.text);
-      const matches = exact.length ? exact : options.filter(o =>
+      const exact = options.filter(o => w && w === o.text);
+      let matches = exact.length ? exact : options.filter(o =>
         o.text && o.text.length >= 4 && (w.includes(o.text) || o.text.includes(w)));
+      // 模型直接回选项字母（"A" / "B"）时按字母取，不再要求文字一致。
+      if (!matches.length) {
+        const bare = /^[A-Ha-h]$/.exec(norm(w));
+        if (bare) matches = options.filter(o => String(o.key).toUpperCase() === bare[0].toUpperCase());
+      }
       if (matches.length !== 1) return '';
       letters.push(matches[0].key);
     }
@@ -134,7 +168,8 @@ export function buildMultiVerify(q, firstAnswer) {
     '',
     '初答：' + firstAnswer,
     '',
-    '请把每个选项单独判断为"正确"或"错误"（特别注意有没有漏选），最终只输出一行：全部正确选项的字母连写（如 ABD）。',
+    '逐项独立核对每个选项的事实、限定条件与是否切题；初答不是正确答案，不要照抄。',
+    '只输出 {"answers":[…]} JSON，各元素是全部正确选项的完整文字，不含字母前缀。无法确定时输出 {"answers":[]}。',
   ];
   return [
     { role: 'system', content: '你是严谨的答题助手，只按要求的格式输出。' },
@@ -142,8 +177,7 @@ export function buildMultiVerify(q, firstAnswer) {
   ];
 }
 
-/* 判断题二次复核：初答只有"对/错"两个字，没有可校验的中间量，
-   所以复核要求模型显式推理一遍再下结论（专治「若A与B独立，则P(A|B̄)=P(A)」这类要推一步的题）。 */
+/* 判断题复核采用通用事实与条件核对，使用JSON契约返回结论。 */
 export function buildJudgeVerify(q, firstAnswer) {
   const NL = String.fromCharCode(10);
   const parts = [
@@ -152,8 +186,8 @@ export function buildJudgeVerify(q, firstAnswer) {
     '',
     '初答：' + firstAnswer,
     '',
-    '请独立重新推理这道题（特别注意独立性、条件概率、互斥与独立混淆这类常见陷阱），',
-    '先写一两句理由，最后一行只输出结论：对 或 错。',
+    '独立核对原句的全部分句、限定词、人物、时间、数量和推理条件；区分总人数与其中的代表人数。',
+    '初答不是依据，不要仅为反驳而补出题目没有的条件。只输出 {"answers":["正确"]} 或 {"answers":["错误"]}；不能可靠核实时输出 {"answers":[]}。',
   ];
   return [
     { role: 'system', content: '你是严谨的答题助手，只按要求的格式输出。' },
@@ -161,9 +195,13 @@ export function buildJudgeVerify(q, firstAnswer) {
   ];
 }
 
-/* 判断题复核结果解析：结论在最后一行，不能像初答那样取第一个匹配
+/* 判断题复核优先解析JSON，兼容旧文本时结论在最后一行，不能像初答那样取第一个匹配
    —— 理由里先出现的"错"字会被误当成结论。取不到明确结论就返回空串，调用方保持初答。 */
 export function parseJudgeVerify(raw) {
+  if (/^\s*\{|"answers"\s*:/.test(String(raw || ''))) {
+    const items = parseJSONAnswers(raw, { type: 'judge' });
+    return items ? jsonToAnswer({ type: 'judge' }, items) : '';
+  }
   const lines = String(raw || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const T = /^(对|正确|是|真|√|✔|✓|T|True)$/i;
   const F = /^(错|错误|误|否|假|×|✘|✗|F|False)$/i;

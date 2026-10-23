@@ -283,8 +283,13 @@
           const target = choices[i].clickEl;
           if (!target.classList.contains('check_answer')) {
             target.scrollIntoView({ block: 'center' });
-            target.click();
-            await new Promise((resolve) => setTimeout(resolve, 450));
+            /* 站点偶尔要点两次才把选中态挂上：450ms 的回读太急就报
+               「共用选项点击后回读不一致」（2026-10-22 大学英语 Further exploration 实测）。
+               最多点三次、间隔递增，仍不行才把这道题交给上层「留空随卷提交」。 */
+            for (let t = 0; t < 3 && !target.classList.contains('check_answer'); t++) {
+              target.click();
+              await new Promise((resolve) => setTimeout(resolve, 450 + t * 350));
+            }
           }
           if (el.querySelectorAll('.num_option.check_answer').length !== 1 || !target.classList.contains('check_answer')) throw new Error('共用选项点击后回读不一致');
         } else if (choices[i]) {

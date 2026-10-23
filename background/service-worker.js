@@ -26,6 +26,7 @@ const detectingTabs = new Map();
 /*　MV3 的后台空闲 30 秒就被回收，整门课要刷几小时，队列只放内存必然丢，
     所以每次都顺手落一份到 storage.local；新页面来问时再读回来。 */
 const WQ_KEY = 'watchQueue';
+let fontIndex;
 let watchQueue = null; // { courses:[{key,scUrl,name}], index, tabId, rate, autoRate }
 let issueWrites = Promise.resolve();
 function recordIssue(entry, sender = {}) {
@@ -58,21 +59,96 @@ async function saveQueue(q) {
 }
 
 async function loadQueue() {
-  if (watchQueue) return watchQueue;
+  /* storage 是队列的唯一事实来源：早期版本在这里做了内存缓存，浏览器重启/换标签页后
+     内存里还留着旧 tabId，导致 HW_WATCH_QUEUE_GET 回 null、整轮接不上（2026-10-21 实测）。
+     每次读取都回 storage，代价只是一次异步读，换来的是不会读到过期属主。 */
   const got = await chrome.storage.local.get(WQ_KEY).catch(() => ({}));
   watchQueue = got?.[WQ_KEY] || null;
   return watchQueue;
 }
 
+const WATCH_HOST_ACCESS_ERROR = '缺少超星持续站点访问权限：请在扩展管理中允许访问 https://*.chaoxing.com/*，刷新课程页后再开始；仅点击时允许访问无法自动换节。';
+async function ensureWatchHostAccess() {
+  if (await chrome.permissions.contains({ origins: ['https://*.chaoxing.com/*'] })) return true;
+  const q = await loadQueue();
+  if (q && !q.paused) {
+    q.paused = WATCH_HOST_ACCESS_ERROR;
+    await saveQueue(q);
+    sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { cancelled: true } });
+  }
+  return false;
+}
+
+async function pauseWatchForInterruptedPage(tab) {
+  if (!tab) return false;
+  const accountNotice = /^https?:\/\/detect\.chaoxing\.com\/api\/monitor_temp(?:[?#]|$)/.test(tab.url || '');
+  const leftCourse = /^https?:\/\/i\.(?:mooc\.)?chaoxing\.com\/space(?:[/?#]|$)/.test(tab.url || '');
+  if (!accountNotice && !leftCourse) return false;
+  const q = await loadQueue();
+  if (!q || q.tabId !== tab.id) return false;
+  if (!q.paused) {
+    q.paused = accountNotice
+      ? '平台显示账号登录检测提示，已暂停并保留队列；请先处理网页提示，再手动继续。'
+      : '已退出课程学习页，队列已暂停；点「开始刷课」继续。';
+    await saveQueue(q);
+    sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { cancelled: true } });
+  }
+  return true;
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.url) pauseWatchForInterruptedPage({ ...tab, id: tabId, url: changeInfo.url }).catch(() => {});
+});
+
 async function watchGo(index) {
   const q = await loadQueue();
-  if (!q) return;
+  if (!q || q.paused) return;
+  if (!(await ensureWatchHostAccess())) return;
   q.index = index;
   const cur = q.courses[index];
   if (!cur) {
+    if (q.targetRun === 4) {
+      const report = { at: new Date().toISOString(), courses: q.courses.map(c => ({
+        key: c.key, name: c.name, status: c.outcome?.status || 'incomplete',
+        chapterIds: c.outcome?.chapterIds || [], exceptions: c.outcome?.exceptions || [], gaps: c.gaps || [] })) };
+      await chrome.storage.local.set({ watchFourReport: report });
+      const done = report.courses.filter(c => c.status === 'complete' || c.status === 'complete_with_exceptions').length;
+      /* 用户 2026-10-21：不达目标不罢休。这一轮没收尾的课自动再排一轮，
+         最多 3 轮（每轮都从目录重新核验，已完成的小节会被跳过，只重做欠账的那几个点）。
+         不无限重试：一门课真做不完（字体还原不了、题面读不出）不该占着队列转一晚上。 */
+      const failed = q.courses.filter(c => !['complete', 'complete_with_exceptions'].includes(c.outcome?.status || 'incomplete'));
+      const round = Number(q.round) || 1;
+      /* 上限从 3 放宽到 5：传统文化/大学英语的测验补丁是第 2 轮中途才上线的，
+         它们第 3 轮的欠账要再给机会（用户：不达目标不罢休）。 */
+      if (failed.length && round < 5) {
+        const next = {
+          courses: failed.map(c => ({ key: c.key, scUrl: c.scUrl, name: c.name })),
+          index: 0,
+          tabId: q.tabId,
+          rate: q.rate || 2,
+          autoRate: !!q.autoRate,
+          targetRun: 4,
+          round: round + 1,
+        };
+        await saveQueue(next);
+        notify(`第 ${round} 轮：${done}/${q.courses.length} 门达标，剩 ${failed.length} 门，开始第 ${round + 1} 轮`);
+        await chrome.tabs.update(q.tabId, { url: next.courses[0].scUrl }).catch(() => {});
+        return;
+      }
+      await saveQueue(null);
+      notify(`开头 4 节核验：${done}/${report.courses.length} 门达标（口语例外单列）；其余详见插件日志`);
+      sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { count: done, total: report.courses.length, targetRun: 4, limited: true } });
+      return;
+    }
     await saveQueue(null);
-    notify(`刷课结束：${q.courses.length} 门课都走完了`);
-    sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { count: q.courses.length } });
+    const limited = q.courses.some(course => course.chapterIds?.length);
+    /* 补刷后仍未完成、被跳过的节（多是阅读/文档类任务点，站点不计完成）——一起报出来，
+       否则用户只会看到「都走完了」，实际还有几节要人工看。 */
+    const gaps = (await chrome.storage.local.get('watchGaps').catch(() => ({}))).watchGaps || [];
+    const gapCount = gaps.reduce((sum, g) => sum + (g.sections?.length || 0), 0);
+    const tail = gapCount ? `；另有 ${gapCount} 个小节需人工完成（详见插件日志）` : '';
+    notify(limited ? `刷课结束：${q.courses.length} 门课的本次限定小节已完成${tail}` : `刷课结束：${q.courses.length} 门课都走完了${tail}`);
+    sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { count: q.courses.length, limited } });
     return;
   }
   await saveQueue(q);
@@ -109,7 +185,8 @@ async function detectPage(payload, sender) {
 function pauseRun(tabId, reason) {
   if (run) run.cancelled = true;
   const item = run?.items.find(i => i.status === 'failed');
-  recordIssue({ stage: '答题失败', message: item?.error || reason, question: item?.q?.stem, answer: item?.raw || item?.answer?.answer, url: run?.sourceUrl })
+  const question = item?.q && [item.q.stem, ...(item.q.options || []).map(option => `${option.key}. ${option.text}`)].join('\n');
+  recordIssue({ stage: '答题失败', message: item?.error || reason, question, answer: item?.raw || item?.answer?.answer, url: run?.sourceUrl })
     .catch(e => {
       sendTab(tabId, { type: 'HW_ISSUE_WRITE_FAILED', payload: { error: String(e.message || e) } });
       notify('异常记录写入失败，已停止答题：' + String(e.message || e).slice(0, 100));
@@ -355,6 +432,21 @@ async function startRun(questions, tabId, sourceUrl) {
         sendTab(tabId, { type: 'HW_ANSWER', payload: { index: i, answer: ans.answer, fromCache, note: ans.note } });
       } catch (e) {
         if (activeRun.cancelled || run !== activeRun) return;
+        /* 题干/选项里含还原不了的字形（font-decoder 现在返回 U+FFFD 占位）时，
+           AI 读到的就是乱码，答案必然对不上（2026-10-22 传统文化/大学英语实测）。
+           用户明确「先刷完，不强求正确率」：客观题不再失败/暂停整轮，
+           直接选第一个选项走正常填写链路；填空/主观题仍如实失败留人工。 */
+        const objective = ['choice', 'multi', 'judge'].includes(item.q?.type);
+        if (objective) {
+          const first = (item.q.options || [])[0];
+          const fallback = item.q.type === 'judge' ? 'T' : (first?.key || 'A');
+          item.status = 'answered';
+          item.answer = { answer: fallback, note: 'AI 未给出可用答案，按「先刷完」约定选第一项' };
+          if (typeof key === 'string') await cacheSet(key, item.answer);
+          sendTab(tabId, { type: 'HW_ANSWER', payload: { index: i, answer: fallback, fromCache: false, note: item.answer.note } });
+          await new Promise((r) => setTimeout(r, 300));
+          continue;
+        }
         item.status = 'failed';
         item.error = String(e.message || e);
         item.raw = e.answerPreview;
@@ -423,7 +515,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const payload = msg?.payload || {};
     const tabId = sender?.tab?.id;
     try {
-      if (type === 'HW_ISSUE_ADD') {
+      if (type === 'HW_FONT_MAP') {
+        const here = new URL(sender.url || 'about:blank');
+        if (!/(^|\.)chaoxing\.com$/.test(here.hostname) || !Array.isArray(payload.hashes) ||
+            payload.hashes.length > 65535 || payload.hashes.some(hash => !/^[a-f0-9]{64}$/.test(hash))) throw new Error('无效的页面字体请求');
+        fontIndex ||= fetch(chrome.runtime.getURL('content/homework/fonts/glyph-map.json')).then(async response => {
+          if (!response.ok) throw new Error('本地字体索引缺失，请重新安装完整插件');
+          return (await response.json()).map;
+        });
+        const index = await fontIndex;
+        sendResponse({ ok: true, map: Object.fromEntries(payload.hashes.map(hash => [hash, index[hash] || null])) });
+      } else if (type === 'HW_ISSUE_ADD') {
         await recordIssue(payload, sender);
         sendResponse({ ok: true });
       } else if (type === 'HW_ISSUE_LIST') {
@@ -441,6 +543,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (type === 'SET_CONFIG') {
         const next = deepMerge(await getConfig(), payload);
         await chrome.storage.local.set({ config: next });
+        if (payload.watchRate != null) {
+          const q = await loadQueue();
+          if (q && q.tabId === tabId) {
+            q.autoRate = next.watchRate === 'auto';
+            q.rate = q.autoRate ? 2 : Number(next.watchRate) || 2;
+            await saveQueue(q);
+          }
+        }
         if (typeof payload.watchMuted === 'boolean' && tabId != null) {
           await chrome.tabs.update(tabId, { muted: payload.watchMuted });
         }
@@ -487,15 +597,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         sendResponse({ ok: true, courses: [...courses.values()] });
       } else if (type === 'HW_WATCH_START') {
+        if (!(await ensureWatchHostAccess())) return sendResponse({ ok: false, error: WATCH_HOST_ACCESS_ERROR });
         /* 开始刷一门或几门课：courses 是内容脚本在列表页扫出来的，后台只负责排队与翻页 */
         const courses = (payload.courses || []).filter((c) => c && c.key && c.scUrl);
         if (!courses.length) return sendResponse({ ok: false, error: '没有选中课程' });
+        if (payload.targetRun === 4 && courses.some(c => !Number.isFinite(c.done) || !Number.isFinite(c.total) || c.total <= 0 || c.done / c.total >= .35))
+          return sendResponse({ ok: false, error: '连续 4 节模式只接受进度已知且低于 35% 的课程' });
+        const existing = await loadQueue();
+        if (existing && existing.tabId !== tabId) {
+          /* 浏览器重启后 tabId 必变：旧属主标签页还在才拒绝，不在了就收养，
+             否则孤儿队列既接不上又挡住新队列，只能人工清 storage。 */
+          const alive = existing.tabId != null && await chrome.tabs.get(existing.tabId).then(() => true, () => false);
+          if (alive) return sendResponse({ ok: false, error: '另一课程窗口已有队列，请先在原窗口停止后再开始' });
+        }
         watchQueue = {
-          courses: courses.map((c) => ({ key: c.key, scUrl: c.scUrl, name: c.name || '' })),
+          courses: courses.map((c) => ({ key: c.key, scUrl: c.scUrl, name: c.name || '',
+            ...(Array.isArray(c.chapterIds) && c.chapterIds.length
+              ? { chapterIds: [...new Set(c.chapterIds.map(String))].slice(0, 6) } : {}) })),
           index: 0,
           tabId: tabId ?? null,
           rate: Number(payload.rate) || 2,
           autoRate: !!payload.autoRate,
+          ...(payload.targetRun === 4 ? { targetRun: 4 } : {}),
         };
         await saveQueue(watchQueue);
         const here = new URL(sender.url || sender.tab?.url || 'about:blank');
@@ -508,7 +631,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const q = await loadQueue();
         const course = q?.courses[q.index];
         const url = new URL(payload.url);
-        if (!course || q.tabId !== tabId || !/(^|\.)chaoxing\.com$/.test(url.hostname) || url.protocol !== 'https:' ||
+        if (!course || q.paused || q.tabId !== tabId || !/(^|\.)chaoxing\.com$/.test(url.hostname) || url.protocol !== 'https:' ||
             url.username || url.password || !/\/mycourse\/studentcourse$/.test(url.pathname) ||
             `${url.searchParams.get('courseid')}|${url.searchParams.get('clazzid')}` !== course.key) throw new Error('课程目录与当前队列不一致');
         // 沿用原生章节 iframe 的完整地址（含 stuenc），不自行拼接鉴权参数。
@@ -516,16 +639,115 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true });
       } else if (type === 'HW_WATCH_QUEUE_GET') {
         /* 只把队列发给属主标签页——否则用户随手开一个超星页面，
-           那个页面也会来接力，把用户的浏览器抢去刷课（真机踩过：新开标签页直接被带去 5.3 播视频） */
+           那个页面也会来接力，把用户的浏览器抢去刷课（真机踩过：新开标签页直接被带去 5.3 播视频）。
+           例外：讨论任务点开出来的 groupweb 话题页（bbs.js 要在里头回帖），
+           凭 URL 识别，不算「别人的页面」。 */
+        const helper = (() => {
+          try {
+            const u = new URL(sender.url || '');
+            return /groupweb\.chaoxing\.com$/.test(u.hostname) && u.pathname.includes('/course/topic/');
+          } catch { return false; }
+        })();
         const q = await loadQueue();
-        if (q && tabId != null && q.tabId != null && q.tabId !== tabId) {
+        if (q && tabId != null && q.tabId != null && q.tabId !== tabId && !helper) {
           sendResponse({ ok: true, queue: null });
         } else {
           sendResponse({ ok: true, queue: q });
         }
       } else if (type === 'HW_WATCH_COURSE_DONE') {
         const q = await loadQueue();
-        if (q) await watchGo(q.index + 1);
+        if (q && q.tabId === tabId && q.courses[q.index]?.key === payload.key && !q.paused) {
+          if (q.targetRun === 4) {
+            q.courses[q.index].outcome = {
+              status: ['complete', 'complete_with_exceptions'].includes(payload.status) ? payload.status : 'incomplete',
+              chapterIds: Array.isArray(payload.chapterIds) ? payload.chapterIds.slice(0, 4) : [],
+              exceptions: Array.isArray(payload.exceptions) ? payload.exceptions.slice(0, 4) : [] };
+            await saveQueue(q);
+          }
+          await watchGo(q.index + 1);
+        }
+        sendResponse({ ok: true });
+      } else if (type === 'HW_WATCH_SCOPE_SET') {
+        const q = await loadQueue();
+        const course = q?.courses[q.index];
+        const ids = payload.chapterIds;
+        if (!q || q.targetRun !== 4 || q.tabId !== tabId || q.paused || course?.key !== payload.key ||
+            !Array.isArray(ids) || ids.length !== 4 || ids.some(id => !/^\d+$/.test(String(id))))
+          return sendResponse({ ok: false, error: '连续小节范围与当前队列不一致' });
+        course.chapterIds = ids.map(String);
+        course.attempted ||= [];
+        if (!course.attempted.some(start => start === payload.start)) course.attempted.push(payload.start);
+        await saveQueue(q);
+        sendResponse({ ok: true });
+      } else if (type === 'HW_WATCH_RETRY_ONCE') {
+        /* 每门课只补跑一次：跑完仍缺就如实记未达标，不在目录页和课程页之间来回拉锯。 */
+        const q = await loadQueue();
+        const course = q?.courses[q.index];
+        if (!q || q.targetRun !== 4 || q.tabId !== tabId || q.paused || course?.key !== payload.key)
+          return sendResponse({ ok: false, error: '队列与当前课程不一致' });
+        if (course.retried) return sendResponse({ ok: true, first: false });
+        course.retried = true;
+        await saveQueue(q);
+        sendResponse({ ok: true, first: true });
+      } else if (type === 'HW_WATCH_FOUR_GAP') {
+        const q = await loadQueue();
+        const course = q?.courses[q.index];
+        if (q?.targetRun === 4 && q.tabId === tabId && course?.key === payload.key) {
+          course.gaps ||= [];
+          course.gaps.push({ chapterIds: course.chapterIds || [], sections: payload.sections || [] });
+          await saveQueue(q);
+        }
+        sendResponse({ ok: true });
+      } else if (type === 'HW_WATCH_FOREGROUND') {
+        /* 窗口被最小化/切到后台时视频会被站点暂停，内容脚本无法自己恢复。
+           只恢复这个队列自己的窗口，不抢别的窗口焦点。 */
+        const q = await loadQueue();
+        if (!q || q.tabId !== tabId) return sendResponse({ ok: false, error: '不是队列属主页面' });
+        const tab = await chrome.tabs.get(tabId).catch(() => null);
+        if (!tab) return sendResponse({ ok: false, error: '队列标签页已关闭' });
+        await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+        const win = await chrome.windows.get(tab.windowId).catch(() => null);
+        if (win?.state === 'minimized') await chrome.windows.update(tab.windowId, { state: 'normal' }).catch(() => {});
+        await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+        sendResponse({ ok: true });
+      } else if (type === 'HW_WATCH_OPEN_TOPIC') {
+        /* 讨论卡的话题页在 groupweb 域，由内容脚本 bbs.js 在那个标签页里回帖；
+           这里只负责开一个不抢焦点的标签页，两分钟后兜底关闭（bbs.js 正常会自己关）。 */
+        const q = await loadQueue();
+        if (!q || q.paused || q.tabId !== tabId) return sendResponse({ ok: false, error: '不是运行中的队列属主页面' });
+        let u;
+        try { u = new URL(payload.url); } catch { return sendResponse({ ok: false, error: '话题地址不合法' }); }
+        if (u.protocol !== 'https:' || !/(^|\.)chaoxing\.com$/.test(u.hostname)) return sendResponse({ ok: false, error: '话题地址不在超星域' });
+        const topic = await chrome.tabs.create({ url: u.href, active: false });
+        q.topic = { tabId: topic.id, url: u.href };
+        await saveQueue(q);
+        setTimeout(() => { chrome.tabs.remove(topic.id).catch(() => {}); }, 120000);
+        sendResponse({ ok: true, tabId: topic.id });
+      } else if (type === 'HW_BBS_REPLIED') {
+        /* 话题页回帖成功（但没有 opener 可收 completeTopic 消息）——转发给学习页补发。 */
+        const q = await loadQueue();
+        if (q && !q.paused && q.topic?.tabId === tabId && q.topic.url === sender.url) {
+          const topicUrl = new URL(q.topic.url);
+          sendTab(q.tabId, { type: 'HW_BBS_NOTIFY', payload: {
+            jobId: topicUrl.searchParams.get('jobid') || '',
+            knowledgeId: topicUrl.searchParams.get('knowledgeid') || '' } });
+          delete q.topic;
+          await saveQueue(q);
+        }
+        sendResponse({ ok: true });
+      } else if (type === 'HW_WATCH_PAUSE') {
+        const q = await loadQueue();
+        if (q && q.tabId === tabId) {
+          q.paused = String(payload.reason || '请核对页面后继续').slice(0, 160);
+          await saveQueue(q);
+        }
+        sendResponse({ ok: true });
+      } else if (type === 'HW_WATCH_RESUME') {
+        if (!(await ensureWatchHostAccess())) return sendResponse({ ok: false, error: WATCH_HOST_ACCESS_ERROR });
+        const q = await loadQueue();
+        if (!q || q.tabId !== tabId) return sendResponse({ ok: false, error: '当前页面没有可接续的队列' });
+        delete q.paused;
+        await saveQueue(q);
         sendResponse({ ok: true });
       } else if (type === 'HW_WATCH_STOP') {
         const q = await loadQueue();
@@ -619,6 +841,9 @@ chrome.runtime.onStartup?.addListener(() => injectOpenHomeworkTabs().catch(() =>
 (async () => {
   const cur = chrome.runtime.getManifest().version;
   await chrome.storage.local.set({ v: cur });
+  await ensureWatchHostAccess();
+  const q = await loadQueue();
+  if (q?.tabId != null) await pauseWatchForInterruptedPage(await chrome.tabs.get(q.tabId).catch(() => null));
 })();
 
 openUpdateHealthPage();
