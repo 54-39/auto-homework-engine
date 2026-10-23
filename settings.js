@@ -39,7 +39,7 @@ import { exportIssueHistory, ISSUE_PREFIX } from './background/issue-history.js'
 
   /* 侧边栏：切换分区，并把当前分区同步到 URL hash（刷新、前进后退都停在原分区） */
   const navBtns = [...document.querySelectorAll('.side button')];
-  const secs = { mem: $('#sec-mem'), diag: $('#sec-diag'), upd: $('#sec-upd') };
+  const secs = { mem: $('#sec-mem'), watch: $('#sec-watch'), diag: $('#sec-diag'), upd: $('#sec-upd') };
   let onSection = () => {};
   const goto = (id, push) => {
     const key = secs[id] ? id : 'mem';
@@ -109,6 +109,22 @@ import { exportIssueHistory, ISSUE_PREFIX } from './background/issue-history.js'
       showCount();
     } else memCountEl.textContent = '记忆条数读取失败';
   })();
+
+  /* 刷课：每门课从第一节起连续处理几节。
+     以前这个 4 节写死在面板上（勾选框），用户 2026-10-23 要求挪到设置里自选。 */
+  const watchMsg = $('#watchMsg');
+  const watchSel = $('#watchSections');
+  const loadWatchSections = async () => {
+    const cfg = (await send('GET_CONFIG'))?.config || {};
+    watchSel.value = String(Math.min(10, Math.max(0, Number(cfg.watchSections) || 0)));
+  };
+  watchSel.addEventListener('change', async () => {
+    const n = Math.min(10, Math.max(0, Number(watchSel.value) || 0));
+    const res = await send('SET_CONFIG', { watchSections: n });
+    if (res?.ok) out(watchMsg, n ? `已保存：每门课从第一节起连续完成 ${n} 节（只处理进度低于 35% 的课程）` : '已保存：整门课程从头刷到最后一节', 'ok');
+    else out(watchMsg, '保存失败：' + (res?.error || '未知错误') + '，请刷新页面后重试', 'err');
+  });
+  loadWatchSections();
 
   /* 诊断：把最近打开的网页（作业页）DOM 导出为 HTML 下载文件 */
   const diagMsg = $('#diagMsg');
@@ -516,6 +532,7 @@ import { exportIssueHistory, ISSUE_PREFIX } from './background/issue-history.js'
   updRun.addEventListener('click', () => runUpdate());
   let autoChecked = false;
   onSection = (key) => {
+    if (key === 'watch') loadWatchSections(); // 每次进来重读，别的页面改过也能对上
     if (key === 'diag') loadIssues();
     if (key === 'upd') {
       if (!autoChecked) {

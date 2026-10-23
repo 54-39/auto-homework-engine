@@ -61,9 +61,9 @@ check('选择仍取字母', choice === 'B', JSON.stringify(choice));
 const jq = { type: 'judge', stem: '若事件A与B独立，则P(A|B̄)=P(A)' };
 const jv = buildJudgeVerify(jq, '错');
 check('判断题复核带上题干与初答', jv[1].content.includes('P(A|B̄)=P(A)') && jv[1].content.includes('初答：错'));
-check('判断题复核要求显式推理', jv[1].content.includes('推理') && jv[1].content.includes('理由'));
-check('判断题复核要求结论在最后一行', jv[1].content.includes('最后一行'));
-check('判断题复核结论只认对/错', jv[1].content.includes('对 或 错'));
+check('判断题复核要求独立核对分句与限定词', jv[1].content.includes('独立核对') && jv[1].content.includes('限定词'));
+check('判断题复核只接受 JSON 结论（正确/错误）', jv[1].content.includes('{"answers":["正确"]}') && jv[1].content.includes('{"answers":["错误"]}'));
+check('判断题复核不能可靠核实时留空', jv[1].content.includes('{"answers":[]}'));
 check('复核解析：末行"对"', parseJudgeVerify('因为独立，所以结论成立。\n对') === '对');
 check('复核解析：结论带前缀与句号', parseJudgeVerify('这样推下来\n结论：错。') === '错');
 check('复核解析：理由里的"错"不算结论', parseJudgeVerify('独立不代表互斥，这个说法没有错。\n对') === '对');
@@ -76,8 +76,8 @@ check('复核解析：跑题回答返回空（保持初答）', parseJudgeVerify
 /* —— api-engine 写作题 token 预算（源码断言，避免为它搭 chrome 桩）—— */
 const src = readFileSync(new URL('../background/engines/api-engine.js', import.meta.url), 'utf8');
 check('写作题 max_tokens 4096', src.includes('q.writing ? 4096'));
-check('API 引擎对判断题跑复核', src.includes("q.type === 'judge' && answer && opts.verify2 !== false") && src.includes('buildJudgeVerify(q, answer)'));
-check('API 引擎多选复核受 verify2 开关控制', src.includes("q.type === 'multi' && answer && opts.verify2 !== false"));
+check('API 引擎对判断题跑复核', src.includes("['multi', 'judge'].includes(q.type) && answer && opts.verify2 !== false") && src.includes('buildJudgeVerify(q, answer)'));
+check('API 引擎多选复核受 verify2 开关控制', src.includes("['multi', 'judge'].includes(q.type)") && src.includes('verify2 !== false'));
 check('复核开关默认开启（verify2: true）', readFileSync(new URL('../background/service-worker.js', import.meta.url), 'utf8').includes('verify2: true, // 多选/判断题二次复核开关'));
 
 process.exit(bad ? 1 : 0);

@@ -12,6 +12,7 @@ const DEFAULT_CONFIG = {
   subjMode: 'ask', // 简答题策略：ask=每次弹窗询问 | keep=保留跳过 | rewrite=清空重写
   verify2: true, // 多选/判断题二次复核开关（API 引擎）：关掉每题少一次 AI 调用
   watchRate: 'auto', // 刷课倍速：'auto' 跟播放器菜单最高档 | '1'/'1.25'/'1.5'/'2' 固定档
+  watchSections: 0, // 每门课从第一节起连续处理几节（0 = 整门课程）；设置页可改，面板不再写死 4
   watchMuted: true, // 保持原有刷课默认静音；面板可取消
   panelMode: 'homework', // API 面板：写题 / 刷课
 };
@@ -107,7 +108,8 @@ async function watchGo(index) {
   q.index = index;
   const cur = q.courses[index];
   if (!cur) {
-    if (q.targetRun === 4) {
+    if (Number(q.targetRun) >= 1) {
+      const size = Math.max(1, Math.min(10, Number(q.targetRun) || 4)); // 设置页选的节数
       const report = { at: new Date().toISOString(), courses: q.courses.map(c => ({
         key: c.key, name: c.name, status: c.outcome?.status || 'incomplete',
         chapterIds: c.outcome?.chapterIds || [], exceptions: c.outcome?.exceptions || [], gaps: c.gaps || [] })) };
@@ -122,12 +124,13 @@ async function watchGo(index) {
          它们第 3 轮的欠账要再给机会（用户：不达目标不罢休）。 */
       if (failed.length && round < 5) {
         const next = {
-          courses: failed.map(c => ({ key: c.key, scUrl: c.scUrl, name: c.name })),
+          courses: failed.map(c => ({ key: c.key, scUrl: c.scUrl, name: c.name,
+            ...(Number.isFinite(c.done) && Number.isFinite(c.total) ? { done: c.done, total: c.total } : {}) })),
           index: 0,
           tabId: q.tabId,
           rate: q.rate || 2,
           autoRate: !!q.autoRate,
-          targetRun: 4,
+          targetRun: size,
           round: round + 1,
         };
         await saveQueue(next);
@@ -136,8 +139,8 @@ async function watchGo(index) {
         return;
       }
       await saveQueue(null);
-      notify(`开头 4 节核验：${done}/${report.courses.length} 门达标（口语例外单列）；其余详见插件日志`);
-      sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { count: done, total: report.courses.length, targetRun: 4, limited: true } });
+      notify(`开头 ${size} 节核验：${done}/${report.courses.length} 门达标（口语例外单列）；其余详见插件日志`);
+      sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { count: done, total: report.courses.length, targetRun: size, limited: true } });
       return;
     }
     await saveQueue(null);
@@ -601,8 +604,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         /* 开始刷一门或几门课：courses 是内容脚本在列表页扫出来的，后台只负责排队与翻页 */
         const courses = (payload.courses || []).filter((c) => c && c.key && c.scUrl);
         if (!courses.length) return sendResponse({ ok: false, error: '没有选中课程' });
-        if (payload.targetRun === 4 && courses.some(c => !Number.isFinite(c.done) || !Number.isFinite(c.total) || c.total <= 0 || c.done / c.total >= .35))
-          return sendResponse({ ok: false, error: '连续 4 节模式只接受进度已知且低于 35% 的课程' });
+        /* targetRun = 每门课处理几节（设置页决定）；0/缺省 = 整门课程 */
+        const targetRun = Math.max(0, Math.min(10, Math.floor(Number(payload.targetRun) || 0)));
+        if (targetRun >= 1 && courses.some(c => !Number.isFinite(c.done) || !Number.isFinite(c.total) || c.total <= 0 || c.done / c.total >= .35))
+          return sendResponse({ ok: false, error: `连续 ${targetRun} 节模式只接受进度已知且低于 35% 的课程` });
         const existing = await loadQueue();
         if (existing && existing.tabId !== tabId) {
           /* 浏览器重启后 tabId 必变：旧属主标签页还在才拒绝，不在了就收养，
@@ -612,13 +617,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         watchQueue = {
           courses: courses.map((c) => ({ key: c.key, scUrl: c.scUrl, name: c.name || '',
+            /* 记下列表页读到的进度：换到课程页后面板仍能估「这门还要多久」（用户 2026-10-23 要求） */
+            ...(Number.isFinite(c.done) && Number.isFinite(c.total) ? { done: c.done, total: c.total } : {}),
             ...(Array.isArray(c.chapterIds) && c.chapterIds.length
-              ? { chapterIds: [...new Set(c.chapterIds.map(String))].slice(0, 6) } : {}) })),
+              ? { chapterIds: [...new Set(c.chapterIds.map(String))].slice(0, 10) } : {}) })),
           index: 0,
           tabId: tabId ?? null,
           rate: Number(payload.rate) || 2,
           autoRate: !!payload.autoRate,
-          ...(payload.targetRun === 4 ? { targetRun: 4 } : {}),
+          ...(targetRun >= 1 ? { targetRun } : {}),
         };
         await saveQueue(watchQueue);
         const here = new URL(sender.url || sender.tab?.url || 'about:blank');
@@ -657,11 +664,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (type === 'HW_WATCH_COURSE_DONE') {
         const q = await loadQueue();
         if (q && q.tabId === tabId && q.courses[q.index]?.key === payload.key && !q.paused) {
-          if (q.targetRun === 4) {
+          if (Number(q.targetRun) >= 1) {
+            const size = Math.max(1, Math.min(10, Number(q.targetRun) || 4));
             q.courses[q.index].outcome = {
               status: ['complete', 'complete_with_exceptions'].includes(payload.status) ? payload.status : 'incomplete',
-              chapterIds: Array.isArray(payload.chapterIds) ? payload.chapterIds.slice(0, 4) : [],
-              exceptions: Array.isArray(payload.exceptions) ? payload.exceptions.slice(0, 4) : [] };
+              chapterIds: Array.isArray(payload.chapterIds) ? payload.chapterIds.slice(0, size) : [],
+              exceptions: Array.isArray(payload.exceptions) ? payload.exceptions.slice(0, size) : [] };
             await saveQueue(q);
           }
           await watchGo(q.index + 1);
@@ -671,8 +679,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const q = await loadQueue();
         const course = q?.courses[q.index];
         const ids = payload.chapterIds;
-        if (!q || q.targetRun !== 4 || q.tabId !== tabId || q.paused || course?.key !== payload.key ||
-            !Array.isArray(ids) || ids.length !== 4 || ids.some(id => !/^\d+$/.test(String(id))))
+        const size = Math.max(1, Math.min(10, Number(q?.targetRun) || 4));
+        if (!q || !(Number(q.targetRun) >= 1) || q.tabId !== tabId || q.paused || course?.key !== payload.key ||
+            !Array.isArray(ids) || ids.length !== size || ids.some(id => !/^\d+$/.test(String(id))))
           return sendResponse({ ok: false, error: '连续小节范围与当前队列不一致' });
         course.chapterIds = ids.map(String);
         course.attempted ||= [];
@@ -683,7 +692,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         /* 每门课只补跑一次：跑完仍缺就如实记未达标，不在目录页和课程页之间来回拉锯。 */
         const q = await loadQueue();
         const course = q?.courses[q.index];
-        if (!q || q.targetRun !== 4 || q.tabId !== tabId || q.paused || course?.key !== payload.key)
+        if (!q || !(Number(q.targetRun) >= 1) || q.tabId !== tabId || q.paused || course?.key !== payload.key)
           return sendResponse({ ok: false, error: '队列与当前课程不一致' });
         if (course.retried) return sendResponse({ ok: true, first: false });
         course.retried = true;
@@ -692,7 +701,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (type === 'HW_WATCH_FOUR_GAP') {
         const q = await loadQueue();
         const course = q?.courses[q.index];
-        if (q?.targetRun === 4 && q.tabId === tabId && course?.key === payload.key) {
+        if (Number(q?.targetRun) >= 1 && q.tabId === tabId && course?.key === payload.key) {
           course.gaps ||= [];
           course.gaps.push({ chapterIds: course.chapterIds || [], sections: payload.sections || [] });
           await saveQueue(q);

@@ -47,6 +47,11 @@ function fixtureBoot() {
     },
   };
   document.querySelectorAll('[role="checkbox"]').forEach((el) => el.addEventListener('click', () => el.setAttribute('aria-checked', String(el.getAttribute('aria-checked') !== 'true'))));
+  /* 每门课刷几节已改到设置页（config.watchSections），面板不再有勾选框：测试直接改配置并触发 onChanged */
+  window.setWatchSections = (n) => {
+    testStore.config = { ...(testStore.config || {}), watchSections: n };
+    testStorageListeners.forEach((fn) => fn({ config: { newValue: testStore.config } }, 'local'));
+  };
   document.querySelectorAll('#judge .answerBg').forEach((el) => el.addEventListener('click', () => {
     document.querySelectorAll('#judge .answerBg').forEach((row) => row.setAttribute('aria-checked', String(row === el)));
     document.querySelector('[name="answer30"]').value = el.querySelector('[data]').getAttribute('data');
@@ -330,8 +335,8 @@ async function browserChecks() {
   window.testApiKey = '';
   HW.Panel.init();
   const ui = document.querySelector('#hw-panel-host').shadowRoot;
-  ui.querySelector('.fab').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 1200, clientY: 800 }));
-  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
+  /* 悬浮球 0.9.9 起用 Pointer Events 拖动，展开/收起只认真正的 click（detail>0） */
+  ui.querySelector('.fab').dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
   ok(!ui.querySelector('.panel').classList.contains('hidden'), 'panel was not actually opened');
   ok(!testCalls.includes('HW_DETECT_QUESTIONS'), 'opening panel must not send page data');
   ok(!testCalls.includes('HW_ISSUE_ADD'), '正常打开面板不应产生异常记录');
@@ -561,15 +566,15 @@ async function browserChecks() {
     completed.querySelector('summary').click();
     ok(!completed.open);
   });
-  await check('连续四节入口只选进度低于 35% 的课程', async () => {
+  await check('设置里的限定节数只选进度低于 35% 的课程', async () => {
     await setPanelMode('watch');
-    const option = ui.querySelector('.watchfour');
-    option.click();
-    ok(option.checked, '连续四节选项未选中');
-    ok(ui.querySelector('.watchbtn').textContent.includes('连续4节'), '启动按钮未说明模式');
+    setWatchSections(4); // 页面上下文里直接改配置并触发 onChanged（面板已无勾选框）
+    await until(() => ui.querySelector('.watchbtn').textContent.includes('前 4 节'));
+    ok(ui.querySelector('.watchbtn').textContent.includes('前 4 节'), '启动按钮未说明模式');
     ok(ui.querySelector('.crow[data-i="0"] input').checked, '33% 的课程被错误排除');
     ok(ui.querySelector('.crow[data-i="2"] input').disabled, '已完成课程仍可选');
-    option.click();
+    setWatchSections(0);
+    await until(() => !ui.querySelector('.watchbtn').textContent.includes('前 4 节'));
     await setPanelMode('homework');
   });
   await check('个人中心内嵌课程列表可读，切换列表后保留勾选，进度异步更新用时', async () => {
@@ -718,14 +723,14 @@ try {
   for (const width of [1280, 420]) {
     await call('Emulation.setDeviceMetricsOverride', { width, height: 800, deviceScaleFactor: 1, mobile: false });
     await evaluate('setPanelMode("watch")');
-    await evaluate('document.querySelector("#hw-panel-host").shadowRoot.querySelector(".watchfour").click()');
+    await evaluate('setWatchSections(4)');
     const shot = await call('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(path.join(output, `ui-watch-${width}.png`), Buffer.from(shot.data, 'base64'));
     const watch = await evaluate(`(() => {const s=document.querySelector('#hw-panel-host').shadowRoot,p=s.querySelector('.panel'),r=p.getBoundingClientRect(),button=s.querySelector('.watchbtn').getBoundingClientRect(),log=s.querySelector('.logwrap').getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,height:innerHeight,width:innerWidth,overflow:p.scrollHeight>p.clientHeight,log:log.height,buttonBottom:button.bottom,logTop:log.top};})()`);
     console.log('UI watch geometry', width, watch);
     assert.ok(watch.left>=0 && watch.right<=watch.width && watch.top>=0 && watch.bottom<=watch.height && !watch.overflow && watch.log>=96);
     assert.ok(watch.buttonBottom <= watch.logTop, 'watch button overlaps the log area');
-    await evaluate('document.querySelector("#hw-panel-host").shadowRoot.querySelector(".watchfour").click()');
+    await evaluate('setWatchSections(0)');
     await evaluate('setPanelMode("homework")');
   }
   const aiEmpty = await evaluate('setDetectionUI("empty")');

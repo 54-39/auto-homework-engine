@@ -4,9 +4,10 @@
   const HW = (window.HW = window.HW || {});
   const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
   const esc = (s) => String(s).replace(/[&<>"\n]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\n': ' ' }[c]));
-  const OMIT = 'script,style,noscript,nav,footer,[role="navigation"],[role="banner"],[role="search"],#hw-panel-host,.newTopic1,#posDiscussScroll,#searchChapterListByName';
+  const OMIT = 'script,style,noscript,nav,footer,[role="navigation"],[role="banner"],[role="search"],#hw-panel-host,.newTopic1,#posDiscussScroll,#searchChapterListByName,.topicDetail_replyWrap,.topicDetail_info';
   const TYPES = new Set(['choice', 'multi', 'judge', 'blank', 'subjective']);
-  const questionRoot = el => el?.closest('.questionLi,.TiMu,.mark_item,.q-item,.question-item,.question,.exam-question,.topic-item,fieldset');
+  const questionRoot = el => el?.closest('.questionLi,.TiMu,.mark_item,.q-item,.question-item,.question,.exam-question,.topic-item,fieldset') ||
+    (el?.matches('.topicDetail_editContainer textarea[placeholder="回复话题"]') ? el.closest('.topicDetail_editContainer') : null);
   function imageText(img) {
     // 超星公式图的 data 是经过 URL 编码的 JSON 字符串，保留其 LaTeX 原文。
     if (img.matches('img.ans-latex-moudle')) {
@@ -71,6 +72,7 @@
     const walk = (el) => {
       // 超星题干 <h3 class="mark_name"> 自带 aria-hidden="true" 却视觉可见，不能按 aria-hidden 过滤。
       if (el.matches(OMIT) || el.closest('[hidden]')) return null;
+      if (el.matches('.topicDetail_editContainer') && HW.CXAdapter?.discussion(el.ownerDocument)?.completed) return null;
       if (el.matches('form') && el.querySelector('input[type="password"]')) return null;
       const native = el.matches('input,textarea,select');
       // 不采集表单值、密码或账号字段。隐藏字段仅在本地绑定时用于读取站点答案状态。
@@ -89,7 +91,7 @@
       let kind = '';
       if (el.matches('input[type="radio"],input[type="checkbox"],[role="radio"],[role="checkbox"],.answerBg') ||
           (el.matches('label') && !el.querySelector('input:not([type="radio"]):not([type="checkbox"]),textarea'))) kind = 'option';
-      else if (el.matches('input[type="file"],[draggable="true"]')) kind = 'unsupported';
+      else if (el.matches('input[type="file"],[draggable="true"]')) kind = el.matches('input[type="file"]') && el.closest('.topicDetail_editContainer') ? '' : 'unsupported';
       else if (el.matches('select') || sharedOptions(el)) kind = 'select';
       else if (el.matches('input,textarea')) kind = 'text';
       else if (el.isContentEditable) kind = 'editable';
@@ -244,8 +246,16 @@
         if (!TYPES.has(item.type)) throw new Error(item.reason || '暂不支持此题型或题目资料不完整');
         const container = snapshot.refs.get(item.containerId)?.el;
         if (!container) throw new Error('AI 返回的题目容器不存在');
-        if ([...container.querySelectorAll('img')].some((img) => snapshot.ids.has(img) && !imageText(img))) throw new Error('题型已识别，但题干或选项含有未读取的图片，请核对图片内容');
-        if ([...container.querySelectorAll('input[type="file"],[draggable="true"],select[multiple]')].some(el => snapshot.ids.has(el))) throw new Error('题目包含上传、拖拽或多选下拉控件，尚不能可靠填写');
+        const replyBox = item.type === 'subjective' && item.inputIds.length === 1
+          ? snapshot.refs.get(item.inputIds[0])?.el : null;
+        const discussion = replyBox?.matches('.topicDetail_editContainer textarea[placeholder="回复话题"]')
+          && replyBox.ownerDocument.querySelector('.topicDetail_title');
+        // 话题标题与回复框分处两个容器；公共祖先还包含头像、回复列表和可选附件工具栏。
+        const contentAreas = discussion
+          ? [discussion, discussion.closest('.topicDetail_head')?.parentElement?.querySelector('.richText')].filter(Boolean)
+          : [container];
+        if (contentAreas.some(area => [...area.querySelectorAll('img')].some(img => snapshot.ids.has(img) && !imageText(img)))) throw new Error('题型已识别，但题干或选项含有未读取的图片，请核对图片内容');
+        if ([...container.querySelectorAll('input[type="file"],[draggable="true"],select[multiple]')].some(el => snapshot.ids.has(el) && !(discussion && el.matches('input[type="file"]') && el.closest('.topicDetail_editContainer')))) throw new Error('题目包含上传、拖拽或多选下拉控件，尚不能可靠填写');
         const context = (item.contextIds || []).map((id) => {
           const el = snapshot.refs.get(id)?.el;
           if (!el || el.matches('input,textarea,select,iframe,[contenteditable]') || el.querySelector('input,textarea,select,iframe,[contenteditable]')) throw new Error('共享材料区域不存在或混入了答题控件');

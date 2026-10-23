@@ -13,10 +13,25 @@
   const textOf = el => window.HW.AIDetection?.textOf?.(el) || norm(el.textContent);
 
   const CX = {
+    discussion(doc = document) {
+      const title = doc.querySelector('.topicDetail_detail .topicDetail_title');
+      const box = doc.querySelector('.topicDetail_editContainer textarea[placeholder="回复话题"]');
+      if (!title || !box) return null;
+      // 按用户指定的页面状态：出现同学回复记录后，不再列为待答讨论题。
+      const completed = !!doc.querySelector('.topicDetail_replyList .topicDetail_replyItem');
+      return { title, box, completed, body: title.closest('.topicDetail_detail')?.querySelector('.richText') };
+    },
     match(doc = document) {
-      return !!doc.querySelector('.questionLi[typename]');
+      return !!doc.querySelector('.questionLi[typename]') || !!CX.discussion(doc);
     },
     extract(doc = document) {
+      const topic = CX.discussion(doc);
+      if (topic) {
+        if (topic.completed || !topic.box.getClientRects().length || topic.box.disabled || topic.box.readOnly) return [];
+        const stem = [textOf(topic.title), topic.body && textOf(topic.body)].filter(Boolean).join('\n');
+        return [{ meta: { index: 0, type: 'subjective', stem, options: [], blanks: 0 },
+          el: { inputs: [topic.box], labels: [], contexts: [topic.title, topic.body].filter(Boolean) } }];
+      }
       return [...doc.querySelectorAll('.questionLi')].map((q, i) => {
         const id = (q.id || '').replace(/^question/, '');
         const code = q.querySelector('input[name="answertype' + id + '"]')?.value;

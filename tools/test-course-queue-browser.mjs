@@ -125,6 +125,16 @@ async function queueChecks() {
     ok(oral.complete && oral.exceptions.length === 1 && oral.exceptions[0].id === '3', '明确口语例外未单列');
   });
 
+  await check('节数由设置决定：2 节 / 6 节窗口都只看前 N 节', () => {
+    const entries = Array.from({ length: 8 }, (_, i) => ({ id: String(i + 1), name: `第${i + 1}节`, done: i < 3 }));
+    const two = HW.Watch.windowOf(entries, 2);
+    ok(two.complete === true && two.chapterIds.join(',') === '1,2', '前 2 节窗口取错：' + two.chapterIds.join(','));
+    const six = HW.Watch.windowOf(entries, 6);
+    ok(six.chapterIds.join(',') === '1,2,3,4,5,6' && six.left === 3 && six.start === 0, '前 6 节窗口取错：' + six.chapterIds.join(','));
+    ok(HW.Watch.windowOf(entries.slice(0, 5), 6) === null, '节点不足 6 节时不该硬凑');
+    ok(HW.Watch.fourWindow(entries).chapterIds.length === 4, '旧 fourWindow 应仍按 4 节');
+  });
+
   await check('连续四节队列先锁定范围，平台目录核验后才报达标', async () => {
     history.replaceState({}, '', '/mooc2-ans/mycourse/studentcourse?courseid=1&clazzid=2');
     document.body.innerHTML = `<div id="catalog">${[901, 902, 903, 904].map(id =>
@@ -220,9 +230,13 @@ async function queueChecks() {
       if (msg.type === 'HW_WATCH_COURSE_DONE') { window.__doneKey = msg.payload.key; return { ok: true }; }
       return { ok: true };
     };
+    /* 空壳课先给一次自愈刷新；这里模拟「已经刷新过一次、目录仍然为空」，
+       此时必须直接报完成翻下一门，否则这一页会永远停着（v0.9.10 前的卡死路径）。 */
+    try { sessionStorage.setItem('hwCatRetry', '1'); } catch { }
     const took = await HW.Watch.resumeQueued({ onNote: (t) => window.__notes.push(t) });
     ok(took === true, '空壳课没被认成目录页处理');
     ok(window.__doneKey === '9|8', '没报完成，队列会卡死：' + window.__doneKey);
+    ok(!sessionStorage.getItem('hwCatRetry'), '自愈标记没清掉，下一门课会少一次刷新机会');
     history.replaceState({}, '', '/');
   });
 

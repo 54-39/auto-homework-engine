@@ -801,20 +801,27 @@
     return out;
   }
 
-  function fourWindow(entries, attempted = []) {
-    const four = entries.slice(0, 4);
-    if (four.length !== 4) return null;
-    const chapterIds = four.map(e => e.id);
-    if (four.every(e => e.done)) return { complete: true, chapterIds, exceptions: [] };
-    const exceptions = four.filter(e => !e.done && /口语/.test(e.name))
+  /* 开头连续 N 节（N 由设置页决定，默认 4）：返回这段窗口的完成情况。
+     用户 2026-10-23 要求节数可自行设置，所以这里不再写死 4。 */
+  function windowOf(entries, n, attempted = []) {
+    const size = Math.max(1, Math.min(10, Number(n) || 4));
+    const win = entries.slice(0, size);
+    if (win.length !== size) return null;
+    const chapterIds = win.map(e => e.id);
+    if (win.every(e => e.done)) return { complete: true, chapterIds, exceptions: [] };
+    const exceptions = win.filter(e => !e.done && /口语/.test(e.name))
       .map(e => ({ id: e.id, name: e.name }));
     if (attempted.includes(0)) {
-      return four.every(e => e.done || exceptions.some(x => x.id === e.id))
+      return win.every(e => e.done || exceptions.some(x => x.id === e.id))
         ? { complete: true, chapterIds, exceptions }
         : { incomplete: true, chapterIds, exceptions };
     }
-    return { start: 0, chapterIds, left: four.filter(e => !e.done).length };
+    return { start: 0, chapterIds, left: win.filter(e => !e.done).length };
   }
+  // 旧的 4 节版本保留成薄封装：测试脚本与历史调用还在用它。
+  const fourWindow = (entries, attempted) => windowOf(entries, 4, attempted);
+  /* 限定节数模式：队列里带 targetRun（设置页选的节数）就是这种模式，不再只认 4 */
+  const limitedRun = (q) => Number(q?.targetRun) >= 1;
 
   /* 进课程：点目录里第一个没做完的节点（真实点击，和用户自己点一样） */
   function enterCourse() {
@@ -877,8 +884,9 @@
     catch { /* 后台不在就只能停在这里 */ }
   }
 
-  async function verifyFourFromCatalog(q, opts) {
+  async function verifyWindowFromCatalog(q, opts) {
     const course = q.courses[q.index];
+    const size = Math.max(1, Math.min(10, Number(q.targetRun) || 4)); // 设置页选的节数
     const entries = await until(() => catalogEntries().length ? catalogEntries() : null, 15000);
     if (!entries) {
       /* 目录没渲染先自愈一次：刷新后 resumeQueued 重入本函数（flag 防死循环）。 */
@@ -889,18 +897,18 @@
         return;
       }
       try { sessionStorage.removeItem('hwCatRetry'); } catch { }
-      const reason = '课程目录未加载，连续 4 节状态无法核验';
+      const reason = `课程目录未加载，连续 ${size} 节状态无法核验`;
       await chrome.runtime.sendMessage({ type: 'HW_WATCH_PAUSE', payload: { reason } });
       opts?.onNote?.(reason);
       return;
     }
     try { sessionStorage.removeItem('hwCatRetry'); } catch { }
-    const window = fourWindow(entries, course.attempted || []);
+    const window = windowOf(entries, size, course.attempted || []);
     if (window?.complete) {
       const exceptions = window.exceptions || [];
       opts?.onNote?.(exceptions.length
-        ? `开头 4 节已核验；${exceptions.length} 个口语小节按例外跳过：${exceptions.map(e => e.name).join('、')}`
-        : `平台目录确认开头连续 4 节已完成：${window.chapterIds.join('、')}`);
+        ? `开头 ${size} 节已核验；${exceptions.length} 个口语小节按例外跳过：${exceptions.map(e => e.name).join('、')}`
+        : `平台目录确认开头连续 ${size} 节已完成：${window.chapterIds.join('、')}`);
       await reportCourseDone(course.key, { status: exceptions.length ? 'complete_with_exceptions' : 'complete',
         chapterIds: window.chapterIds, exceptions });
       return;
@@ -911,18 +919,18 @@
          openGauss 开头 4 节 22 个任务点被一句「记录为未达标」跳过去。
          这里每门课再给一轮机会，跑完还缺才记未达标。 */
       const ids = window?.chapterIds || [];
-      if (ids.length === 4) {
+      if (ids.length === size) {
         const retry = await chrome.runtime.sendMessage({ type: 'HW_WATCH_RETRY_ONCE', payload: { key: course.key } });
         if (retry?.ok && retry.first) {
           const saved = await chrome.runtime.sendMessage({ type: 'HW_WATCH_SCOPE_SET', payload: { key: course.key, start: 0, chapterIds: ids } });
           if (saved?.ok) {
-            opts?.onNote?.('开头 4 节还没做完，本轮重新补一遍');
+            opts?.onNote?.(`开头 ${size} 节还没做完，本轮重新补一遍`);
             try { entries[0]?.anchor?.click(); } catch { opts?.onNote?.('未能打开第 1 节，请手动检查'); }
             return;
           }
         }
       }
-      opts?.onNote?.('课程开头 4 节仍有普通任务未完成，记录为未达标');
+      opts?.onNote?.(`课程开头 ${size} 节仍有普通任务未完成，记录为未达标`);
       await reportCourseDone(course.key, { status: 'incomplete', chapterIds: ids });
       return;
     }
@@ -932,7 +940,7 @@
       opts?.onNote?.('保存连续小节范围失败：' + (saved?.error || '未知错误'));
       return;
     }
-    opts?.onNote?.(`从课程开头处理前 4 节（尚未完成 ${window.left} 节）`);
+    opts?.onNote?.(`从课程开头处理前 ${size} 节（尚未完成 ${window.left} 节）`);
     const target = entries[window.start].anchor;
     try { target.click(); } catch { opts?.onNote?.('未能打开选定小节，请手动检查'); }
   }
@@ -1011,25 +1019,31 @@
       return k === 'study' || k === 'catalog' ? k : null;
     }, 20000);
     if (kind === 'catalog') {
-      if (q.targetRun === 4) {
-        await verifyFourFromCatalog(q, opts);
+      if (limitedRun(q)) {
+        await verifyWindowFromCatalog(q, opts);
         return true;
       }
       const next = await until(() => enterCourse(), 15000);
       if (!next) {
         /* 目录解析成功才算这门课走完；解析为空多半是新版目录/渲染慢，
-           刷新一次自愈（flag 防死循环），不能把整门课静默跳过（昨晚漏 12 节的根因之一）。 */
+           刷新一次自愈（flag 防死循环），不能把整门课静默跳过（昨晚漏 12 节的根因之一）。
+           刷新后仍是空的空壳课（站点只给「已完成任务点 0/0」）就报完成翻下一门，
+           否则这一页会永远停着、整条队列卡死（2026-10-23 回归用例抓到）。 */
         if (catalogEntries().length) await reportCourseDone(q.courses[q.index] && q.courses[q.index].key);
         else if (!sessionStorage.getItem('hwCatRetry')) {
           try { sessionStorage.setItem('hwCatRetry', '1'); } catch { }
           opts?.onNote?.('目录未解析出节点，刷新一次再试');
           setTimeout(() => location.reload(), 800);
+        } else {
+          try { sessionStorage.removeItem('hwCatRetry'); } catch { }
+          opts?.onNote?.('刷新后目录仍没有节点，按已完成处理，翻下一门');
+          await reportCourseDone(q.courses[q.index] && q.courses[q.index].key);
         }
       }
       return true;
     }
     if (kind === 'study') {
-      if (q.targetRun === 4 && !q.courses[q.index]?.chapterIds?.length) {
+      if (limitedRun(q) && !q.courses[q.index]?.chapterIds?.length) {
         await returnToCatalog();
         return true;
       }
@@ -1542,10 +1556,10 @@
           HW.Panel?.reportGrade?.();
           /* 用户 2026-10-22 明确「先刷完，不强求正确率」：低分只记日志，不再暂停整轮
              （留空提交的卷子分数必然低，暂停只会让任务点永远计不上）。 */
-          if (multi?.targetRun === 4 && grade.total > 0 && grade.score / grade.total < .8) {
+          if (limitedRun(multi) && grade.total > 0 && grade.score / grade.total < .8) {
             note(`测验仅得 ${grade.score}/${grade.total}（低于 80%）。按「先刷完」约定不暂停，错题自己回头核对`);
           }
-        } else if (multi?.targetRun === 4) {
+        } else if (limitedRun(multi)) {
           note('测验已提交但成绩尚未返回，继续下一节');
         }
         return true;
@@ -1977,7 +1991,7 @@
       note(`本轮目录已检查（跳过已完成 ${skipped} 节）`);
       if (scopeChapters && list.some(n => unfinishedOf(n.id) === null)) {
         stop();
-        if (multi?.targetRun === 4) {
+        if (limitedRun(multi)) {
           note('学习页有小节无任务计数，返回平台目录核验');
           if (!await returnToCatalog()) note('返回目录核验失败，队列保留在本页');
           return;
@@ -2020,7 +2034,7 @@
           await chrome.storage.local.set({ watchGaps: all.slice(-20) }).catch(() => {});
         } catch { /* 记不上也不影响继续刷 */ }
         if (multi) {
-          if (multi.targetRun === 4) {
+          if (limitedRun(multi)) {
             await chrome.runtime.sendMessage({ type: 'HW_WATCH_FOUR_GAP', payload: {
               key: multi.courses[multi.index]?.key, sections: gaps } });
             stop();
@@ -2036,7 +2050,7 @@
       if (scopeChapters) {
         stop();
         note(`本次限定的 ${list.length} 个小节已完成，其余小节未纳入本次任务`);
-        if (multi?.targetRun === 4) {
+        if (limitedRun(multi)) {
           if (!await returnToCatalog()) note('返回目录核验失败，队列保留在本页');
           return;
         }
@@ -2142,6 +2156,7 @@
     formatCourseTime: fmtLeft,
     catalogEntries,
     fourWindow,
+    windowOf,
     enterCourse,
     pageKind,
     currentCourse,

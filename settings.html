@@ -43,6 +43,9 @@
   .hint{margin:0 0 10px;color:var(--text-2);text-wrap:pretty}
   .hint:last-of-type{margin-bottom:16px}
   .issue-list{list-style:none;margin:12px 0 24px;padding:0}
+  .issue-history{margin-top:12px}
+  .issue-history>summary{cursor:pointer;padding:10px 0;color:var(--text);font-weight:500}
+  .issue-history .issue-list{max-height:320px;overflow-y:auto;margin:0;scrollbar-gutter:stable}
   .issue-list li{padding:12px 0;border-bottom:1px solid var(--line-soft)}
   .issue-list summary{cursor:pointer;color:var(--text);overflow-wrap:anywhere}
   .issue-list small{display:block;margin:4px 0;color:var(--text-2);font-variant-numeric:tabular-nums}
@@ -61,6 +64,13 @@
   .kv>div{display:flex;gap:14px;padding:4px 0}
   .kv dt{margin:0;width:72px;color:var(--text-2)}
   .kv dd{margin:0;font-weight:550;font-variant-numeric:tabular-nums}
+
+  /* 刷课分区的下拉：与按钮同尺寸，原生控件只换边框和圆角 */
+  .field{display:flex;align-items:center;gap:14px;margin:0 0 14px}
+  .field label{flex:none;width:132px;color:var(--text-2)}
+  .field select{font:inherit;color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:7px 10px;min-width:180px;cursor:pointer;touch-action:manipulation}
+  .field select:hover{border-color:#c9d0da}
+  .field select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
   .actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:14px}
   .confirm .actions{margin-top:0}
@@ -123,6 +133,7 @@
       <p>工具设置</p>
     </div>
     <button type="button" data-sec="mem" aria-controls="sec-mem" aria-current="true">记忆</button>
+    <button type="button" data-sec="watch" aria-controls="sec-watch">刷课</button>
     <button type="button" data-sec="diag" aria-controls="sec-diag">诊断</button>
     <button type="button" data-sec="upd" aria-controls="sec-upd">检测更新</button>
   </nav>
@@ -147,6 +158,29 @@
         </div>
       </section>
 
+      <section id="sec-watch" class="card" aria-labelledby="h-watch" hidden>
+        <h2 id="h-watch">刷课</h2>
+        <p class="hint">面板里的「开始刷课」按这里设置的节数执行，不用再在面板上勾选项。</p>
+        <p class="hint">选「前 N 节」时只处理进度低于 35% 的课程，每门从第一节起连续完成 N 节；口语小节按例外单列。</p>
+        <div class="field">
+          <label for="watchSections">每门课程处理节数</label>
+          <select id="watchSections">
+            <option value="0">整门课程（不限定节数）</option>
+            <option value="1">前 1 节</option>
+            <option value="2">前 2 节</option>
+            <option value="3">前 3 节</option>
+            <option value="4">前 4 节</option>
+            <option value="5">前 5 节</option>
+            <option value="6">前 6 节</option>
+            <option value="7">前 7 节</option>
+            <option value="8">前 8 节</option>
+            <option value="9">前 9 节</option>
+            <option value="10">前 10 节</option>
+          </select>
+        </div>
+        <div class="msg" id="watchMsg" role="status" aria-live="polite"></div>
+      </section>
+
       <section id="sec-diag" class="card" aria-labelledby="h-diag" hidden>
         <h2 id="h-diag">诊断</h2>
         <p class="hint">只记录异常，每次问题独立保存在本机。记录不会自动淘汰；下方分页展示，导出包含全部历史。</p>
@@ -157,7 +191,10 @@
           <button type="button" class="ghost" id="issueClear">清空记录</button>
         </div>
         <div class="msg" id="issueMsg" role="status" aria-live="polite"></div>
-        <ol class="issue-list" id="issueList" aria-label="异常记录"></ol>
+        <details class="issue-history">
+          <summary>查看异常记录</summary>
+          <ol class="issue-list" id="issueList" aria-label="异常记录"></ol>
+        </details>
         <div class="issue-pages" id="issuePages" hidden><button type="button" class="ghost" id="issuePrev">上一页</button><span id="issuePageLabel"></span><button type="button" class="ghost" id="issueNext">下一页</button></div>
         <h3 class="diag-heading">页面结构</h3>
         <p class="hint">把最近打开的作业页面结构导出为 HTML 文件；站点适配失败时，把这个文件发给开发者即可排查。</p>
