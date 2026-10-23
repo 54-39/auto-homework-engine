@@ -7,6 +7,18 @@
 
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
+
+# 安装过程全部落一份日志，窗口关掉之后还能查到底卡在哪一步。
+$script:LogPath = ''
+function Write-Step([string]$Text) {
+  Write-Host $Text
+  try {
+    if ($script:LogPath) {
+      Add-Content -LiteralPath $script:LogPath -Encoding UTF8 -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $Text)
+    }
+  } catch { }
+}
 
 function Normalize-Root([string]$Path) {
   $full = [IO.Path]::GetFullPath($Path)
@@ -27,6 +39,22 @@ function Get-ExtensionId([string]$Folder) {
   return $id.ToString()
 }
 
+# 名称可能是字面量（旧包），也可能是本地化占位符 __MSG_extensionName__（当前包）。
+# 旧实现在这里硬比 '作业助手'，占位符形态永远不相等，导致安装器必然失败。
+function Test-ProjectName([string]$Folder, $Manifest) {
+  $name = [string]$Manifest.name
+  if ($name -and $name -notmatch '^__MSG_') { return ($name -like '*作业助手*') }
+  foreach ($loc in @('zh_CN', 'en')) {
+    $msgPath = Join-Path (Join-Path $Folder ('_locales\' + $loc)) 'messages.json'
+    if (-not (Test-Path -LiteralPath $msgPath -PathType Leaf)) { continue }
+    try {
+      $msg = Get-Content -LiteralPath $msgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+      if ([string]$msg.extensionName.message -like '*作业助手*') { return $true }
+    } catch { }
+  }
+  return $false
+}
+
 function Test-ProjectFolder([string]$Folder) {
   try {
     $root = Normalize-Root $Folder
@@ -36,7 +64,7 @@ function Test-ProjectFolder([string]$Folder) {
     }
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { return $null }
     $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($manifest.name -ne '作业助手') { return $null }
+    if (-not (Test-ProjectName $root $manifest)) { return $null }
     if ($ExpectedVersion -and $manifest.version -ne $ExpectedVersion) { return $null }
     $id = Get-ExtensionId $root
     if ($ExpectedId -and $id -ne $ExpectedId) { return $null }
@@ -44,8 +72,9 @@ function Test-ProjectFolder([string]$Folder) {
   } catch { return $null }
 }
 
-function Get-EdgeCandidates {
-  $userData = Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data'
+function Get-ProfileCandidates([string]$Browser = 'edge') {
+  $relative = if ($Browser -eq 'chrome') { 'Google\Chrome\User Data' } else { 'Microsoft\Edge\User Data' }
+  $userData = Join-Path $env:LOCALAPPDATA $relative
   if (-not (Test-Path -LiteralPath $userData -PathType Container)) { return @() }
   $profiles = @(Get-ChildItem -LiteralPath $userData -Directory -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -eq 'Default' -or $_.Name -match '^Profile \d+$' })
@@ -67,6 +96,7 @@ function Get-EdgeCandidates {
           }
           $candidate = Test-ProjectFolder $recordPath
           if ($candidate -and $candidate.Id -eq $entry.Name) {
+            $candidate | Add-Member -NotePropertyName Browser -NotePropertyValue $Browser -Force
             $found[$candidate.Root.ToLowerInvariant()] = $candidate
           }
         }
@@ -74,6 +104,37 @@ function Get-EdgeCandidates {
     }
   }
   return @($found.Values)
+}
+
+# 兼容旧调用名：默认只看 Edge。
+function Get-EdgeCandidates { return Get-ProfileCandidates 'edge' }
+
+function Get-BrowserCandidates {
+  return @(Get-ProfileCandidates 'edge') + @(Get-ProfileCandidates 'chrome')
+}
+
+# 已经装好且可用时不必重复安装（省掉重新下载 93MB 运行时的机会）。
+function Test-InstalledHost($Target) {
+  if (-not $Target) { return $false }
+  $browser = 'edge'
+  if ($Target.Browser) { $browser = [string]$Target.Browser }
+  $hostKey = if ($browser -eq 'chrome') { 'SOFTWARE\Google\Chrome\NativeMessagingHosts\' } else { 'SOFTWARE\Microsoft\Edge\NativeMessagingHosts\' }
+  $exe = Join-Path $Target.Root 'tools\native-host.exe'
+  $json = Join-Path $Target.Root ('.native-host-' + $Target.Id + '.json')
+  if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { return $false }
+  if (-not (Test-Path -LiteralPath $json -PathType Leaf)) { return $false }
+  try { $m = Get-Content -LiteralPath $json -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $false }
+  if ($m.name -ne ('com.homeworkhelper.autoupdate.' + $Target.Id)) { return $false }
+  if ([string]$m.path -ne $exe) { return $false }
+  if (-not ($m.allowed_origins -contains ('chrome-extension://' + $Target.Id + '/'))) { return $false }
+  try {
+    $q = & reg query ('HKCU\' + $hostKey + $m.name) /ve 2>$null | Out-String
+    if ($LASTEXITCODE -ne 0 -or -not $q.Contains($json)) { return $false }
+  } catch { return $false }
+  $arch = Get-Architecture
+  $runtimeExe = Join-Path $Target.Root ('.native-runtime\v24.21.0-win-' + $arch + '\node.exe')
+  if (-not (Test-Path -LiteralPath $runtimeExe -PathType Leaf)) { return $false }
+  return $true
 }
 
 function Select-ProjectFolder {
@@ -172,50 +233,64 @@ function Get-VerifiedNode([string]$Folder) {
     }
   }
 
-  # ② 没有离线包才联网下载，只保存在插件目录内。
-  $url = 'https://nodejs.org/download/release/v24.21.0/win-' + $architecture + '/node.exe'
+  # ② 没有离线包才联网下载：官方源不通就换国内镜像，三者校验同一份哈希。
+  $sources = @(
+    ('https://nodejs.org/download/release/v24.21.0/win-' + $architecture + '/node.exe'),
+    ('https://registry.npmmirror.com/-/binary/node/v24.21.0/win-' + $architecture + '/node.exe'),
+    ('https://cdn.npmmirror.com/binaries/node/v24.21.0/win-' + $architecture + '/node.exe')
+  )
   $part = $runtimeExe + '.download-' + [guid]::NewGuid().ToString('N')
-  Write-Host ('正在下载并校验 Node.js v24.21.0（' + $architecture + '），只保存在插件目录内…')
-  try {
-    $request = [Net.HttpWebRequest]::Create($url)
-    $request.Method = 'GET'
-    $request.UserAgent = 'HomeworkHelper-Updater/0.6.9'
-    $request.Timeout = 300000
-    $request.ReadWriteTimeout = 300000
-    $response = $request.GetResponse()
+  $errors = New-Object Collections.Generic.List[string]
+  foreach ($url in $sources) {
+    Write-Host ('正在下载并校验 Node.js v24.21.0（' + $architecture + '）：' + $url)
     try {
-      if ($response.ContentLength -gt 0 -and ($response.ContentLength -lt 10000000 -or $response.ContentLength -gt 160000000)) {
-        throw '下载文件大小异常'
-      }
-      $inputStream = $response.GetResponseStream()
-      $outputStream = [IO.File]::Create($part)
+      $request = [Net.HttpWebRequest]::Create($url)
+      $request.Method = 'GET'
+      $request.UserAgent = 'HomeworkHelper-Updater/0.9.11'
+      $request.Timeout = 300000
+      $request.ReadWriteTimeout = 300000
+      $response = $request.GetResponse()
       try {
-        $buffer = New-Object byte[] 65536
-        while (($read = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) { $outputStream.Write($buffer, 0, $read) }
-      } finally { $outputStream.Dispose(); $inputStream.Dispose() }
-    } finally { $response.Dispose() }
-    $downloadedHash = Get-Sha256 $part
-    if ($downloadedHash -ne $expectedHash) { throw 'Node.js 文件 SHA-256 校验失败' }
-    Move-Item -LiteralPath $part -Destination $runtimeExe -Force
-    $version = (& $runtimeExe --version 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $version -ne 'v24.21.0') { Remove-Item -LiteralPath $runtimeExe -Force; throw 'Node.js 版本校验失败' }
-    return [pscustomobject]@{ Path = $runtimeExe; Directory = $runtimeDir }
-  } catch {
-    if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue }
-    throw ('Node.js 运行环境下载或校验失败：' + $_.Exception.Message)
+        if ($response.ContentLength -gt 0 -and ($response.ContentLength -lt 10000000 -or $response.ContentLength -gt 160000000)) {
+          throw '下载文件大小异常'
+        }
+        $inputStream = $response.GetResponseStream()
+        $outputStream = [IO.File]::Create($part)
+        try {
+          $buffer = New-Object byte[] 65536
+          while (($read = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) { $outputStream.Write($buffer, 0, $read) }
+        } finally { $outputStream.Dispose(); $inputStream.Dispose() }
+      } finally { $response.Dispose() }
+      $downloadedHash = Get-Sha256 $part
+      if ($downloadedHash -ne $expectedHash) { throw 'Node.js 文件 SHA-256 校验失败' }
+      Move-Item -LiteralPath $part -Destination $runtimeExe -Force
+      $version = (& $runtimeExe --version 2>$null | Out-String).Trim()
+      if ($LASTEXITCODE -ne 0 -or $version -ne 'v24.21.0') { Remove-Item -LiteralPath $runtimeExe -Force; throw 'Node.js 版本校验失败' }
+      return [pscustomobject]@{ Path = $runtimeExe; Directory = $runtimeDir }
+    } catch {
+      if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue }
+      $errors.Add(($url + ' -> ' + $_.Exception.Message))
+      Write-Host ('这个源不可用，换下一个：' + $_.Exception.Message) -ForegroundColor Yellow
+    }
   }
+  throw ('Node.js 运行环境下载失败，已尝试官方源与国内镜像：' + ($errors -join ' / '))
+
 }
 
 try {
   if ($ExpectedId -and $ExpectedId -notmatch '^[a-p]{32}$') { throw '启动器中的扩展 ID 无效。请重新下载安装器。' }
   if ($ExpectedVersion -and $ExpectedVersion -notmatch '^\d+\.\d+\.\d+$') { throw '启动器中的版本号无效。请重新下载安装器。' }
 
+  # 安装器可以放在任意位置：先看自己所在目录，不对再自动扫浏览器配置，最后才让用户选。
   $selected = $null
   if ($Root) {
     $selected = Test-ProjectFolder $Root
-    if (-not $selected) { throw '此安装器所在目录不是匹配版本的“作业助手”插件文件夹。' }
-  } else {
-    $candidates = @(Get-EdgeCandidates)
+    if (-not $selected) {
+      Write-Host ('安装器所在目录不是作业助手插件目录，改为自动查找浏览器正在加载的目录：' + $Root)
+    }
+  }
+  if (-not $selected) {
+    $candidates = @(Get-BrowserCandidates)
     if ($DryRun) {
       Write-Host ('EDGE_CANDIDATES=' + $candidates.Count)
       foreach ($candidate in $candidates) { Write-Host ($candidate.Id + '|' + $candidate.Version + '|' + $candidate.Root) }
@@ -223,18 +298,24 @@ try {
     }
     if ($candidates.Count -eq 1) { $selected = $candidates[0] }
     else {
-      if ($candidates.Count -eq 0) { Write-Host '未能从 Edge 配置中唯一确认插件目录，请在弹出的窗口中选择。' }
-      else { Write-Host 'Edge 中找到多个插件目录，请在弹出的窗口中选择当前使用的目录。' }
+      if ($candidates.Count -eq 0) { Write-Host '未能从 Edge/Chrome 配置中确认插件目录，请在弹出的窗口中选择。' }
+      else { Write-Host '找到多个插件目录，请在弹出的窗口中选择当前使用的目录。' }
       $chosen = Select-ProjectFolder
       if (-not $chosen) { Write-Host '已取消，没有安装更新组件。'; exit 2 }
       $selected = Test-ProjectFolder $chosen
       if (-not $selected) { throw '所选文件夹不匹配作业助手版本或缺少安装文件，没有写入宿主注册信息。' }
     }
   }
+  $browser = 'edge'
+  if ($selected.Browser) { $browser = [string]$selected.Browser }
 
-  Write-Host ('已确认插件目录：' + $selected.Root)
+  $script:LogPath = Join-Path $selected.Root '.update-install.log'
+  Write-Step ('确认插件目录：' + $selected.Root + '（' + $browser + '，扩展 ID ' + $selected.Id + '）')
   if ($ExpectedId -and $selected.Id -ne $ExpectedId) { throw '插件目录 ID 与当前浏览器加载的扩展不一致，没有安装。' }
   if ($DryRun) { exit 0 }
+  # 已经有安装产物时不再跳过：重装只要一两秒（运行时已校验过就不会重下），
+  # 而且能把启动器里写死的 node 路径刷成当前这份，避免系统 node 变动后又失效。
+  if (Test-InstalledHost $selected) { Write-Step '检测到已有可用安装，刷新一次登记信息。' }
   $runtime = Get-VerifiedNode $selected.Root
   # 插件目录带低完整性级别标记时，目录里的 node.exe 起不来（写不了 %TEMP%，也写不了注册表），
   # 复制一份到 %TEMP%（无标记）来跑安装；启动器里仍然写插件目录那份稳定路径。
@@ -251,15 +332,21 @@ try {
   $oldPath = $env:PATH
   try {
     $env:PATH = $runtime.Directory + ';' + $oldPath
-    & $runNode $installer 'edge' ('--expected-id=' + $selected.Id) ('--node=' + $runtime.Path)
+    & $runNode $installer $browser ('--expected-id=' + $selected.Id) ('--node=' + $runtime.Path)
     $installCode = $LASTEXITCODE
   } finally { $env:PATH = $oldPath }
   if ($installCode -ne 0) { throw ('宿主安装失败，错误代码：' + $installCode) }
   if ($mirrorDir -and (Test-Path -LiteralPath $mirrorDir)) { Remove-Item -LiteralPath $mirrorDir -Recurse -Force -ErrorAction SilentlyContinue }
-  Write-Host '安装命令已完成。请回到 Edge 设置页；页面会自动重新检查连接。'
+  Write-Step '安装命令已完成。请回到 Edge 设置页；页面会自动重新检查连接。'
   exit 0
 } catch {
   Write-Host ('安装失败：' + $_.Exception.Message) -ForegroundColor Red
   Write-Host '没有安装成功。修复上方提示后，再重新双击此文件。'
+  if ($script:LogPath) {
+    try {
+      Add-Content -LiteralPath $script:LogPath -Encoding UTF8 -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  [失败] ' + $_.Exception.Message)
+      Write-Host ('详细日志：' + $script:LogPath)
+    } catch { }
+  }
   exit 1
 }

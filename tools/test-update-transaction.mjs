@@ -108,12 +108,14 @@ const run = (root, transactionId, fetchImpl, confirmImpl) => runUpdateTransactio
 }
 
 {
+  /* 收不到健康回执、但磁盘上的 manifest 已经是新版：按成功收尾。
+     以前这里会判失败 → 重试一次 → 再失败就回滚，用户看到的就是"更新成功后又变回旧版"。 */
   const root = makeRoot(), id = tx(), remote = mockFetch();
   const attempts = [];
   const result = await run(root, id, remote.fetchImpl, async (candidate) => { attempts.push(candidate.attempt); return candidate.attempt === 2; });
   assert.equal(result.phase, 'complete');
-  assert.deepEqual(attempts, [1, 2]);
-  assert.equal(result.attempt, 2);
+  assert.deepEqual(attempts, [1]);
+  assert.equal(result.attempt, 1);
   assert.equal(result.downloadedFiles, result.totalFiles);
   assert.equal(result.totalFiles, Object.keys(files).length);
   assert.equal(exists(root, 'content/old.js'), false);
@@ -122,18 +124,15 @@ const run = (root, transactionId, fetchImpl, confirmImpl) => runUpdateTransactio
 }
 
 {
+  /* 完全没有回执、磁盘已是新版：同样不回滚，交给用户手动重载一次即可。 */
   const root = makeRoot(), id = tx(), remote = mockFetch();
   const attempts = [];
   const result = await run(root, id, remote.fetchImpl, async (candidate) => { attempts.push(candidate.attempt); return false; });
-  assert.equal(result.phase, 'rolled_back');
-  assert.deepEqual(attempts, [1, 2]);
-  assert.equal(JSON.parse(read(root, 'manifest.json')).version, BASE);
-  assert.equal(read(root, 'background/service-worker.js'), 'old worker');
-  assert.equal(read(root, 'content/old.js'), 'old content');
-  assert.equal(exists(root, 'content/new.js'), false);
-  assert.equal(read(root, 'tools/autoupdate.mjs'), 'old updater');
-  assert.equal(read(root, 'install-updater.cmd'), '@echo off\nREM old installer');
-  assert.equal(JSON.parse(read(root, '.update-files.json')).includes('content/old.js'), true);
+  assert.equal(result.phase, 'complete');
+  assert.deepEqual(attempts, [1]);
+  assert.equal(JSON.parse(read(root, 'manifest.json')).version, NEXT);
+  assert.equal(read(root, 'content/new.js'), 'new content');
+  assert.equal(exists(root, 'content/old.js'), false);
   assert.equal(exists(root, `.update-backup-${id}`), false);
   fs.rmSync(root, { recursive: true, force: true });
 }

@@ -301,7 +301,6 @@ import { exportIssueHistory, ISSUE_PREFIX } from './background/issue-history.js'
   let setupPollTimer = 0;
   let setupPollBusy = false;
   let setupWatchActive = false;
-  const updRepairLink = $('#updRepairLink');
   const updGuide = $('#updGuide');
   const updGuidePath = $('#updGuidePath');
   const updGuideClose = $('#updGuideClose');
@@ -316,7 +315,6 @@ import { exportIssueHistory, ISSUE_PREFIX } from './background/issue-history.js'
     updSetup.hidden = ready;
     updSetup.disabled = sameId && !ready;
     updSetup.textContent = sameId && !ready ? '刷新扩展后重查' : '运行';
-    updRepairLink.hidden = ready || (sameId && !ready);
     if (ready) {
       if (installed) {
         updSetupMsg.hidden = false;
@@ -539,11 +537,24 @@ import { exportIssueHistory, ISSUE_PREFIX } from './background/issue-history.js'
         autoChecked = true;
         check(false);
       }
+      loadAutoUpdate();
       checkSetupHost();
     }
   };
-  const refreshSetupHost = () => { if (!secs.upd.hidden) checkSetupHost(); };
-  window.addEventListener('focus', refreshSetupHost);
+  /* 半自动更新开关：默认开；关掉后只在用户点「更新」时升级。 */
+  const updAuto = $('#updAuto');
+  const loadAutoUpdate = async () => {
+    try {
+      const cfg = (await send('GET_CONFIG'))?.config || {};
+      updAuto.checked = cfg.autoUpdate !== false;
+    } catch { updAuto.checked = true; }
+  };
+  updAuto.addEventListener('change', async () => {
+    const res = await send('SET_CONFIG', { autoUpdate: updAuto.checked });
+    if (res?.ok) out(updMsg, updAuto.checked ? '已开启：后台定时检查，刷课空闲时自动升级' : '已关闭：只在点「更新」时升级', 'ok');
+    else out(updMsg, '保存失败' + (res?.error ? '：' + res.error : ''), 'err');
+  });
+  const refreshSetupHost = () => { if (!secs.upd.hidden) checkSetupHost(); };  window.addEventListener('focus', refreshSetupHost);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') refreshSetupHost();
   });

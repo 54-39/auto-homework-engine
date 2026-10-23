@@ -14,6 +14,7 @@ const DEFAULT_CONFIG = {
   watchRate: 'auto', // 刷课倍速：'auto' 跟播放器菜单最高档 | '1'/'1.25'/'1.5'/'2' 固定档
   watchSections: 0, // 每门课从第一节起连续处理几节（0 = 整门课程）；设置页可改，面板不再写死 4
   watchMuted: true, // 保持原有刷课默认静音；面板可取消
+  autoUpdate: true, // 后台定时检查，空闲时自动装新版（刷课中不打断）；设置页可关
   panelMode: 'homework', // API 面板：写题 / 刷课
 };
 
@@ -375,6 +376,41 @@ async function openUpdateHealthPage() {
   } catch { /* 后续轮询或设置页重试 */ }
   finally { healthPageCheck = false; }
 }
+
+/* —— 半自动更新：后台定时检查，刷课空闲时自动装上新版 ——
+   目的：GitHub 通道装一次之后不用再去网页手动更新。刷课队列在跑时一律不动文件，
+   避免正在刷的页面被换掉；失败全部静默，只在设置页留状态。 */
+const AUTO_UPDATE_INTERVAL = 3600e3;
+let autoUpdateBusy = false;
+async function autoUpdateTick() {
+  if (autoUpdateBusy) return;
+  autoUpdateBusy = true;
+  try {
+    const cfg = await getConfig();
+    if (cfg.autoUpdate === false) return;
+    const r = await checkUpdate(false);
+    if (!r?.ok || !r.hasUpdate) return;
+    const q = await loadQueue().catch(() => null);
+    if (q) return; // 有刷课队列：等它跑完再装
+    await chrome.storage.local.set({ pendingAutoUpdate: r.latest });
+    const started = await runUpdateViaHost();
+    if (!started?.started) await chrome.storage.local.remove(['pendingAutoUpdate']);
+  } catch { /* 静默：设置页能看到具体状态 */ }
+  finally { autoUpdateBusy = false; }
+}
+setTimeout(autoUpdateTick, 45000);
+setInterval(autoUpdateTick, AUTO_UPDATE_INTERVAL);
+
+/* 重载后的新后台：版本已经追上去就通知一次，并清掉标记。 */
+(async () => {
+  const { pendingAutoUpdate } = await chrome.storage.local.get('pendingAutoUpdate');
+  if (!pendingAutoUpdate) return;
+  const cur = chrome.runtime.getManifest().version;
+  if (compareVersions(cur, String(pendingAutoUpdate)) < 0) return;
+  await chrome.storage.local.remove(['pendingAutoUpdate']);
+  lastNotifyAt = 0;
+  notify(`已更新到 v${cur}：作业页面刷新(F5)后使用新版`);
+})();
 
 /* 安装入口打开设置页时执行一次宿主自检；只 ping，不执行更新。 */
 function diagUpdateHost() {

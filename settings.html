@@ -209,6 +209,7 @@
         <h2 id="h-upd">检测更新</h2>
         <p class="hint">打开本分区会自动检查一次（1 小时内不重复联网）。检查出新版后，点「更新」即可下载、校验并替换；失败会自动重试一次，再失败恢复旧版（作业页面需 F5）。</p>
         <p class="hint">点「更新」提示“更新组件尚未连接”时，说明这台电脑还没装更新组件：点「运行」看安装步骤，按提示运行插件目录里的 <code>install-updater.cmd</code>，只做一次。</p>
+        <p class="hint"><label><input type="checkbox" id="updAuto" checked> 后台每小时检查一次，刷课空闲时自动装上新版（刷课中不打断；失败不弹窗）。</label></p>
         <dl class="kv">
           <div><dt>当前版本</dt><dd id="updCurrent">…</dd></div>
           <div><dt>最新版本</dt><dd id="updLatest">尚未检查</dd></div>
@@ -229,16 +230,15 @@
           <p id="updGuidePath">插件目录：…</p>
           <ol>
             <li>在文件资源管理器里打开上面的插件目录。</li>
-            <li>找到 <code>install-updater.cmd</code>，双击运行。</li>
-            <li>弹出的那个黑窗口会自己找 Edge 正在用的插件目录；只有一个时不问你，有多个时才让你点选。</li>
-            <li>窗口显示“安装已完成”后关掉它，回到这一页，会自动重新检查连接。</li>
+            <li>找到 <code>install-updater.cmd</code>，双击运行。它放在哪个文件夹都能用，会自己找到插件目录。</li>
+            <li>窗口里出现“Install failed”以外的正常提示就说明在装；装完会显示“Installed”并自动关窗。</li>
+            <li>回到这一页，会自动重新检查连接。</li>
           </ol>
-          <p class="guide-meta">只做一次，之后点「更新」就能自动升级。窗口里如果报错，把整段文字发给我。</p>
+          <p class="guide-meta">只做一次。如果双击时 Windows 提示“未知发布者/有风险”，选“仍要运行”（本地文件，只是没做代码签名）。窗口里报错就去插件目录看 <code>.update-install.log</code>。</p>
           <div class="actions">
             <button type="button" class="ghost" id="updGuideClose">知道了</button>
           </div>
         </div>
-        <p class="hint"><a id="updRepairLink" href="https://github.com/54-39/auto-homework-engine/releases/download/v0.6.9/repair-updater.cmd" target="_blank" rel="noopener" hidden>安装器运行失败？下载 repair-updater.cmd 重新修复</a></p>
       </section>
     </div>
   </main>

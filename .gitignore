@@ -12,6 +12,10 @@ tools/native-host.exe
 # 自动更新脚本工作文件（不上传）
 .update-stage/
 .update-files.json
+.update-state.json
+.update-backup-*/
+.update-runner-*/
+.update-install.log
 hot-reload.json
 
 # 打包产物（完整离线包等，不上传）

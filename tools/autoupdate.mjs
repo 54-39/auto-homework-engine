@@ -14,10 +14,18 @@ const LIST = '.update-files.json';
 const FETCH_TIMEOUT = 25000;
 const DOWNLOAD_LIMIT = 300000;
 
+/* 本机安装产物永远不进更新载荷：宿主清单/启动器/运行时/crinfo 是每台机器自己的，
+   推上去的仓库里没有它们，一旦被"删除多余文件"扫到就会把宿主弄坏。 */
+const LOCAL_ONLY = /^(?:\.native-runtime\/|\.native-host|\.crinfo$|tools\/native-host\.exe$|\.update-)/;
+
 export const isPayload = (p) =>
-  typeof p === 'string' && !p.split('/').includes('..') &&
+  typeof p === 'string' && !p.split('/').includes('..') && !LOCAL_ONLY.test(p) &&
   (p === 'manifest.json' || p === 'settings.html' || p === 'settings.js' || p === 'install-updater.cmd' || p === 'repair-updater.cmd' ||
-    /^(background|content|options|icons|tools)\//.test(p));
+    /^(background|content|options|icons|tools|_locales)\//.test(p));
+
+/* confirmed 也要算终态：否则上一轮已经确认成功、只差写 complete 就退出的情况，
+   下一轮会先把备份还原回去，把新版又冲掉。 */
+const TERMINAL_PHASES = ['complete', 'failed', 'rolled_back', 'confirmed'];
 
 export const cmp = (a, b) => {
   const A = String(a).split('.').map(Number), B = String(b).split('.').map(Number);
@@ -253,9 +261,16 @@ function transactionPath(root, file) {
   return safePath(root, file);
 }
 
+function readVersion(root) {
+  try { return String(JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8')).version || ''); }
+  catch { return ''; }
+}
+
 async function waitForHealth(root, transactionId, candidate, extensionId, confirmImpl) {
   if (confirmImpl) return !!(await confirmImpl({ transactionId, ...candidate, extensionId }));
-  const deadline = Date.now() + 30000;
+  // 浏览器重载和设置页回执都可能被后台标签页节流拖慢，给到 120 秒；
+  // 这个窗口只影响"有没有回执"，不再决定要不要回滚（见 confirmCandidate）。
+  const deadline = Date.now() + 120000;
   while (Date.now() < deadline) {
     const state = readJson(root, '.update-state.json');
     if (state?.phase === 'confirmed' && state.transactionId === transactionId &&
@@ -326,7 +341,16 @@ export async function runUpdateTransaction({
     state = { ...state, ...candidate, phase: 'awaiting_health', settingsReady: false };
     save();
     await pulseReload(root);
-    return waitForHealth(root, transactionId, candidate, extensionId, confirmImpl);
+    if (await waitForHealth(root, transactionId, candidate, extensionId, confirmImpl)) return true;
+    /* 收不到健康回执时先看磁盘：manifest 已经是新版，说明文件替换本身成功了，
+       只是浏览器没自动重载。这种情况绝不回滚——回滚会把刚更新的新版又打回旧版，
+       用户看到的现象就是"更新成功后又变回去、还得重新下载"。 */
+    const onDisk = readVersion(root);
+    if (onDisk && cmp(onDisk, candidate.latest) === 0) {
+      log('没有收到健康回执，但磁盘已是 ' + onDisk + '，保留新版并提示手动重载');
+      return true;
+    }
+    return false;
   };
   const beforeApply = ({ files, oldFiles, removed, ...candidate }) => {
     const index = backupBaseline(root, backup, [...files, ...oldFiles, 'settings.html', 'settings.js', LIST]);
@@ -341,7 +365,7 @@ export async function runUpdateTransaction({
     save();
   };
   const previous = readJson(root, stateFile);
-  if (previous && ['complete', 'failed', 'rolled_back'].includes(previous.phase) && /^[0-9a-f-]{36}$/i.test(previous.transactionId || '')) {
+  if (previous && TERMINAL_PHASES.includes(previous.phase) && /^[0-9a-f-]{36}$/i.test(previous.transactionId || '')) {
     rmrf(path.join(root, `.update-backup-${previous.transactionId}`));
   }
   if (previous?.phase === 'recovery_required' &&
@@ -351,7 +375,7 @@ export async function runUpdateTransaction({
     save();
     return state;
   }
-  if (previous && !['complete', 'failed', 'rolled_back'].includes(previous.phase)) {
+  if (previous && !TERMINAL_PHASES.includes(previous.phase)) {
     const previousBackup = /^[0-9a-f-]{36}$/i.test(previous.transactionId || '')
       ? path.join(root, `.update-backup-${previous.transactionId}`) : '';
     if (previousBackup && fs.existsSync(path.join(previousBackup, 'index.json'))) {

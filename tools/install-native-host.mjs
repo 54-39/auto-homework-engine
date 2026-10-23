@@ -85,8 +85,9 @@ const buildDir = fs.mkdtempSync(path.join(HERE, '.native-host-build-'));
 const csPath = path.join(buildDir, 'native-host-launcher.cs');
 try {
   fs.writeFileSync(csPath, cs);
-  const cscOut = spawnSync(csc, ['/nologo', '/target:exe', '/out:' + exePath, '/platform:anycpu', csPath], {
+  const cscOut = spawnSync(csc, ['/nologo', '/target:winexe', '/out:' + exePath, '/platform:anycpu', csPath], {
     encoding: 'utf8',
+    windowsHide: true,
     env: { ...process.env, TEMP: buildDir, TMP: buildDir },
   });
   if (cscOut.status !== 0 || !fs.existsSync(exePath)) {
@@ -114,7 +115,7 @@ for (const item of manifests) {
 /* ④ 注册表：浏览器按 name 查这个键找到清单 */
 try {
   for (const item of manifests) {
-    execFileSync('reg', ['add', 'HKCU\\' + HOSTS[browser] + item.name, '/ve', '/t', 'REG_SZ', '/d', item.path, '/f'], { stdio: 'pipe' });
+    execFileSync('reg', ['add', 'HKCU\\' + HOSTS[browser] + item.name, '/ve', '/t', 'REG_SZ', '/d', item.path, '/f'], { stdio: 'pipe', windowsHide: true });
   }
 } catch (e) {
   console.error('错误：写注册表失败（' + String(e.message || e) + '）');
@@ -136,7 +137,7 @@ if (derivedId) {
 let verifyOk = true;
 try {
   for (const item of manifests) {
-    const q = execFileSync('reg', ['query', 'HKCU\\' + HOSTS[browser] + item.name, '/ve'], { encoding: 'utf8', stdio: 'pipe' });
+    const q = execFileSync('reg', ['query', 'HKCU\\' + HOSTS[browser] + item.name, '/ve'], { encoding: 'utf8', stdio: 'pipe', windowsHide: true });
     if (!q.includes(item.path)) { console.error('自检失败：注册表里没写对清单路径：' + item.name); verifyOk = false; }
   }
 } catch (e) {

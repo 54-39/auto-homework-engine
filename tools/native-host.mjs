@@ -99,6 +99,15 @@ if (!fs.existsSync(path.join(ROOT, 'manifest.json'))) {
 
 try {
   const runnerDir = path.join(ROOT, `.update-runner-${msg.transactionId}`);
+  /* 每点一次更新就复制一份更新脚本，旧的从不清理；开新一轮前先把历史遗留删掉。 */
+  try {
+    for (const name of fs.readdirSync(ROOT)) {
+      if (!name.startsWith('.update-runner-')) continue;
+      const full = path.join(ROOT, name);
+      if (full === runnerDir) continue;
+      fs.rmSync(full, { recursive: true, force: true });
+    }
+  } catch { /* 清理失败不影响本次更新 */ }
   fs.mkdirSync(runnerDir, { recursive: true });
   fs.copyFileSync(path.join(HERE, 'autoupdate.mjs'), path.join(runnerDir, 'autoupdate.mjs'));
   fs.copyFileSync(path.join(HERE, 'transaction-runner.mjs'), path.join(runnerDir, 'transaction-runner.mjs'));

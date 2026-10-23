@@ -36,9 +36,20 @@ function runEmbeddedPowerShell(localAppData, expectedId, expectedVersion) {
   });
 }
 
-function makeExtension(folder, version = '0.6.9') {
+function makeExtension(folder, version = '0.6.9', options = {}) {
   fs.mkdirSync(folder, { recursive: true });
-  fs.writeFileSync(path.join(folder, 'manifest.json'), JSON.stringify({ name: '作业助手', version }));
+  /* 真实包的 manifest.name 是本地化占位符 __MSG_extensionName__，中文名在 _locales 里。
+     旧 fixture 写的是字面量「作业助手」，正好掩盖了安装器硬比名称的死判定。 */
+  const localized = options.localized !== false;
+  const manifest = localized
+    ? { name: '__MSG_extensionName__', version }
+    : { name: options.name || '作业助手', version };
+  fs.writeFileSync(path.join(folder, 'manifest.json'), JSON.stringify(manifest));
+  if (localized) {
+    const localeDir = path.join(folder, '_locales', 'zh_CN');
+    fs.mkdirSync(localeDir, { recursive: true });
+    fs.writeFileSync(path.join(localeDir, 'messages.json'), JSON.stringify({ extensionName: { message: options.displayName || '作业助手' } }), 'utf8');
+  }
   for (const file of ['install-native-host.mjs', 'native-host.mjs', 'native-host-install-core.mjs']) {
     const target = path.join(folder, 'tools', file);
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -101,11 +112,23 @@ try {
   const wrongVersion = runPowerShell(['-ExpectedVersion', '0.6.8', '-DryRun'], path.join(temp, 'Edge Data'));
   assert.equal(wrongVersion.status, 0, wrongVersion.stdout + wrongVersion.stderr);
   assert.match(wrongVersion.stdout, /EDGE_CANDIDATES=0/);
-  const wrongRoot = runPowerShell(['-Root', secondRoot, '-ExpectedId', firstId, '-ExpectedVersion', '0.6.9'], path.join(temp, 'Edge Data'));
-  assert.equal(wrongRoot.status, 1, wrongRoot.stdout + wrongRoot.stderr);
-  assert.match(wrongRoot.stdout + wrongRoot.stderr, /不是匹配版本/);
+  /* 安装器可以放在任意位置：-Root 指错时不再硬失败，而是回落到浏览器配置里的候选目录。 */
+  const wrongRoot = runPowerShell(['-Root', secondRoot, '-ExpectedId', firstId, '-ExpectedVersion', '0.6.9', '-DryRun'], path.join(temp, 'Edge Data'));
+  assert.equal(wrongRoot.status, 0, wrongRoot.stdout + wrongRoot.stderr);
+  assert.match(wrongRoot.stdout, /改为自动查找浏览器正在加载的目录/);
+  assert(wrongRoot.stdout.includes(firstRoot));
   assert(!fs.existsSync(path.join(secondRoot, '.native-runtime')));
-  console.log('Edge Preferences/Secure Preferences discovery, relative paths, duplicate roots, conflicts, damaged JSON, version and ID rejection PASS');
+
+  /* 名称不符的目录不能被当成插件目录（本地化名称与字面量名称都要判对）。 */
+  const impostor = path.join(temp, '其它插件目录');
+  makeExtension(impostor, '0.6.9', { localized: false, name: '别的插件' });
+  const emptyData = path.join(temp, '空浏览器配置');
+  fs.mkdirSync(emptyData, { recursive: true });
+  const rejectedName = runPowerShell(['-Root', impostor, '-DryRun'], emptyData);
+  assert.equal(rejectedName.status, 0, rejectedName.stdout + rejectedName.stderr);
+  assert.match(rejectedName.stdout, /EDGE_CANDIDATES=0/);
+  assert.doesNotMatch(rejectedName.stdout, /确认插件目录/);
+  console.log('Edge Preferences/Secure Preferences discovery, relative paths, duplicate roots, conflicts, damaged JSON, version and ID rejection, localized name, relocated installer PASS');
 
   /* ---- 完整离线包：插件目录里带了 node 压缩包时，必须不联网直接解压使用 ----
      用本机已验证的那份 node.exe 造包；没有就跳过（不联网拉 93 MB）。 */
@@ -171,11 +194,16 @@ try {
     env: { ...process.env, PATH: noNodePath, TEMP: cmdTemp, TMP: cmdTemp, HW_TEST_EXIT_CODE: '0', HW_TEST_LOG: logFile },
   });
   assert.equal(rootCommand.status, 0, rootCommand.stdout + rootCommand.stderr);
-  assert.match(rootCommand.stdout, /安装已完成/);
+  assert.match(rootCommand.stdout, /Installed/);
+  const installCmdRaw = fs.readFileSync(path.join(ROOT, 'install-updater.cmd'));
+  assert(installCmdRaw.every((byte) => byte < 0x80), 'install-updater.cmd 含非 ASCII 字节；cmd.exe 会按字节偏移错位解析');
+  assert.doesNotMatch(rootCommand.stdout, /不是内部或外部命令|is not recognized as an internal/);
   assert.match(fs.readFileSync(logFile, 'utf8'), /updater-bootstrap\.ps1.*-Root/);
   const command = makeInstallerPayload(fs.readFileSync(path.join(TOOLS, 'updater-bootstrap.cmd'), 'utf8'), firstId, '0.6.9');
   assert.doesNotMatch(command, /^\s*node(?:\.exe)?\b/im);
   for (const cmdFile of [path.join(TOOLS, 'updater-bootstrap.cmd'), path.join(ROOT, 'repair-updater.cmd')]) {
+    const raw = fs.readFileSync(cmdFile);
+    assert(raw.every((byte) => byte < 0x80), cmdFile + ' 含非 ASCII 字节；cmd.exe 会按字节偏移错位解析');
     const lines = fs.readFileSync(cmdFile, 'utf8').split(/\r?\n/);
     const chunks = lines.filter((line) => /^>{1,2} "%HW_BOOTSTRAP_FILE%" echo /.test(line)).map((line) => line.slice(line.indexOf(' echo ') + 6));
     assert(chunks.length > 0);
@@ -193,8 +221,8 @@ try {
     env: { ...process.env, PATH: noNodePath, TEMP: cmdTemp, TMP: cmdTemp, HW_TEST_EXIT_CODE: '0', HW_TEST_LOG: logFile },
   });
   assert.equal(lfResult.status, 0, lfResult.stdout + lfResult.stderr);
-  assert.match(lfResult.stdout, /安装已完成/);
-  for (const [code, label] of [[0, '安装已完成'], [2, '已取消'], [7, '安装失败']]) {
+  assert.match(lfResult.stdout, /Installed/);
+  for (const [code, label] of [[0, 'Installed'], [2, 'Cancelled'], [7, 'Install failed']]) {
     const result = spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/c', 'setup.cmd'], {
       cwd: temp, input: '\r\n', encoding: 'utf8', timeout: 15000,
       env: { ...process.env, PATH: noNodePath, TEMP: cmdTemp, TMP: cmdTemp, HW_TEST_EXIT_CODE: String(code), HW_TEST_LOG: logFile },

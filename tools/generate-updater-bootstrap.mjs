@@ -28,19 +28,19 @@ function makeCmd(id, version) {
     'if "%HW_INSTALL_RESULT%"=="0" goto success',
     'if "%HW_INSTALL_RESULT%"=="2" goto cancelled',
     'echo.',
-    'echo 安装失败。请查看上方原因，修复后再重新双击此文件。',
+    'echo Install failed. See the message above, then run it again after fixing it.',
     'goto finish',
     ':success',
     'echo.',
-    'echo 安装已完成。请回到 Edge 设置页，页面会自动检查连接。',
+    'echo Installed. Go back to the browser settings page; it reconnects automatically.',
     'goto finish',
     ':cancelled',
     'echo.',
-    'echo 已取消，没有安装更新组件。',
+    'echo Cancelled. Nothing was changed.',
     'goto finish',
     ':payload_error',
     'set "HW_INSTALL_RESULT=1"',
-    'echo 无法准备安装器内容。请重新下载此文件后再试。',
+    'echo Cannot unpack the installer payload. Download this file again and retry.',
     ':finish',
     'echo.',
     'pause',
@@ -50,5 +50,17 @@ function makeCmd(id, version) {
   return lines.join('\r\n');
 }
 
-fs.writeFileSync(path.join(TOOLS, 'updater-bootstrap.cmd'), makeCmd('__HW_EXPECTED_EXTENSION_ID__', '__HW_EXPECTED_VERSION__'), 'utf8');
-fs.writeFileSync(path.join(ROOT, 'repair-updater.cmd'), makeCmd('', ''), 'utf8');
+/* cmd.exe 解析批处理时按字节偏移推进：一旦 chcp 与多字节字符混在一起，
+   后续每一行都会错位，变成 "'cho.' 不是内部或外部命令" 这类碎片。
+   所以生成的 .cmd 必须纯 ASCII，中文只留在 ps1 里。 */
+function assertAscii(content, label) {
+  const bad = [...Buffer.from(content, 'utf8')].filter((b) => b > 127).length;
+  if (bad) throw new Error(`${label} 含 ${bad} 个非 ASCII 字节；cmd.exe 会解析错位，必须写成纯 ASCII`);
+}
+
+const bootstrapCmd = makeCmd('__HW_EXPECTED_EXTENSION_ID__', '__HW_EXPECTED_VERSION__');
+const repairCmd = makeCmd('', '');
+assertAscii(bootstrapCmd, 'tools/updater-bootstrap.cmd');
+assertAscii(repairCmd, 'repair-updater.cmd');
+fs.writeFileSync(path.join(TOOLS, 'updater-bootstrap.cmd'), bootstrapCmd, 'utf8');
+fs.writeFileSync(path.join(ROOT, 'repair-updater.cmd'), repairCmd, 'utf8');
