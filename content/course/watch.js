@@ -223,14 +223,14 @@
         if (chapter && unfinishedOf(chapter) === 0) return true;
         if (!receipt) continue;
         receipt = false;
-        note('问卷已提交（站点回执），核对目录计数');
+        live('问卷已提交（站点回执），核对目录计数');
         await step(3000);
         if (!chapter || unfinishedOf(chapter) === 0) return true;
         /* 目录树是整页加载时画的，站点提交后不会重画：刷新一次拿平台最新计数。
            只刷一次，避免和问卷来回拉锯；刷完还是 1 就如实记成未完成。 */
         if (!surveyReloaded(chapter)) {
           try { sessionStorage.setItem(SURVEY_RELOAD_KEY, String(chapter)); } catch { /* 存不了就不刷 */ }
-          note('学情调查已提交，刷新目录核对平台计数');
+          live('学情调查已提交，刷新目录核对平台计数');
           setTimeout(() => location.reload(), 600);
           return true;
         }
@@ -301,14 +301,14 @@
       .filter((el) => visible(el) && /^去学习$/.test((el.textContent || '').trim())).pop();
     if (go) {
       try { go.click(); } catch { return false; }
-      note('站点提示本节还有任务点，已选「去学习」留在本节继续');
+      live('站点提示本节还有任务点，已选「去学习」留在本节继续');
       await step(jitter(1200));
       return true;
     }
     const close = box.querySelector('.popClose');
     if (close && visible(close)) {
       try { close.click(); } catch { return false; }
-      note('站点提示框没有「去学习」按钮，已关闭提示框');
+      live('站点提示框没有「去学习」按钮，已关闭提示框');
       await step(jitter(800));
       return true;
     }
@@ -352,7 +352,7 @@
     const key = (currentCourse()?.key || '') + ':' + (chapter || '') + ':' + tabIndex;
     if (cardReloaded.has(key)) return false;
     cardReloaded.add(key);
-    note('这一页是空壳卡，让站点重画一次');
+    live('这一页是空壳卡，让站点重画一次');
     try {
       /* 直接重载原地址；停止信号不能把页面留在 about:blank。 */
       frame.src = frame.src;
@@ -518,8 +518,8 @@
       await step(1000);
       if (chapter && activeChapterId() !== chapter) return true;
       if (card.classList.contains('ans-job-finished')) return true;
-      if (bbsNotifySeq > seq0) { note('讨论已回帖并收到回帖通知'); return true; }
-      if (before !== null && unfinishedOf(chapter) < before) { note('讨论已计入本节任务点数'); return true; }
+      if (bbsNotifySeq > seq0) { live('讨论已回帖并收到回帖通知'); return true; }
+      if (before !== null && unfinishedOf(chapter) < before) { live('讨论已计入本节任务点数'); return true; }
     }
     note('讨论卡没等到完成回执，留给人工核对');
     return false;
@@ -892,7 +892,7 @@
       /* 目录没渲染先自愈一次：刷新后 resumeQueued 重入本函数（flag 防死循环）。 */
       if (!sessionStorage.getItem('hwCatRetry')) {
         try { sessionStorage.setItem('hwCatRetry', '1'); } catch { }
-        opts?.onNote?.('课程目录未渲染，刷新一次再核验');
+        opts?.onLive?.('课程目录未渲染，刷新一次再核验');
         setTimeout(() => location.reload(), 800);
         return;
       }
@@ -925,7 +925,7 @@
         if (retry?.ok && retry.first) {
           const saved = await chrome.runtime.sendMessage({ type: 'HW_WATCH_SCOPE_SET', payload: { key: course.key, start: 0, chapterIds: ids } });
           if (saved?.ok) {
-            opts?.onNote?.(`开头 ${size} 节还没做完，本轮重新补一遍`);
+            opts?.onLive?.(`开头 ${size} 节还没做完，本轮重新补一遍`);
             try { entries[0]?.anchor?.click(); } catch { opts?.onNote?.('未能打开第 1 节，请手动检查'); }
             return;
           }
@@ -941,7 +941,7 @@
       opts?.onNote?.('保存连续小节范围失败：' + (saved?.error || '未知错误'));
       return;
     }
-    opts?.onNote?.(`从课程开头处理前 ${size} 节（尚未完成 ${window.left} 节）`);
+    opts?.onLive?.(`从课程开头处理前 ${size} 节（尚未完成 ${window.left} 节）`);
     const target = entries[window.start].anchor;
     try { target.click(); } catch { opts?.onNote?.('未能打开选定小节，请手动检查'); }
   }
@@ -1005,7 +1005,7 @@
            先自愈刷新一次（flag 防死循环），刷新后 resumeQueued 重入。 */
         if (!sessionStorage.getItem('hwStuRetry')) {
           try { sessionStorage.setItem('hwStuRetry', '1'); } catch { }
-          opts?.onNote?.('课程首页章节目录未就绪，刷新一次再试');
+          opts?.onLive?.('课程首页章节目录未就绪，刷新一次再试');
           setTimeout(() => location.reload(), 800);
           return true;
         }
@@ -1034,7 +1034,7 @@
         if (catalogEntries().length) await reportCourseDone(q.courses[q.index] && q.courses[q.index].key);
         else if (!sessionStorage.getItem('hwCatRetry')) {
           try { sessionStorage.setItem('hwCatRetry', '1'); } catch { }
-          opts?.onNote?.('目录未解析出节点，刷新一次再试');
+          opts?.onLive?.('目录未解析出节点，刷新一次再试');
           setTimeout(() => location.reload(), 800);
         } else {
           try { sessionStorage.removeItem('hwCatRetry'); } catch { }
@@ -1057,7 +1057,7 @@
         const o = opts || {};
         if (resumeRetry < 3) {
           resumeRetry += 1;
-          if (o.onNote) o.onNote(`目录还没出来，${resumeRetry}/3 次重试接续`);
+          if (o.onLive) o.onLive(`目录还没出来，${resumeRetry}/3 次重试接续`);
           setTimeout(() => { resumeQueued(opts).catch(() => { }); }, 6000);
           return true;
         }
@@ -1169,7 +1169,7 @@
                这时候只能按 1x 播；提一句就够，别每个视频都念一遍。 */
             if (!rateNoted) {
               rateNoted = true;
-              note('这门的播放器没提供倍速选项（站点限制），按 1x 播放');
+              live('这门的播放器没提供倍速选项（站点限制），按 1x 播放');
             }
           }
         }
@@ -1341,7 +1341,6 @@
        的又是没播完的状态，everEnded 永远置不上位，脚本陪着同一个视频无限
        重播（1.2 节 9:45 的视频实测连播 5 轮都不前进，2026-10-20）。
        所以同时挂 ended 事件监听，事件一定接得住。 */
-    let lastBeatAt = 0; // 上一次写「播放中」心跳的时间，只用来让人看出脚本还活着
     const endedEls = new Set(); // 播完过的视频元素，用来识别「同一个又重播」
     const hooked = new Set();
     let myGuard = 0;
@@ -1402,7 +1401,10 @@
           if (document.hidden && v.paused) {
             /* 窗口恢复不了前台（用户在别的窗口打字/系统拒绝拉起）会无限等——
                10 分钟还回不来就停止并保留队列，交给自动接续，别把整轮挂死。 */
-            if (!hiddenSince) hiddenSince = Date.now();
+            if (!hiddenSince) {
+              hiddenSince = Date.now();
+              note('播放暂时中断：课程窗口不可见，等待恢复前台续播');
+            }
             if (Date.now() - hiddenSince > 600000) {
               throw new Error('课程窗口超过 10 分钟无法恢复前台播放');
             }
@@ -1414,7 +1416,7 @@
             if (Date.now() - lastForegroundAsk > 120000) {
               lastForegroundAsk = Date.now();
               chrome.runtime.sendMessage({ type: 'HW_WATCH_FOREGROUND' }).catch(() => {});
-              note('课程窗口被切到后台，已请求恢复到前台续播');
+              live('课程窗口被切到后台，已请求恢复到前台续播');
             }
             await step(1000);
             continue;
@@ -1426,13 +1428,6 @@
           if (videoFailure) throw videoFailure;
           const pct = v.duration ? Math.round((v.currentTime / v.duration) * 100) : 0;
           live(`${fmtRate(v.playbackRate)}x ${pct}%`);
-          /* 长时间播放时日志一行不动，看着像卡死（用户 2026-10-21 直接问了「卡了你知道不」）。
-             每分钟记一行心跳，带上还剩多少时间，让人一眼看出它活着。 */
-          if (Date.now() - lastBeatAt > 60000) {
-            lastBeatAt = Date.now();
-            const rest = v.duration ? Math.max(0, Math.round((v.duration - v.currentTime) / (v.playbackRate || 1) / 60)) : null;
-            note(`播放中：${fmtRate(v.playbackRate)}x ${pct}%${rest != null ? `（本视频还剩约 ${rest} 分钟）` : ''}`);
-          }
           await applyRate(v);
         } else {
           /* 没有可守的视频了：要么全部播完（返回成功），要么本来就没有（等不到）。
@@ -1527,7 +1522,7 @@
 
   async function submitQuiz() {
     if (quizDone()) {
-      note('测验页：这一节已经交过了，跳过提交');
+      live('测验页：这一节已经交过了，跳过提交');
       return true;
     }
     const btn = findButton(/^提交$/);
@@ -1550,12 +1545,12 @@
         try { yes.click(); } catch { /* 对话框可能刚被换掉 */ }
         await step(1500);
         const okText = docs().map((d) => d.body?.innerText || '').join(' ');
-        if (/任务点已完成|已完成/.test(okText)) note('测验页：已提交，任务点已完成');
-        else note('测验页：已点提交，结果请在页面上核对');
+        if (/任务点已完成|已完成/.test(okText)) live('测验页：已提交，任务点已完成');
+        else live('测验页：已点提交，结果请在页面上核对');
         let grade = quizGrade();
         for (let check = 0; check < 10 && on && !grade; check++) { await step(250); grade = quizGrade(); }
         if (grade) {
-          note(`测验成绩：${grade.score}/${grade.total}`);
+          live(`测验成绩：${grade.score}/${grade.total}`);
           // 内层作业iframe的load事件不跨文档冒泡，不能只靠顶层load监听记录丢分。
           HW.Panel?.reportGrade?.();
           /* 用户 2026-10-22 明确「先刷完，不强求正确率」：低分只记日志，不再暂停整轮
@@ -1589,7 +1584,7 @@
 
   async function runQuiz() {
     if (quizDone()) {
-      note('测验页：任务已完成，跳过答题');
+      live('测验页：任务已完成，跳过答题');
       return true;
     }
     const P = HW.Panel;
@@ -1600,7 +1595,7 @@
     live('测验页：AI 答题中…');
     try {
       const r = await P.runHomework({ timeout: QUIZ_TIMEOUT });
-      note('测验页：' + (r || '已填写'));
+      live('测验页：' + (r || '已填写'));
     } catch (e) {
       /* 这一份测验读不出来（字形无法唯一还原、图片题、结构不认识…）：
          不提交、也不算完成，但**不要停整轮**——停下来就永远刷不完剩下的课，
@@ -1663,7 +1658,7 @@
 
   async function runDiscuss(cur) {
     if (postedSet().has(String(cur.id))) {
-      note(`讨论：这一节发过帖子了，不重复发：${shortName(cur.name)}`);
+      live(`讨论：这一节发过帖子了，不重复发：${shortName(cur.name)}`);
       return;
     }
     const tit2 = document.querySelector('#tit2');
@@ -1704,7 +1699,7 @@
       try { btn.click(); } catch { note('讨论页：回复按钮点不动'); return; }
       await step(1200);
       rememberPosted(cur.id);
-      note(`讨论：已在「${shortName(cur.name)}」回复了一条讨论`);
+      live(`讨论：已在「${shortName(cur.name)}」回复了一条讨论`);
       return;
     }
     const newBtn = document.querySelector('#content2 .newTopic_bnt');
@@ -1727,7 +1722,7 @@
       try { pub.click(); } catch { note('讨论页：发布按钮点不动'); return; }
       await step(1500);
       rememberPosted(cur.id);
-      note(`讨论：已在「${shortName(cur.name)}」发了一条新话题`);
+      live(`讨论：已在「${shortName(cur.name)}」发了一条新话题`);
       return;
     }
     note('讨论页：这一节没有可发的讨论（可能只许老师发帖），跳过');
@@ -1750,7 +1745,7 @@
     const payload = { stage: '刷课跳过', message, course: course?.name || context.course || multi?.courses[multi.index]?.name || document.title,
       chapter: context.chapter || chapter?.name || '', task: context.task || tabList().find(tabActive)?.textContent.trim() || '',
       url: location.href, action: '跳过出错任务，继续后续；未计为完成', stack: String(error?.stack || new Error(message).stack || ''),
-      details: JSON.stringify(details, null, 2) };
+      details: JSON.stringify(details, null, 2), scene: globalThis.HW?.Diagnostics?.capture() };
     note('已跳过：' + message + '（详情见诊断）');
     try {
       const result = await chrome.runtime.sendMessage({ type: 'HW_ISSUE_ADD', payload });
@@ -1786,7 +1781,7 @@
       return `剩余${fmtLeft(left)}（${jobs} 个任务点）`;
     };
     const unfinishedKnown = () => list.length > 0 && list.every(n => unfinishedOf(n.id) !== null);
-    note(`${scopeChapters ? `本次限定 ${list.length} 个小节` : `从第 1/${list.length} 节开始（从头刷）`}· ${leftText()}`);
+    live(`${scopeChapters ? `本次限定 ${list.length} 个小节` : `从第 1/${list.length} 节开始（从头刷）`}· ${leftText()}`);
       i = 0;
       skipped = 0;
       while (on && my === gen && i < list.length) {
@@ -1876,11 +1871,11 @@
              站点在任务点角标的父元素上挂 .ans-job-finished，照抄它的判定
              （5.3 节 2026-10-20 实测：每次路过都把 15 分钟的视频重看一遍）。 */
           if (videoJobsDone()) {
-            note(`这一节视频都已完成，不重看：${shortName(cur.name)}`);
+            live(`这一节视频都已完成，不重看：${shortName(cur.name)}`);
           } else {
             const done = await watchVideo();
             if (!done) await recordWatchSkip(new Error('视频未播放完成即离开'), { chapter: cur.name });
-            else note(`视频看完：${shortName(cur.name)}`);
+            else live(`视频看完：${shortName(cur.name)}`);
             await step(1200);
           }
           if (activeChapterId() !== cur.id) {
@@ -1900,7 +1895,7 @@
               if (!(await until(() => bbsCard(), 8000))) break;
             }
             if (!(await openBbsCard())) { await recordWatchSkip(new Error('讨论未收到完成回执'), { chapter: cur.name }); break; }
-            note(`讨论已回帖：${shortName(cur.name)}`);
+            live(`讨论已回帖：${shortName(cur.name)}`);
           }
           await step(1200);
           if (activeChapterId() !== cur.id) {
@@ -1911,7 +1906,7 @@
           /* 学情调查／调查问卷：用户 2026-10-21 明确要求本人能填的问卷也要做。
              页面读不到问卷内部，靠 survey.js 在问卷页自己那一帧填写提交，
              这里只等目录角标归零（平台回执）再算完成。 */
-          if (await openSurveyCard()) note(`问卷已提交：${shortName(cur.name)}`);
+          if (await openSurveyCard()) live(`问卷已提交：${shortName(cur.name)}`);
           else await recordWatchSkip(new Error('问卷60秒内未收到完成回执'), { chapter: cur.name });
           await step(1200);
           if (activeChapterId() !== cur.id) {
@@ -1931,7 +1926,7 @@
              只停留 4 秒就走的话任务点永远不计。先滚动把懒加载的视频带出来，
              出现了就走视频流程播完；真没有才纯停留。 */
           if (videoJobs().length && !videoJobsDone()) {
-            if (revealJobs() && (await watchVideo())) note(`阅读页里的视频看完：${shortName(cur.name)}`);
+            if (revealJobs() && (await watchVideo())) live(`阅读页里的视频看完：${shortName(cur.name)}`);
             else note('阅读页里的视频没播完就离开了');
             await step(1200);
           } else {
@@ -1942,7 +1937,7 @@
             revealJobs();
             const media = await until(() => findVideo(), 15000);
             if (media) {
-              if (await watchVideo()) note(`阅读页里的音视频看完：${shortName(cur.name)}`);
+              if (await watchVideo()) live(`阅读页里的音视频看完：${shortName(cur.name)}`);
               else note('阅读页里的音视频没播完就离开了');
               await step(1200);
             } else {
@@ -1953,10 +1948,10 @@
              必须把内容滚到底才算读过（2026-10-21 第一站实测：视频已完成，仍剩 1 个点）。
              这个检查放在视频分支之外，否则视频一播完就跳过去，永远走不到。 */
           if (!textJobsDone()) {
-            if (await readThrough(45000)) note(`阅读任务点已完成：${shortName(cur.name)}`);
+            if (await readThrough(45000)) live(`阅读任务点已完成：${shortName(cur.name)}`);
             else {
               const nudged = await nudgeCard();
-              if (textJobsDone()) note(`阅读任务点已完成：${shortName(cur.name)}`);
+              if (textJobsDone()) live(`阅读任务点已完成：${shortName(cur.name)}`);
               else note(`阅读任务点还没计上，留给收尾复查：${shortName(cur.name)}${nudged ? `（已试点 ${nudged} 个入口）` : ''}`);
             }
           }
@@ -1966,7 +1961,7 @@
           await recordWatchSkip(e, { chapter: cur.name, task: `第 ${t + 1} 页签` });
         }
       }
-      if (jumped) note('页面自动换章，按目录继续；未完成任务会在收尾时补查');
+      if (jumped) live('页面自动换章，按目录继续；未完成任务会在收尾时补查');
       /* 每节走完复查一遍任务点数：站点说这节还剩几个就直接告诉用户，别让
          「日志说刷完了、角标还挂着 1」这种对不上（12.4 节 2026-10-20 实测：
          三页签都过完了，角标还剩 1——那一节的讨论任务点根本没发出去）。
@@ -1997,7 +1992,7 @@
       }
     }
     if (on && my === gen) {
-      note(`本轮目录已检查（跳过已完成 ${skipped} 节）`);
+      live(`本轮目录已检查（跳过已完成 ${skipped} 节）`);
       if (scopeChapters && list.some(n => unfinishedOf(n.id) === null)) {
         await recordWatchSkip(new Error('限定小节的任务计数未知，无法确认完成'), { task: '课程核验' });
         if (multi) await reportCourseDone(multi.courses[multi.index]?.key || '', { status: 'incomplete' });
@@ -2017,7 +2012,7 @@
       if (remain > 0) {
         // 不重复进入出错小节，保留缺口并继续下一门。
         const gaps = pending.map((n) => ({ name: n.name, remain: unfinishedOf(n.id) || 0 }));
-        note(`这 ${gaps.length} 个小节未完成，先记下继续：${gaps.map((g) => g.name).join('、')}`);
+        note(`课程「${timingCourse?.name || document.title}」还有 ${gaps.length} 个小节未完成（跳过已完成 ${skipped} 节），${multi ? '记录缺口后继续下一门' : '本门课程已停止，缺口保留待处理'}：${gaps.map((g) => g.name).join('、')}`);
         live(`跳过 ${gaps.length} 节待人工`);
         try {
           const cur = multi && multi.courses[multi.index];
@@ -2035,7 +2030,7 @@
       }
       if (scopeChapters) {
         stop();
-        note(`本次限定的 ${list.length} 个小节已完成，其余小节未纳入本次任务`);
+        note(`课程「${timingCourse?.name || document.title}」本次限定的 ${list.length} 个小节已完成，其余小节未纳入本次任务`);
         if (limitedRun(multi)) {
           if (!await returnToCatalog()) note('返回目录核验失败，队列保留在本页');
           return;
@@ -2046,12 +2041,12 @@
       if (multi) {
         // 这门课走完了，交给后台跳下一门（后台会把标签页导航过去，这一页随后就没了）
         const cur = multi.courses[multi.index];
-        note(`这门课走完了（跳过已完成 ${skipped} 节），换下一门…`);
+        note(`课程「${cur?.name || timingCourse?.name || document.title}」已完成（跳过已完成 ${skipped} 节），换下一门…`);
         live('换下一门…');
         await reportCourseDone(cur ? cur.key : '');
         return;
       }
-      note(`整门课已走完一遍（跳过已完成 ${skipped} 节，提交与最终成绩请自行核对）`);
+      note(`课程「${timingCourse?.name || document.title}」已走完一遍（跳过已完成 ${skipped} 节，提交与最终成绩请自行核对）`);
       stop();
       return;
     }
@@ -2124,6 +2119,7 @@
       }
       await recordWatchSkip(e, { task: '课程处理', action: '跳过当前课程' });
       if (multi) await reportCourseDone(multi.courses[multi.index]?.key || '', { status: 'incomplete' });
+      else note('本门课程已终止：' + String(e.message || e));
       stop();
     });
   }

@@ -24,6 +24,7 @@ function fixture(failure) {
     on: true, gen: 1, scopeChapters: null, rate: 2, courseTiming: null, failedChapters: new Set(),
     multi: null, lastEnterAt: 0, CHAPTER_GAP: 0, NODE_WAIT: 1, STOP,
     Date, Set, Error, JSON, Number, String, Math,
+    HW: { Diagnostics: { capture: () => ({ status: 'captured', documents: [{ html: '错误章节-' + active }] }) } },
     location: { href: 'https://mooc1.chaoxing.com/study?courseId=1' },
     checkVerification() {}, nodes: () => chapters, currentCourse: () => ({ key: 'course', name: '测试课程' }),
     courseTimeKey: () => 'watchTime:test', unfinishedOf: id => counts[id], activeChapterId: () => active,
@@ -39,7 +40,7 @@ function fixture(failure) {
     goto: async index => { tab = index; calls.push(active + ':' + tab); return true; },
     ensureCardRendered: async () => true, classify: () => 'quiz', bbsCard: () => false, surveyCard: () => false,
     runQuiz: async () => {
-      if (active === '1' && tab === 0) {
+      if (active === '1' && tab === 0 && failure !== 'success') {
         if (failure === 'stop') throw STOP;
         if (failure === 'captcha') throw Object.assign(Error('验证码'), { code: 'HW_VERIFICATION_REQUIRED' });
         throw Error('模型失败');
@@ -56,14 +57,20 @@ function fixture(failure) {
   if (failure === 'entry') active = '0';
   if (failure === 'incomplete') context.multi = { index: 0, courses: [{ key: 'course', name: '测试课程' }] };
   vm.runInContext(loop, context);
-  return { context, STOP, calls, messages, reports, run: () => context.courseLoop() };
+  return { context, STOP, calls, messages, reports, notes, run: () => context.courseLoop() };
 }
+const success = fixture('success');
+await success.run();
+assert.equal(success.notes.length, 1, '正常遍历仅记录整门课程完成，不逐章刷日志');
+assert.match(success.notes[0], /测试课程.*已走完一遍/);
+console.log('PASS 正常课程只记录一次课程完成，并带课程名');
 for (const type of ['task', 'entry', 'incomplete', 'progress']) {
   const f = fixture(type);
   await f.run();
   assert.ok(f.calls.includes('2:0'), '出错后必须继续后续章节');
   if (type === 'task') assert.ok(f.calls.includes('1:1'), '单个任务异常不能吞掉同章后续任务');
   const item = f.messages.find(message => message.type === 'HW_ISSUE_ADD')?.payload;
+  if (type === 'task') assert.equal(item.scene.documents[0].html, '错误章节-1', '必须在跳过到后续章节前保存现场');
   assert.ok(item?.course && item.chapter && item.stack && item.details && item.action.includes('未计为完成'));
   if (type === 'incomplete') assert.equal(f.reports[0].details.status, 'incomplete', '推进队列不能假报完成');
   console.log('PASS 跳过并记录完整诊断，后续任务继续：' + type);

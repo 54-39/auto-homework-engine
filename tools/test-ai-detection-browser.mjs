@@ -71,6 +71,37 @@ async function browserChecks() {
   };
   const ok = (v, msg = 'assertion failed') => { if (!v) throw new Error(msg); };
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  await check('异常现场保留题目与同源iframe，排除表单值、编辑器、脚本、面板和敏感字段', () => {
+    const scene = HW.Diagnostics.capture(), text = JSON.stringify(scene);
+    ok(scene.schema === 1 && scene.documents.length >= 3 && !scene.truncated);
+    ok(text.includes('选一个正确选项') && text.includes('嵌入页面的问答题'));
+    for (const secret of ['SECRET_PASSWORD', 'SECRET_EXISTING_ANSWER', 'SECRET_NAV', 'SECRET_TOKEN', 'fixtureBoot', 'hw-panel-host']) ok(!text.includes(secret), secret + ' leaked');
+    ok(scene.documents.some(d => d.html.includes('textarea')) && scene.documents.some(d => d.html.includes('编辑器内容已隐藏')));
+  });
+  await check('现场标注沙箱iframe不可读，删除网址凭据及个人联系方式，页面变化不改变已采现场', async () => {
+    const extra = document.createElement('section');
+    extra.innerHTML = '<p>现场原文 test@example.com 13812345678</p><a href="https://user:pass@example.test/page?token=URL_SECRET#HASH_SECRET">链接</a><iframe sandbox srcdoc="<p>FRAME_SECRET</p>"></iframe>';
+    document.body.append(extra);
+    try {
+      await wait(60);
+      const scene = HW.Diagnostics.capture(), text = JSON.stringify(scene);
+      extra.querySelector('p').textContent = '页面已跳走';
+      ok(text.includes('现场原文') && !JSON.stringify(scene).includes('页面已跳走'));
+      ok(scene.documents.some(d => d.status === 'unreadable' && d.reason));
+      for (const secret of ['test@example.com', '13812345678', 'URL_SECRET', 'HASH_SECRET', 'user:pass', 'FRAME_SECRET']) ok(!text.includes(secret), secret + ' leaked');
+    } finally { extra.remove(); }
+  });
+  await check('超长现场有明确截断标记，不会生成无限制结构', () => {
+    const extra = document.createElement('section');
+    extra.textContent = '超长现场'.repeat(100000);
+    document.body.prepend(extra);
+    try {
+      const scene = HW.Diagnostics.capture();
+      ok(scene.truncated && scene.documents[0].truncated);
+      ok(scene.documents[0].html.length <= 100000 && JSON.stringify(scene).length < 600000);
+      ok(scene.documents.some(d => d.html?.includes('嵌入页面的问答题')), '目录截断不能遗漏后面的任务框架');
+    } finally { extra.remove(); }
+  });
   const byId = (s, id) => [...s.refs].find(([, ref]) => ref.el.id === id)?.[0];
   window.makeSpecs = (s) => {
     const q = (type, container, stem, options = [], inputs = []) => ({ type, containerId: byId(s, container), stem,
@@ -713,7 +744,7 @@ const fixture = `<!doctype html><meta charset="utf-8"><title>AI 识题模拟作�
 <iframe id="nested" srcdoc="<section id='frameQuestion'><h3>嵌入页面的问答题</h3><textarea id='frameText'></textarea></section>"></iframe>
 <section id="sort"><h3>拖动完成排序</h3><button>甲</button><button>乙</button></section><input type="password" value="SECRET_PASSWORD"><input name="apiKey" value="SECRET_TOKEN">
 </main><script>(${fixtureBoot.toString()})();</script>`;
-const sources = ['adapters/chaoxing.js', 'dropdown.js', 'extractor.js', 'ai-extractor.js', 'filler.js', '../course/watch.js', 'panel.js']
+const sources = ['adapters/chaoxing.js', 'dropdown.js', 'diagnostics.js', 'extractor.js', 'ai-extractor.js', 'filler.js', '../course/watch.js', 'panel.js']
   .map((p) => fs.readFileSync(path.join(root, 'content/homework', p), 'utf8')).join('\n;\n');
 const html = fixture + `<script>${sources}</script><script>window.runDetectionChecks=${browserChecks.toString()};</script>`;
 const inbox = `<!doctype html><meta charset="utf-8"><title>学习通知</title><style>body{font:14px system-ui;margin:32px}main{max-width:650px}li{padding:18px}label{display:block}</style><nav>消息导航</nav><main><h2>学习通知</h2><ul><li><label><input type="checkbox">我发出的</label></li><li><label><input type="checkbox">未完成</label></li><li><label><input type="checkbox">已完成作业</label></li></ul><input type="text" placeholder="搜索通知"><select><option>全部课程</option><option>未读通知</option></select><textarea placeholder="快捷回复"></textarea><p>课程名称：计算机组成原理；作业通知，请点击进入查看。</p></main><script>(${fixtureBoot.toString()})();</script><script>${sources};HW.Panel.init();</script>`;

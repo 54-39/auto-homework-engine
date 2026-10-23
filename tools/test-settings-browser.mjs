@@ -28,7 +28,7 @@ function fixture() {
     if (type === 'KEY_USE') { const r = testKeys.find(r => r.id === payload.id); merge(testConfig, { api: { apiKey: r.key, iface: r.iface, baseURL: r.baseURL, model: r.model } }); return { ok: true }; }
     if (type === 'KEY_REMOVE') { testKeys = testKeys.filter(r => r.id !== payload.id); if (testConfig.api.apiKey === payload.key) testConfig.api.apiKey = ''; return { ok: true }; }
     if (type === 'CACHE_CLEAR') return { ok: true, count: 0 };
-    if (type === 'HW_ISSUE_LIST') return { ok: true, issues: [{stage:'刷课跳过',message:'测试失败',course:'课程甲',chapter:'第一节',task:'第二页签',action:'跳过并继续，未计完成',stack:'Error: 测试失败',details:'测试上下文',at:new Date().toISOString(),version:'0.9.13'}], total: 1, offset: 0 };
+    if (type === 'HW_ISSUE_LIST') return { ok: true, issues: [{stage:'刷课跳过',message:'测试失败',course:'课程甲',chapter:'第一节',task:'第二页签',action:'跳过并继续，未计完成',stack:'Error: 测试失败',details:'测试上下文',sceneSummary:{status:'captured',documents:3,unreadable:1,truncated:true},at:new Date().toISOString(),version:'0.9.14'}], total: 1, offset: 0 };
     if (type === 'TEST_API') return { ok: true, reply: '测试通过' };
     return { ok: true };
   } }, permissions: { contains: async () => !window.testDenyPermission, request: async () => !window.testDenyPermission }, storage: { onChanged: { addListener() {} } } };
@@ -78,7 +78,7 @@ async function checks() {
   await check('诊断展示跳过任务的课程、章节、处理结果、堆栈和上下文', async () => {
     document.querySelector('[data-sec="diag"]').click();await wait(30);
     const text=$('issueList').textContent;
-    for(const value of ['课程甲','第一节','第二页签','跳过并继续','Error: 测试失败','测试上下文']) ok(text.includes(value),value);
+    for(const value of ['课程甲','第一节','第二页签','跳过并继续','Error: 测试失败','测试上下文','已附 3 个','1 个无法读取','已截断']) ok(text.includes(value),value);
     document.querySelector('[data-sec="app"]').click();await wait(30);
   });
   await check('临时Key默认重置旧供应商并自动探测，不加入列表', async () => {
@@ -176,6 +176,12 @@ try {
   for(const r of results)console.log(r.ok?'PASS':'FAIL',r.name,r.error||'');
   for(const width of [1280,420,320]) {
     await call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+    await evaluate(`document.querySelector('[data-sec="diag"]').click()`);await pause(100);
+    await evaluate(`(()=>{document.querySelector('.issue-history').open=true;document.querySelector('#issueList details').open=true;window.scrollTo(0,0);})()`);await pause(30);
+    assert.ok(await evaluate('document.querySelector("#issueList details").open'),'诊断详情未展开');
+    const diag = await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});fs.writeFileSync(path.join(output,`settings-diag-${width}.png`),Buffer.from(diag.data,'base64'));
+    assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth'),'诊断内容溢出');
+    await evaluate(`document.querySelector('[data-sec="app"]').click()`);
     for(const mode of ['api','advanced','bridge']) {
       await evaluate(`(()=>{const e=document.getElementById('engine');e.value=${JSON.stringify(mode==='bridge'?'bridge':'api')};e.dispatchEvent(new Event('change'));document.getElementById('apiDetails').open=${mode==='advanced'};window.scrollTo(0,0);})()`);await pause(100);
       const geometry=await evaluate(`(()=>{const s=document.getElementById('sec-app'),r=s.getBoundingClientRect();return {width:innerWidth,scroll:document.documentElement.scrollWidth,left:r.left,right:r.right,cardScroll:s.scrollWidth,cardWidth:s.clientWidth};})()`);

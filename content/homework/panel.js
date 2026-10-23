@@ -571,7 +571,8 @@
     function reportIssue(stage, message, details = {}) {
       const active = HW.Watch?.activeChapterId?.();
       const chapter = HW.Watch?.nodes?.().find(n => n.id === active)?.name || active || '';
-      send('HW_ISSUE_ADD', { stage, message, chapter, ...details }).then(r => {
+      send('HW_ISSUE_ADD', { stage, message, chapter, stack: new Error(String(message)).stack,
+        ...details, scene: HW.Diagnostics?.capture() }).then(r => {
         if (!r?.ok && r?.error !== CONTEXT_NOTICE) showIssueFailure(r?.error || '请刷新扩展后重试');
       });
     }
@@ -605,10 +606,10 @@
     setTimeout(rememberProgress, 1500);
     const extensionRoot = chrome.runtime.getURL?.('');
     window.addEventListener('error', e => {
-      if (extensionRoot && e.filename?.startsWith(extensionRoot)) reportIssue('插件脚本', e.message);
+      if (extensionRoot && e.filename?.startsWith(extensionRoot)) reportIssue('插件脚本', e.message, { stack: e.error?.stack || `${e.filename}:${e.lineno}:${e.colno}` });
     });
     window.addEventListener('unhandledrejection', e => {
-      if (extensionRoot && String(e.reason?.stack || '').includes(extensionRoot)) reportIssue('插件脚本', e.reason?.message || e.reason);
+      if (extensionRoot && String(e.reason?.stack || '').includes(extensionRoot)) reportIssue('插件脚本', e.reason?.message || e.reason, { stack: e.reason?.stack });
     });
     const setSummary = (text, warn) => {
       els.smsg.textContent = text;
@@ -701,7 +702,7 @@
         queueInfo = null; // 本页立刻反映「已停」，不等下一次轮询
         syncWatchTip();
         setWatchLine('');
-        log('刷课：已停止，队列已暂停');
+        log('刷课：已手动停止，队列已暂停');
         /* 停止时可能正好卡在「接续中」：接续流程稍后仍会把循环拉起来，补一刀按停 */
         setTimeout(() => { if (HW.Watch?.running) HW.Watch.stop(); }, 1500);
         return;
@@ -1405,7 +1406,7 @@
         if (requestId !== detectionRequest) return;
         detectionSnapshot = HW.AIDetection.collect();
         watchPage(detectionSnapshot);
-        log('开始 AI 识题（' + engineName() + '，共 ' + detectionSnapshot.batches.length + ' 批）');
+        if (!autoRun) log('开始 AI 识题（' + engineName() + '，共 ' + detectionSnapshot.batches.length + ' 批）');
         const result = await send('HW_DETECT_QUESTIONS', { requestId, batches: detectionSnapshot.batches });
         if (requestId !== detectionRequest) return;
         if (!result?.ok) throw new Error(result?.error || 'AI 识题失败，请重新检测');
@@ -1489,7 +1490,7 @@
       /* 空读（0 题 0 待确认）不打日志：它在非题目页每几秒就刷一条，
            把真正有用的行全淹了（用户 2026-10-22 抱怨日志太吵）。 */
       const emptyRead = source === '页面读取' && !qs.length && !pending.length;
-      if (!quietRead && !emptyRead && (source !== '页面读取' || sig !== lastReadSig)) log(`${source}完成：可处理 ${qs.length} 题，待确认 ${pending.length} 题`);
+      if (!autoRun && !quietRead && !emptyRead && (source !== '页面读取' || sig !== lastReadSig)) log(`${source}完成：可处理 ${qs.length} 题，待确认 ${pending.length} 题`);
       lastReadSig = sig;
       els.start.disabled = !qs.length;
     }
@@ -1569,7 +1570,7 @@
         }
         const skipCount = questions.filter((q) => q._decision === 'skip').length;
         const rewriteCount = questions.filter((q) => q._decision === 'rewrite').length;
-        log(
+        if (!autoRun) log(
           `开始答题（引擎：${engineName()}，共 ${questions.length} 题` +
             (skipCount ? `，已写且正确 ${skipCount} 题跳过` : '') +
             (rewriteCount ? `，写错 ${rewriteCount} 题将改写` : '') +
@@ -1631,7 +1632,7 @@
           /* 无人值守不能停下来等用户点按钮：原生没读全的题（公式图选选项、多空填空等）
              直接自动走一次 AI 识题 —— 这就是「检测题目」按钮本身的能力，只是原来只由点击触发。
              实测 2026-10-21：抓阄先抽后抽那节 5 题可处理 / 1 题待确认，不自动补就叫停了整轮。 */
-          log('刷课：有题目原生没读全，自动调用 AI 识题');
+          setWatchLine('有题目原生没读全，正在调用 AI 识题');
           const done = await detectQuestions();
           if (!done) throw new Error('AI 识题没成功，不提交测验');
           if (!HW.questions?.length) throw new Error('AI 识题后仍然没有可处理的题目，不提交测验');
@@ -1717,7 +1718,7 @@
         if (stopRequested) return;
         setRow(payload.index, payload.status, payload.error || payload.note || '');
         if (payload.status === 'failed') log(`第 ${payload.index + 1} 题获取答案失败：${payload.error}`);
-        if (payload.status === 'skipped') log(`第 ${payload.index + 1} 题：${payload.note || '已作答，跳过'}`);
+        if (payload.status === 'skipped' && !autoRun) log(`第 ${payload.index + 1} 题：${payload.note || '已作答，跳过'}`);
       } else if (type === 'HW_ANSWER') {
         if (stopRequested) return; // 已停止：丢弃迟到的回答
         (async () => {
@@ -1729,7 +1730,7 @@
             const live = HW.Extractor.currentAnswer(q);
             if (answersMatch(q.meta.type, live, payload.answer)) {
               setRow(i, 'skipped', '答案：' + payload.answer + '（你原来的答案正确，保持不动）');
-              log(`第 ${i + 1} 题已写且答案正确，无需改写${payload.fromCache ? '（缓存命中）' : ''}`);
+              if (!autoRun) log(`第 ${i + 1} 题已写且答案正确，无需改写${payload.fromCache ? '（缓存命中）' : ''}`);
               chrome.runtime.sendMessage({ type: 'HW_FILLED', payload: { index: i, ok: true } });
               return;
             }
@@ -1746,7 +1747,7 @@
             if (verified === false) reportIssue('填写失败', '页面答案回读校验未通过', { question: q.meta.stem, answer: payload.answer });
             rows[i] && (rows[i].dataset.tip = '答案：' + payload.answer);
             const vTip = verified === 'unknown' ? '｜（页面不暴露选中状态，按点击成功处理）' : verified === false ? '｜校验未通过，将自动重试' : '';
-            log(`第 ${i + 1} 题已填写${payload.fromCache ? '（缓存命中）' : ''}${payload.note ? '｜' + payload.note : ''}${vTip}`);
+            if (!autoRun || verified === false) log(`第 ${i + 1} 题已填写${payload.fromCache ? '（缓存命中）' : ''}${payload.note ? '｜' + payload.note : ''}${vTip}`);
             chrome.runtime.sendMessage({
               type: 'HW_FILLED',
               payload: { index: i, ok: verified !== false, error: verified === false ? '填写校验未通过' : undefined },
@@ -1775,7 +1776,7 @@
             log(`全部处理完毕，但有 ${failed} 题未成功（修复 Key 后点「开始」可整页重跑，已成功的题会命中缓存秒填）`);
           } else {
             setSummary(`完成：填写 ${payload.filled ?? payload.total ?? '?'}${skipped ? ` / 保留 ${skipped}` : ''}，请检查后自行提交`, false);
-            log(`全部处理完毕（共 ${payload.total} 题），提交请自行操作`);
+            if (!autoRun) log(`全部处理完毕（共 ${payload.total} 题），提交请自行操作`);
           }
         }
       } else if (type === 'HW_STOPPED') {
@@ -1785,7 +1786,7 @@
         log('队列已停止');
       } else if (type === 'HW_WATCH_FINISHED') {
         setWatchLine('');
-        if (payload.cancelled) log('刷课：排队已取消');
+        if (payload.cancelled) log('刷课：已停止：' + (payload.reason || '队列已取消'));
         else if (payload.targetRun) log(`刷课：${payload.count}/${payload.total} 门课程开头 ${payload.targetRun} 节已核验（口语例外单列）`);
         else log(payload.limited ? `刷课：${payload.count} 门课的本次限定小节已完成` : `刷课：${payload.count} 门课都走完了（提交与最终成绩请自行核对）`);
         queueInfo = null;
@@ -1824,7 +1825,7 @@
       try {
         await HW.Watch?.resumeQueued?.({ onLive: setWatchLine, onNote: watchNote, onStop: watchStopped });
         await refreshQueueInfo(true);
-        if (HW.Watch?.running) log('刷课：接着上一轮排队继续');
+        if (HW.Watch?.running) setWatchLine('接着上一轮排队继续');
       } catch {
         /* 没有排队或后台没响应：当普通页面处理 */
       }

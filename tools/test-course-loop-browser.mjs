@@ -28,10 +28,12 @@ async function loopChecks() {
 
   let stopCalls = 0;
   const notes = [];
+  const liveMessages = [];
   window.__notes = notes;
   HW.Watch.start({
     rate: 2,
     onNote: (t) => notes.push(t),
+    onLive: (t) => liveMessages.push(t),
     onStop: () => { stopCalls++; },
   });
 
@@ -51,7 +53,13 @@ async function loopChecks() {
   await check('本章讨论替用户回了一条帖（不重复发）', () => {
     ok((window.__discussReplies || 0) >= 1, 'addDiscussReply 一次都没被点：' + (window.__discussReplies || 0));
     ok(window.__discussReplies <= 2, '讨论回复发了 ' + window.__discussReplies + ' 次，重复发帖');
-    ok(window.__notes.some((t) => /讨论：已在/.test(t)), '没提示讨论已发：' + window.__notes.join(' / '));
+    ok(liveMessages.some((t) => /讨论：已在/.test(t)), '状态栏没提示讨论已发：' + liveMessages.join(' / '));
+  });
+
+  await check('视频、讨论、测验与阅读进度只更新状态，日志保留课程完成', () => {
+    ok(liveMessages.some(t => /视频看完/.test(t)), '视频完成状态未显示');
+    ok(!notes.some(t => /视频看完|音视频看完|播放中：|阅读任务点已完成|测验成绩：|测验页：填了|讨论.*(?:已在|已回帖)|从第 1\//.test(t)), '正常进度仍刷日志：' + notes.join(' / '));
+    ok(notes.filter(t => /已走完一遍/.test(t)).length === 1, '课程完成消息缺失或重复');
   });
 
   await check('视频页按 2x 播完才算过', () => {

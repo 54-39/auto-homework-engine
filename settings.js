@@ -155,7 +155,10 @@ import './options/options.js';
       const meta = document.createElement('small');
       meta.textContent = new Date(issue.firstAt || issue.at).toLocaleString() + ' · v' + issue.version + (issue.count > 1 ? ` · 旧版合并记录 ${issue.count} 次` : '');
       const body = document.createElement('pre');
-      body.textContent = [['课程', issue.course], ['章节', issue.chapter], ['任务', issue.task], ['处理结果', issue.action], ['错误堆栈', issue.stack], ['详细上下文', issue.details], ['页面', issue.url], ['题目', issue.question], ['答案 / 回执', issue.answer]]
+      const scene = issue.sceneSummary;
+      const sceneText = !scene ? '旧记录未附现场' : scene.status === 'unavailable' ? '未能采集：' + scene.reason
+        : `已附 ${scene.documents} 个页面／框架结构${scene.unreadable ? `，其中 ${scene.unreadable} 个无法读取（原因随文件导出）` : ''}${scene.status === 'partial' ? '；部分采集：' + (scene.reason || '部分结构不可读取') : ''}${scene.truncated ? '；超出采集限制的部分已截断' : ''}。导出异常记录即可一并获取。`;
+      body.textContent = [['课程', issue.course], ['章节', issue.chapter], ['任务', issue.task], ['处理结果', issue.action], ['出错现场', sceneText], ['错误堆栈', issue.stack], ['详细上下文', issue.details], ['页面', issue.url], ['题目', issue.question], ['答案 / 回执', issue.answer]]
         .filter(([, value]) => value).map(([label, value]) => `${label}：${value}`).join('\n\n') || '没有附加内容';
       details.append(summary, meta, body); li.append(details); list.append(li);
     }

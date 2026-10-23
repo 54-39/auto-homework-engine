@@ -37,7 +37,13 @@ export async function readIssuePage(offset = 0, limit = 50) {
   const size = Math.max(1, Math.min(100, Number(limit) || 50));
   const selected = keys.slice(start, start + size);
   const rows = selected.length ? await chrome.storage.local.get(selected) : {};
-  return { issues: selected.map(key => ({ id: key, ...rows[key] })), total: keys.length, offset: start, limit: size };
+  return { issues: selected.map(key => {
+    const { scene, ...item } = rows[key];
+    // 列表只传采集摘要；完整结构留在本机，导出时一次带走。
+    const sceneSummary = scene ? { status: scene.status, capturedAt: scene.capturedAt, truncated: scene.truncated,
+      documents: scene.documents?.length || 0, unreadable: scene.documents?.filter(d => d.status === 'unreadable').length || 0, reason: scene.reason || scene.error } : null;
+    return { id: key, ...item, sceneSummary };
+  }), total: keys.length, offset: start, limit: size };
 }
 
 export async function clearIssueHistory() {

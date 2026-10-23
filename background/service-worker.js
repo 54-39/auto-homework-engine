@@ -32,23 +32,44 @@ let fontIndex;
 let watchQueue = null; // { courses:[{key,scUrl,name}], index, tabId, rate, autoRate }
 let issueWrites = Promise.resolve();
 function recordIssue(entry, sender = {}) {
+  // 在进入串行写队列前请求现场，避免等前一条写完时页面已跳走。
+  const scenePromise = entry.scene ? Promise.resolve(entry.scene) : (async () => {
+    if (!sender.tab?.id) return { status: 'unavailable', reason: '没有可读取的页面上下文' };
+    let timer;
+    try {
+      return await Promise.race([
+        chrome.tabs.sendMessage(sender.tab.id, { type: 'HW_DIAGNOSTIC_CAPTURE' }, { frameId: sender.frameId ?? 0 }),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('现场采集超时')), 1500); }),
+      ]) || { status: 'unavailable', reason: '页面未返回现场' };
+    } catch (e) { return { status: 'unavailable', reason: String(e.message || e) }; }
+    finally { clearTimeout(timer); }
+  })();
   const write = issueWrites.then(async () => {
-    const stored = await chrome.storage.local.get('config');
+    const stored = await chrome.storage.local.get(['config', 'savedKeys']);
+    const secrets = [stored.config?.api?.apiKey, ...(stored.savedKeys || []).map(row => row.key)].filter(Boolean);
     const clean = value => {
       let text = String(value || '');
-      const secret = stored.config?.api?.apiKey;
-      if (secret) text = text.split(secret).join('[已隐藏]');
+      for (const secret of secrets) text = text.split(secret).join('[已隐藏]');
       return text.replace(/Bearer\s+[^\s]+/gi, 'Bearer [已隐藏]')
         .replace(/https?:\/\/[^\s"<>]+/g, value => { try { const u = new URL(value); return u.origin + u.pathname; } catch { return '[网址]'; } });
     };
     let url = '';
     try { const u = new URL(sender.url || sender.tab?.url || entry.url); url = u.origin + u.pathname; } catch { /* 无页面上下文 */ }
+    const rawScene = await scenePromise;
+    const cleanScene = (value, depth = 0) => {
+      if (depth > 12) return '[层级已截断]';
+      if (typeof value === 'string') return clean(value);
+      if (Array.isArray(value)) return value.slice(0, 100).map(row => cleanScene(row, depth + 1));
+      if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).slice(0, 50).map(([key, v]) => [clean(key), cleanScene(v, depth + 1)]));
+      return value;
+    };
+    const scene = JSON.stringify(rawScene).length <= 600000 ? cleanScene(rawScene) : { status: 'unavailable', reason: '现场数据超出单条大小限制' };
     const item = { at: new Date().toISOString(), version: chrome.runtime.getManifest().version,
       stage: clean(entry.stage || '异常'), message: clean(entry.message), url,
       course: clean(entry.course), task: clean(entry.task), action: clean(entry.action),
       stack: clean(entry.stack), details: clean(entry.details),
       chapter: clean(entry.chapter), question: clean(entry.question), answer: clean(entry.answer),
-      score: typeof entry.score === 'number' ? entry.score : null, count: 1 };
+      score: typeof entry.score === 'number' ? entry.score : null, count: 1, scene };
     if (!item.message) return;
     await appendIssue(item);
   });
@@ -78,7 +99,7 @@ async function ensureWatchHostAccess() {
   if (q && !q.paused) {
     q.paused = WATCH_HOST_ACCESS_ERROR;
     await saveQueue(q);
-    sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { cancelled: true } });
+    sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { cancelled: true, reason: q.paused } });
   }
   return false;
 }
@@ -95,7 +116,7 @@ async function pauseWatchForInterruptedPage(tab) {
       ? '平台显示账号登录检测提示，已暂停并保留队列；请先处理网页提示，再手动继续。'
       : '已退出课程学习页，队列已暂停；点「开始刷课」继续。';
     await saveQueue(q);
-    sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { cancelled: true } });
+    sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { cancelled: true, reason: q.paused } });
   }
   return true;
 }
@@ -192,7 +213,7 @@ function pauseRun(tabId, reason) {
   if (run) run.cancelled = true;
   const item = run?.items.find(i => i.status === 'failed');
   const question = item?.q && [item.q.stem, ...(item.q.options || []).map(option => `${option.key}. ${option.text}`)].join('\n');
-  recordIssue({ stage: '答题失败', message: item?.error || reason, question, answer: item?.raw || item?.answer?.answer, url: run?.sourceUrl })
+  recordIssue({ stage: '答题失败', message: item?.error || reason, question, answer: item?.raw || item?.answer?.answer, url: run?.sourceUrl }, { tab: { id: tabId } })
     .catch(e => {
       sendTab(tabId, { type: 'HW_ISSUE_WRITE_FAILED', payload: { error: String(e.message || e) } });
       notify('异常记录写入失败，已停止答题：' + String(e.message || e).slice(0, 100));
@@ -800,7 +821,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (type === 'HW_WATCH_STOP') {
         const q = await loadQueue();
         await saveQueue(null);
-        if (q) sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { cancelled: true } });
+        if (q) sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { cancelled: true, reason: '用户取消刷课队列' } });
         sendResponse({ ok: true });
       } else if (type === 'KEY_SAVE') {
         // 保存 Key 并记住：自动探测接口类型（并行尝试已知接口）→ 去重入库 → 设为当前使用
