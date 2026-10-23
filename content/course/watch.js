@@ -740,7 +740,9 @@
       const card = a.closest('li,div.course') || a.parentElement || a;
       const cardText = (card.textContent || '').replace(/\s+/g, ' ').trim();
       if (/课程已结束|已退课/.test(cardText)) continue; // 结束/退课的课不刷
-      const prog = /(\d+)\s*\/\s*(\d+)/.exec(cardText);
+      /* 进度优先认「任务点进度: X/Y」标签，防止课名/班级里的其他 X/Y 数字对抢先命中；
+         没有这个标签的旧皮肤退回任意数字对。都没有就是这门课不开任务点（done=null）。 */
+      const prog = /任务点进度:\s*(\d+)\s*\/\s*(\d+)/.exec(cardText) || /(\d+)\s*\/\s*(\d+)/.exec(cardText);
       const cpi = u.searchParams.get('cpi') || '';
       const item = {
         key, courseid, clazzid, cpi,
@@ -1261,10 +1263,27 @@
     const chapter = activeChapterId();
     const deadline = Date.now() + 45000;
     let softUntil = 0;
+    /* 站点收到页签点击后偶尔停在半路：#iframe 的 src 被清成无参数（cards?）就再也不动
+       ——2026-10-23 异常记录里 5 次「页签加载失败」全是这种状态，白等 45 秒还把这一
+       页签的任务点全落下。15 秒 iframe 毫无变化就再点一次页签，最多两次。 */
+    const frameState = () => {
+      try { return (frame ? String(frame.getAttribute('src') || '') : 'gone') + '|' + (frame?.contentDocument?.URL || ''); } catch { return '?'; }
+    };
+    let lastState = frameState();
+    let lastMove = Date.now();
+    let reClicks = 0;
     while (on && Date.now() < deadline) {
       frame = document.querySelector('#iframe');
       let card;
       try { card = frame?.contentDocument; } catch { /* 等待同源章节卡片 */ }
+      if (frameState() !== lastState) { lastState = frameState(); lastMove = Date.now(); }
+      else if (reClicks < 2 && Date.now() - lastMove > 15000) {
+        reClicks++;
+        lastMove = Date.now();
+        try { li.click(); } catch { /* 点不动就继续等 */ }
+        await step(TAB_WAIT);
+        continue;
+      }
       if (card?.body && card.readyState === 'complete') {
         const url = new URL(card.URL, location.href);
         const expected = new URL(frame.src || location.href, location.href);

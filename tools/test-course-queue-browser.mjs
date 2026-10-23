@@ -342,7 +342,7 @@ fs.writeFileSync(path.join(output, 'queue-page.html'), html);
 const server = http.createServer((_, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(html); });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const child = spawn(edge, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
-  '--disable-crash-reporter', '--disable-breakpad', '--remote-debugging-port=0',
+  '--disable-crash-reporter', '--disable-breakpad', '--remote-debugging-port=0', '--disable-features=CalculateNativeWinOcclusion',
   `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore', windowsHide: true });
 let socket;
 try {
@@ -350,7 +350,7 @@ try {
   for (let i = 0; i < 150; i++) {
     const file = path.join(profile, 'DevToolsActivePort');
     if (fs.existsSync(file)) { port = Number(fs.readFileSync(file, 'utf8').split('\n')[0]); break; }
-    if (child.exitCode !== null) throw new Error('Headless Edge exited before opening DevTools');
+    /* Edge 155 起启动器进程会先正常退出、浏览器由另一个进程承载，不再据此判失败（超时后由 assert.ok(port, 'Headless Edge unavailable') 兜底） */
     await pause(100);
   }
   assert.ok(port, 'Headless Edge unavailable');
@@ -387,6 +387,16 @@ try {
   console.log(`\n${results.length} course queue groups passed.`);
 } finally {
   socket?.close();
+  /* Edge 155：child 是已退出的启动器进程，要用 CDP 关掉真正持有 profile 的浏览器，否则进程残留、profile 删不掉 */
+  try {
+    const pf = path.join(profile, 'DevToolsActivePort');
+    if (fs.existsSync(pf)) {
+      const p = Number(fs.readFileSync(pf, 'utf8').split('\n')[0]);
+      const v = await (await fetch(`http://127.0.0.1:${p}/json/version`)).json();
+      const bw = new WebSocket(v.webSocketDebuggerUrl);
+      await new Promise((res) => { bw.onopen = () => { bw.send(JSON.stringify({ id: 1, method: 'Browser.close' })); setTimeout(res, 1200); }; bw.onerror = res; });
+    }
+  } catch { /* 浏览器已退出 */ }
   child.kill();
   server.closeAllConnections();
   server.close();

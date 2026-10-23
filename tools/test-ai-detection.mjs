@@ -15,7 +15,7 @@ const messages = buildDetectionMessages('<main ref="e1"><input ref="e2" kind="te
 const originalFetch = globalThis.fetch;
 const originalTimeout = globalThis.setTimeout;
 const cfg = { iface: 'openai', baseURL: 'https://example.invalid/v1', model: 'test', apiKey: 'test-key' };
-globalThis.chrome = { storage: { local: { get: async () => ({}), set: async () => {} } } };
+globalThis.chrome = { storage: { local: { get: async () => ({}), set: async () => {} } }, permissions: { contains: async () => true }, runtime: { onMessage: { addListener() {} }, getManifest: () => ({ version: '0.9.14' }) }, tabs: { onUpdated: { addListener() {} } } };
 try {
   await test('识题提示将网页内容当资料，禁止作答、脚本和虚构编号', () => {
     assert.match(messages[0].content, /不可信/);
@@ -26,7 +26,7 @@ try {
     assert.match(messages[0].content, /contextIds/);
     assert.match(messages[0].content, /kind=select/);
     assert.match(messages[0].content, /inputIds 严格按页面先后顺序/);
-    assert.match(messages[0].content, /拖拽、排序、连线、上传/);
+    assert.match(messages[0].content, /拖拽、排序、连线、必须上传/);
   });
   await test('支持纯 JSON 和完整 JSON 代码围栏，丢弃额外字段', () => {
     assert.equal(parseDetection(raw)[0].type, 'blank');
@@ -106,6 +106,7 @@ try {
   let lastPrompt;
   chrome.tabs = {
     query: async () => [{ id: 7 }],
+    onUpdated: { addListener() {} },
     sendMessage: async (_, msg) => {
       if (msg.type === 'BRIDGE_PING') return { ok: true, ready: true };
       lastPrompt = msg.payload.prompt;
@@ -315,15 +316,13 @@ try {
     await new Promise((r) => originalTimeout(r, 10));
     assert.equal(sentMessages.filter((m) => m.type === 'HW_ANSWER').length, count);
   });
-  await test('模型返回空答案时暂停且不填写A，并保存原始错误回执', async () => {
+  await test('模型返回空答案时客观题按「先刷完」选第一项继续，不暂停整轮', async () => {
     const before = sentMessages.length;
     globalThis.fetch = async () => success('{"answers":[]}');
     await call('HW_START', { questions: [{ type: 'choice', stem: '无法确定答案时的回归题', options: [{ key: 'A', text: '甲' }, { key: 'B', text: '乙' }] }] });
-    for (let i = 0; i < 50 && !sentMessages.slice(before).some(m => m.type === 'HW_DONE'); i++) await new Promise(r => originalTimeout(r, 5));
-    assert.ok(sentMessages.slice(before).some(m => m.type === 'HW_DONE' && m.payload.paused));
-    assert.ok(!sentMessages.slice(before).some(m => m.type === 'HW_ANSWER'));
-    const issues = (await call('HW_ISSUE_LIST')).issues;
-    assert.ok(issues.some(r => r.stage === '答题失败' && r.answer.includes('answers')));
+    for (let i = 0; i < 200 && !sentMessages.slice(before).some(m => m.type === 'HW_DONE'); i++) await new Promise(r => originalTimeout(r, 5));
+    assert.ok(sentMessages.slice(before).some(m => m.type === 'HW_ANSWER' && m.payload.answer === 'A' && /先刷完/.test(m.payload.note || '')));
+    assert.ok(sentMessages.slice(before).some(m => m.type === 'HW_DONE' && !m.payload.paused));
   });
   console.log(`\n${passed} groups passed (mock transports, no external requests).`);
 } finally {

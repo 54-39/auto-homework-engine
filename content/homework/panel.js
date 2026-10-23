@@ -776,7 +776,14 @@
         setWatchLine('课程清单读取失败，请刷新页面后重试', true);
       } finally { courseFrameLoading = false; }
     }
-    const courseComplete = c => HW.Watch.estimateCourseSeconds(c, 2, courseTimes[HW.Watch.courseTimeKey(c)]) === 0;
+    /* 完成的课收进折叠区。卡片没有「任务点进度」的课（青服团、安全教育这类不开任务的）
+       原来一律算未完成、永远挂在勾选区顶部；只有本机刷课记录里还留着未完成任务点时
+       才把它们当未完成，否则按「没有可刷的内容」归入已完成区。 */
+    const courseComplete = (c) => {
+      const t = courseTimes[HW.Watch.courseTimeKey(c)];
+      if (!(Number.isFinite(c.done) && Number.isFinite(c.total))) return !(Number.isFinite(t?.remainingJobs) && t.remainingJobs > 0);
+      return HW.Watch.estimateCourseSeconds(c, 2, t) === 0;
+    };
     const pickedCourses = () => courseItems.filter((c) => c.checked && !courseComplete(c));
     const eligibleLimited = c => Number.isFinite(c.done) && Number.isFinite(c.total) && c.total > 0 && c.done / c.total < .35;
     const selectedForWatch = () => limitedRun()

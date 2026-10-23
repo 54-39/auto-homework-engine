@@ -637,20 +637,25 @@ async function browserChecks() {
     const row = i => ui.querySelector(`.crow[data-i="${i}"]`);
     await until(() => row(0).querySelector('.ctime').textContent.includes('8 分钟'));
     const completed = ui.querySelector('.ccompleted');
-    ok(!completed.open && completed.contains(row(1)) && completed.querySelector('summary').textContent === '已完成（1 门）');
+    ok(!completed.open && completed.contains(row(1)) && completed.contains(row(2)) && completed.querySelector('summary').textContent === '已完成（2 门）');
     ok(row(1).querySelector('.ctime').classList.contains('hidden') && row(1).querySelector('input').disabled);
     ok(row(2).querySelector('.ctime').classList.contains('hidden'), '未知进度不应在列表显示虚假估算');
     const unknownKey = HW.Watch.courseTimeKey(HW.Watch.courseLinks()[2]);
-    testStore[unknownKey] = { remainingJobs: 0 };
-    await setPanelMode('homework'); await setPanelMode('watch');
+    /* 卡片没给进度的课默认折叠进已完成区（青服团这类不开任务的课不再挂在未完成里）；
+       本机刷课记录还留着未完成任务点时例外，仍留在未完成区等继续。 */
     await until(() => completed.contains(row(2)));
-    delete testStore[unknownKey];
+    testStore[unknownKey] = { remainingJobs: 2 };
     await setPanelMode('homework'); await setPanelMode('watch');
     await until(() => !completed.contains(row(2)));
+    delete testStore[unknownKey];
+    await setPanelMode('homework'); await setPanelMode('watch');
+    await until(() => completed.contains(row(2)));
     ui.querySelector('.crow.all input').click();
-    ok(row(0).querySelector('input').checked && row(2).querySelector('input').checked && !row(1).querySelector('input').checked);
+    ok(row(0).querySelector('input').checked && !row(2).querySelector('input').checked && !row(1).querySelector('input').checked);
     completed.querySelector('summary').click();
     ok(completed.open, '完成课程不能展开');
+    extra.querySelectorAll('.lateProgress')[2].textContent = '任务点进度: 1/2';
+    await until(() => !completed.contains(row(2)));
     extra.querySelectorAll('.lateProgress')[2].textContent = '任务点进度: 5/5';
     await until(() => completed.contains(row(2)));
     ok(completed.open && row(0).querySelector('input').checked && !row(2).querySelector('input').checked);
@@ -751,14 +756,14 @@ const inbox = `<!doctype html><meta charset="utf-8"><title>学习通知</title><
 const server = http.createServer((req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(req.url === '/visit/interaction' ? '<!doctype html><title>内嵌课程列表样例</title>' : req.url === '/no-questions' ? inbox : html); });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const child = spawn(edge, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
-  '--disable-crash-reporter', '--disable-breakpad', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore', windowsHide: true });
+  '--disable-crash-reporter', '--disable-breakpad', '--remote-debugging-port=0', '--disable-features=CalculateNativeWinOcclusion', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore', windowsHide: true });
 let socket;
 try {
   let port;
   for (let i = 0; i < 150; i++) {
     const file = path.join(profile, 'DevToolsActivePort');
     if (fs.existsSync(file)) { port = Number(fs.readFileSync(file, 'utf8').split('\n')[0]); break; }
-    if (child.exitCode !== null) throw new Error('Headless Edge exited before opening DevTools');
+    /* Edge 155 起启动器进程会先正常退出、浏览器由另一个进程承载，不再据此判失败（超时后由 assert.ok(port, 'Headless Edge unavailable') 兜底） */
     await pause(100);
   }
   assert.ok(port, 'Headless Edge unavailable');
@@ -948,6 +953,16 @@ try {
   console.log(`\n${results.length} browser groups passed. Screenshots: ${output}`);
 } finally {
   socket?.close();
+  /* Edge 155：child 是已退出的启动器进程，要用 CDP 关掉真正持有 profile 的浏览器，否则进程残留、profile 删不掉 */
+  try {
+    const pf = path.join(profile, 'DevToolsActivePort');
+    if (fs.existsSync(pf)) {
+      const p = Number(fs.readFileSync(pf, 'utf8').split('\n')[0]);
+      const v = await (await fetch(`http://127.0.0.1:${p}/json/version`)).json();
+      const bw = new WebSocket(v.webSocketDebuggerUrl);
+      await new Promise((res) => { bw.onopen = () => { bw.send(JSON.stringify({ id: 1, method: 'Browser.close' })); setTimeout(res, 1200); }; bw.onerror = res; });
+    }
+  } catch { /* 浏览器已退出 */ }
   child.kill();
   server.closeAllConnections();
   server.close();
