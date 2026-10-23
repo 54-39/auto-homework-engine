@@ -11,7 +11,7 @@ const version = SOURCE_MANIFEST.version;
 const outPath = path.resolve(process.argv[2] || path.join(ROOT, 'dist', `作业助手-${version}.zip`));
 const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'hw-edge-store-'));
 
-function read(rel) { return fs.readFileSync(path.join(stage, rel), 'utf8'); }
+function read(rel) { return fs.readFileSync(path.join(stage, rel), 'utf8').replace(/\r\n/g, '\n'); }
 function write(rel, text) { fs.writeFileSync(path.join(stage, rel), text, 'utf8'); }
 function removeBetween(text, start, end, label) {
   const from = text.indexOf(start);
@@ -83,13 +83,13 @@ try {
   write('settings.html', html);
 
   let settings = read('settings.js');
-  settings = replaceOnce(settings, "import { isUpdaterHostReady } from './tools/updater-setup-core.mjs';\n\n", '', 'settings updater import');
+  settings = replaceOnce(settings, "import { isUpdaterHostReady } from './tools/updater-setup-core.mjs';\n", '', 'settings updater import');
   settings = replaceOnce(settings,
-    '/* 工具设置页（settings.html）：侧边栏收纳 记忆 / 诊断 / 检测更新。',
+    '/* 工具设置页（settings.html）：侧边栏收纳 应用设置 / 记忆 / 刷课 / 诊断 / 检测更新。',
     '/* 工具设置页（settings.html）：侧边栏收纳记忆与诊断。', 'settings page description');
   settings = replaceOnce(settings,
-    "  const secs = { mem: $('#sec-mem'), diag: $('#sec-diag'), upd: $('#sec-upd') };\n  let onSection = () => {};",
-    "  const secs = { mem: $('#sec-mem'), diag: $('#sec-diag') };", 'settings navigation state');
+    "  const secs = { app: $('#sec-app'), mem: $('#sec-mem'), watch: $('#sec-watch'), diag: $('#sec-diag'), upd: $('#sec-upd') };\n  let onSection = () => {};",
+    "  const secs = { app: $('#sec-app'), mem: $('#sec-mem'), watch: $('#sec-watch'), diag: $('#sec-diag') };", 'settings navigation state');
   settings = replaceOnce(settings, '    onSection(key);\n', '', 'settings update section callback');
   const updaterStart = settings.indexOf('  /* 检测更新：');
   const finalClose = settings.lastIndexOf('\n})();');

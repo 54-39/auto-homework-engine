@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const output = path.join(root, '.tmp-watch-tests');
+const output = path.join(root, '.tmp-watch-loop-tests');
 fs.mkdirSync(output, { recursive: true });
 const profile = fs.mkdtempSync(path.join(output, 'edge-loop-'));
 const edge = process.env.EDGE_BIN || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
@@ -89,15 +89,19 @@ async function loopChecks() {
     ok(window.__vpaused === true, '停止后视频仍在播放');
   });
 
-  await check('AI答题失败后停止，不点击测验提交', async () => {
+  await check('AI答题失败时记录诊断并继续后续章节，不提交失败测验', async () => {
     const original = HW.Panel.runHomework;
     const submitted = window.__submitClicks || 0;
+    const before = (window.chaptersVisited || []).filter(id => id === '102').length;
     HW.Panel.runHomework = async () => { throw new Error('模拟AI失败'); };
-    HW.Watch.start({ rate: 2, onNote: t => notes.push(t) });
-    for (let i = 0; i < 80 && HW.Watch.running; i++) await wait(500);
-    ok(!HW.Watch.running, 'AI失败后仍继续刷课');
-    ok((window.__submitClicks || 0) === submitted, 'AI失败后仍提交测验');
-    HW.Watch.stop(); HW.Panel.runHomework = original;
+    try {
+      HW.Watch.start({ rate: 2, onNote: t => notes.push(t) });
+      for (let i=0;i<240 && (window.chaptersVisited||[]).filter(id=>id==='102').length<=before;i++) await wait(500);
+      ok(notes.some(t=>/已跳过：模拟AI失败/.test(t)), '未记录跳过');
+      ok((window.chaptersVisited||[]).filter(id=>id==='102').length>before, '出错后未继续下一章');
+      ok((window.__submitClicks||0)===submitted,'失败测验仍被提交');
+      ok(window.watchIssues.some(m=>m.payload.stack && m.payload.details && m.payload.action),'跳过缺少完整诊断');
+    } finally { HW.Watch.stop(); HW.Panel.runHomework = original; }
   });
 
   await check('遍历后续慢加载页签，第四页签不是讨论时不发帖', async () => {
@@ -155,7 +159,7 @@ async function loopChecks() {
     let reportedDone = 0;
     window.chrome = { runtime: { sendMessage: async (msg) => {
       if (msg.type === 'HW_WATCH_QUEUE_GET') return { ok: true, queue: { courses: [{ key: '1|2', name: '未完成课程' }], index: 0, rate: 2 } };
-      if (msg.type === 'HW_WATCH_COURSE_DONE') reportedDone++;
+      if (msg.type === 'HW_WATCH_COURSE_DONE') { reportedDone++; HW.Watch.stop(); } // 模拟后台导航后旧页面结束
       return { ok: true };
     } } };
     const before = notes.length;
@@ -167,9 +171,9 @@ async function loopChecks() {
     ok(visited.includes('202'), '跳过了待刷的 2.2：' + JSON.stringify(visited));
     ok(visited.includes('204'), '跳过了没有角标的 2.4（未知不该当成已完成）：' + JSON.stringify(visited));
     ok(notes.some((t) => /跳过已完成 1 节/.test(t)), '没报告跳过了几节：' + notes.join(' / '));
-    ok(reportedDone === 0, '还有未完成任务就通知后台换课');
+    ok(reportedDone === 1, '记录缺口后没有推进下一门课');
     ok(!HW.Watch.running, '补刷未限制次数');
-    ok(notes.slice(before).filter(t => /再从第一节补刷一遍/.test(t)).length === 1, '补刷没有恰好一次');
+    ok(!notes.slice(before).some(t => /准备补刷/.test(t)), '出错小节被重复处理');
     ok(notes.some(t => /仍有 2 个任务点未完成/.test(t)), '未报告真实剩余任务');
   });
 
@@ -202,6 +206,8 @@ const fixture = `<!doctype html><meta charset="utf-8"><title>整课遍历 fixtur
 </div>
 <iframe id="iframe" style="width:640px;height:360px" srcdoc="&lt;body&gt;阅读正文&lt;/body&gt;"></iframe>
 <script>
+  window.watchIssues=[];
+  window.chrome={runtime:{onMessage:{addListener(){}},sendMessage:async m=>{if(m.type==='HW_ISSUE_ADD')window.watchIssues.push(m);return {ok:true};}},storage:{local:{get:async()=>({}),set:async()=>{}}}};
   window.chaptersVisited = [];
   window.tabClicks = {};
   window.videoTabs = 0;
@@ -220,7 +226,7 @@ const fixture = `<!doctype html><meta charset="utf-8"><title>整课遍历 fixtur
 
   // 视频模块 iframe：videojs 结构；视频在 1.2s 后"播完"
   const videoDoc = () => \`<!doctype html><meta charset="utf-8"><body style="margin:0">
-    <video id="vid" preload="none"></video>
+    <video id="vid" preload="none" src="/fixture-video.mp4"></video>
     <button class="vjs-big-play-button">播放视频</button>
     <button class="vjs-play-control">暂停</button>
     <button class="vjs-playback-rate">播放速度</button>
@@ -229,6 +235,7 @@ const fixture = `<!doctype html><meta charset="utf-8"><title>整课遍历 fixtur
     </div>
     <script>
       const v = document.querySelector('#vid');
+      Object.defineProperty(v, 'error', { get: () => null, configurable: true });
       Object.defineProperty(v, 'readyState', { get: () => 4, configurable: true });
       Object.defineProperty(v, 'paused', { get: () => window.parent.__vpaused === true, configurable: true });
       Object.defineProperty(v, 'ended', { get: () => window.parent.__vended === true, configurable: true });
@@ -239,6 +246,7 @@ const fixture = `<!doctype html><meta charset="utf-8"><title>整课遍历 fixtur
         window.parent.__vpaused = false;
         setTimeout(() => { window.parent.__vended = true; }, 1000);
       });
+      document.querySelector('.vjs-playback-rate').addEventListener('click',()=>{document.querySelector('.vjs-menu-content').style.display='block';});
       for (const li of document.querySelectorAll('.vjs-menu-item')) {
         li.addEventListener('click', () => { v.playbackRate = Number(li.textContent.replace('x', '')); });
       }
@@ -264,6 +272,7 @@ const fixture = `<!doctype html><meta charset="utf-8"><title>整课遍历 fixtur
       document.querySelector('#popok').addEventListener('click', () => {
         window.parent.__confirmClicks = (window.parent.__confirmClicks || 0) + 1;
         document.querySelector('#workpop').style.display = 'none';
+        const result=document.createElement('p');result.textContent='本次成绩 100 分 满分：100';document.body.append(result);
       });
     <\\/script></body>\`;
 
@@ -310,7 +319,10 @@ const fixture = `<!doctype html><meta charset="utf-8"><title>整课遍历 fixtur
   render();
 </script>`;
 
-const sources = fs.readFileSync(path.join(root, 'content/course/watch.js'), 'utf8');
+// 本地夹具缩短交互等待；保留分支、完成判定和真实按钮事件。
+const sources = fs.readFileSync(path.join(root, 'content/course/watch.js'), 'utf8')
+  .replace(/const (CHAPTER_GAP|TAB_GAP|TAB_WAIT|DWELL_TEXT|SUBMIT_GAP) = \d+;/g, 'const $1 = 20;')
+  .replace('until(() => findVideo(), 15000)', 'until(() => findVideo(), 200)');
 const html = fixture + `<script>${sources}</script><script>window.runLoopChecks=${loopChecks.toString()};</script>`;
 fs.writeFileSync(path.join(output, 'loop-page.html'), html);
 const server = http.createServer((req, res) => {
@@ -372,6 +384,7 @@ try {
       bound: window.__bound, clicked: window.__clicked, errs: window.__errs,
       ajax: typeof window.getTeacherAjax, cls: li.className, active: document.querySelector('.prev_ul li.active')?.id };
   })()`)));
+  await call('Page.bringToFront');
   const resultsP = evaluate('runLoopChecks()').catch((e) => [{ name: 'runner', ok: false, error: String((e && e.message) || e) }]);
   /* 挂死取证：每 15s 打一次 notes/URL 状态，这样卡在哪一步一眼可见（不再让 CDP 超时蒙在鼓里） */
   let results = null;

@@ -19,7 +19,7 @@
     /* 球心闪电：以前是 Unicode ⚡，Windows 上按彩色 emoji 渲染（偏黄、还带渐变），
        改成内联 SVG 用 currentColor 填纯白（用户 2026-10-23 要求白色闪电）。 */
     .fab .boltsvg{display:block;width:24px;height:24px;fill:currentColor;color:#fff;pointer-events:none;user-select:none;-webkit-user-select:none}
-    .panel{position:fixed;right:24px;bottom:96px;width:360px;height:auto;min-height:380px;max-height:calc(100vh - 108px);overflow:hidden;display:flex;flex-direction:column;gap:8px;padding:14px;
+    .panel{position:fixed;right:24px;bottom:96px;width:min(320px,calc(100vw - 32px));height:min(78vh,660px);max-height:calc(100vh - 108px);overflow:hidden;display:flex;flex-direction:column;gap:8px;padding:14px;
       border-radius:14px;z-index:2147483646;color:#111827;
       background:
         radial-gradient(circle 300px,rgba(37,99,235,.10),rgba(37,99,235,0) 70%) right -40px top -40px / 600px 600px no-repeat,
@@ -29,9 +29,10 @@
     .hidden{display:none!important}
     .tip{position:fixed;z-index:2147483647;max-width:230px;padding:6px 9px;border-radius:8px;background:#fff;border:1px solid #E3E8EF;color:#374151;font-size:11px;line-height:1.5;white-space:pre-wrap;
       box-shadow:0 10px 24px -8px rgba(15,23,42,.22),0 2px 6px -2px rgba(15,23,42,.08);pointer-events:none}
-    /* 面板高度跟着内容走：以前是固定 min(72vh,620px)，API 抽屉一展开再加 190px，
-       在实际页面上会被拉到 1000px 以上、日志下面全是空白（用户 2026-10-19 反馈「拉得很长很丑」）。
-       现在不设死高度，只设 min/max，日志区自然收在最下面。 */
+    /* API 配置展开时沿用 0.6.15 比例；精简视图收窄并缩短，避免空撑高度。 */
+    .panel.apiopen,.panel.watchmode{width:min(360px,calc(100vw - 32px));height:min(calc(72vh + 190px),calc(100vh - 108px))}
+    .panel.bridgemode .list{height:clamp(170px,29vh,240px)}
+    .panel.watchmode .apitoggle,.panel.watchmode .apisec{display:none}
     header{display:flex;align-items:center;gap:6px;cursor:move;user-select:none;touch-action:none;flex:none;min-height:22px}
     header b{font-size:15px;font-weight:700;color:#111827}
     .badge{font-size:11px;color:#2563EB;background:#E8EFFD;border-radius:4px;padding:2px 7px;font-weight:500}
@@ -96,10 +97,10 @@
     .switch input:checked+.slider .ball{left:calc(100% - 35px);transform:rotate(360deg);outline:none;box-shadow:none}
     .keyrow{display:flex;gap:8px;align-items:center;flex:none;padding-top:14px} /* 顶部留白：浮起后的标签占这里，写死以免聚焦时布局跳 */
     .inputGroup{flex:1;min-width:0;position:relative}
-    .inputGroup input{width:100%;height:36px;padding:0 14px;outline:none;caret-color:#2563EB;border:2px solid rgb(200,200,200);border-radius:20px;background:#fff;color:#111827;font-size:12px;transition:border-color .18s ease,box-shadow .18s ease}
+    .inputGroup input{width:100%;height:36px;padding:0 14px;outline:none;caret-color:#2563EB;border:2px solid rgb(200,200,200);border-radius:999px;background:#fff;color:#111827;font-size:12px;transition:border-color .18s ease,box-shadow .18s ease}
     .inputGroup input::placeholder{color:transparent}
     .inputGroup :is(input:focus,input:valid){border-color:rgb(150,150,200)}
-    .inputGroup input:focus{border-color:#2563EB;box-shadow:0 0 0 3px rgba(37,99,235,.16)}
+    .inputGroup input:focus{border-color:#2563EB;outline:none;box-shadow:none}
     .inputGroup label{position:absolute;left:0;top:50%;transform:translateY(-50%);margin-left:14px;pointer-events:none;transition:top .18s ease,transform .18s ease,color .18s ease;color:#646464;font-size:12px;white-space:nowrap;background:transparent}
     /* 聚焦/已填时标签浮到输入框上方：底边正好贴上边缘，不压边框、不带任何背景（用户明确要求去掉原来的白底） */
     .inputGroup :is(input:focus,input:valid)~label{top:0;transform:translateY(-100%) scale(.9);transform-origin:0 100%;margin-left:12px;max-width:calc(100% - 24px);overflow:hidden;text-overflow:ellipsis}
@@ -107,16 +108,6 @@
     .lbtn{border:0;background:none;cursor:pointer;font-size:12px;padding:0 2px;flex:none}
     .lbtn.primary{color:#2563EB;font-weight:500}
     .lbtn.plain{color:#6B7280}
-    .keylist{display:flex;flex-direction:column;gap:6px;max-height:100px;overflow:auto;flex:none}
-    .krow{display:flex;align-items:center;gap:8px;border-radius:6px;border:1px solid #CCD2D9;background:#fff;padding:6px 10px;min-height:46px}
-    .krow.active{background:#ECFDF5;border-color:#A7F3D0}
-    .kmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-    .kstat{font-size:11px;font-weight:500;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .krow.active .kstat{color:#059669}
-    .kmeta{font-size:10.5px;color:#6B7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .kbtn{border:0;background:none;cursor:pointer;font-size:11px;padding:0 2px;flex:none;color:#2563EB;font-weight:500}
-    .kbtn.del{color:#6B7280;font-weight:400}
-    .kbtn:disabled{color:#C0C6CD;cursor:not-allowed}
     .keywarn{color:#64748B;font-size:11px;font-weight:400;flex:none}
     .keywarn a{color:#2563EB;font-weight:500;text-decoration:underline;text-underline-offset:2px}
     .keywarn a:hover{color:#1d4ed8}
@@ -125,9 +116,9 @@
     button.act.ghost{background:#fff;color:#374151;border:1px solid #CCD2D9;font-weight:400}
     button.act:disabled{opacity:.45;cursor:not-allowed}
     .panel.watchmode .homework-only{display:none}
-    .watchview{display:flex;flex-direction:column;gap:5px;flex:0 1 auto;min-height:0}
+    .watchview{display:flex;flex-direction:column;gap:8px;flex:1.6 1 0;min-height:0}
     .watchview>*{flex:none}
-    .watchview .courselist{flex:1 1 140px;min-height:80px;max-height:170px}
+    .watchview .courselist{flex:1 1 140px;min-height:80px}
     .watchintro{padding:4px 0 6px;border-bottom:1px solid #DCE3ED}
     .watchheading{margin:0 0 4px;font-size:16px;font-weight:600;line-height:1.4;color:#111827}
     .watchcontext{margin:0;color:#4B5563;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
@@ -147,7 +138,6 @@
     .watchline.warn{color:#DC2626}
     .watchview .watchbtn{flex:none;width:100%;height:36px}
     .watchempty{margin:0;padding:16px 10px;text-align:center;color:#4B5563;line-height:1.7;border:1px dashed #C7D0DB;border-radius:8px}
-    .panel.watchmode .v2row{display:none}
     /* 课程清单占的是题目列表那一格（同样的高度），有课时替换掉它，
        面板外框尺寸不变（用户硬要求）。 */
     .courselist{flex:none;height:clamp(120px,20vh,170px);overflow:auto;border:1px solid #CCD2D9;background:#fff;border-radius:8px;padding:6px;display:flex;flex-direction:column;gap:2px}
@@ -189,11 +179,11 @@
     .item .st.s-failed{color:#DC2626}
     .logwrap{display:flex;flex-direction:column;gap:2px;flex:1 1 0;min-height:96px}
     .loghd{display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:500;color:#374151;flex:none}
-    .loghd .tbtn{font-size:11px;color:#4B5563}
     .issuewarn{flex:none;padding:8px;border-radius:6px;background:#FEF2F2;color:#B91C1C;font-size:11px;line-height:1.6;overflow-wrap:anywhere}
     .log{font-size:10.5px;color:#7C848C;flex:1 1 0;min-height:60px;overflow:auto;line-height:1.6;white-space:pre-wrap}
-    .panel.expanded{left:50%!important;top:3vh!important;transform:translateX(-50%);width:min(640px,94vw);max-height:92vh}
+    .panel.expanded{left:50%!important;top:3vh!important;transform:translateX(-50%);width:min(640px,94vw);height:92vh;max-height:92vh}
     .panel.expanded .item{min-height:34px}
+    @media (max-height:600px){.panel{overflow-y:auto}.watchview{flex:none}.logwrap{flex:none}.log{max-height:96px}}
     .modal{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:2147483647;display:flex;align-items:center;justify-content:center}
     .mbox{background:#fff;border:1px solid #CCD2D9;border-radius:12px;padding:16px;width:300px;font-size:12px;line-height:1.7;color:#1f2328;box-shadow:0 16px 36px -8px rgba(15,23,42,.2)}
     .mbox b{font-size:13px;display:block;margin-bottom:6px}
@@ -245,12 +235,6 @@
     { id: 'anthropic', label: 'Anthropic', source: 'Claude 系 /v1/messages' },
   ];
 
-  /* 引擎下拉只放名称：说明文字进了列表就是噪音——切到豆包时日志里已经写了它会怎么做 */
-  const ENGINES = [
-    { id: 'api', label: 'API' },
-    { id: 'bridge', label: '豆包桥接（免费）' },
-  ];
-
   /* 刷课倍速：默认「自动」= 先问播放器菜单最高到几档（多数课 1.5x，个别 2x）就按几档走。
      手动档只留 1x～2x 这几档常见的：再往上多数播放器根本没有，给了也只会被站点弹回来。
      站点不让改时脚本仍会直接写 playbackRate（那正是「不让改也改」要处理的情况）。 */
@@ -275,15 +259,11 @@
       <section class="panel hidden">
         <header data-tip="按住拖动移动面板；双击复位位置"><b>作业助手</b><span class="badge"></span><span class="spacer"></span>
           <button class="tbtn expandbtn" data-tip="切换大/小面板（题目多时更清晰）">展开</button>
-          <button class="tbtn settingsbtn" data-tip="打开设置页（记忆 / 诊断 / 检测更新）">设置</button>
+          <button class="tbtn settingsbtn" data-tip="打开应用设置、刷课、记忆、诊断和检测更新">设置</button>
           <button class="tbtn btn-collapse" data-tip="收起面板">收起</button>
         </header>
-        <div class="row">
-          <label>引擎</label>
-          <div class="dd engineslot"></div>
-        </div>
         <div class="row moderow"><label>模式</label><div class="dd modeslot"></div></div>
-        <div class="hintline homework-only">题目会发送至所选 AI 服务；请核对参考答案后自行提交</div>
+        <div class="hintline homework-only">题目发送至所选 AI；请核对后自行提交</div>
         <div class="updline hidden" data-tip="点击「更新」启动更新事务；下载、验证与回滚状态请在设置页查看，成功后作业页面需 F5"></div>
         <button class="apitoggle hidden">接口 与 API Key</button>
         <div class="apisec hidden">
@@ -306,7 +286,6 @@
             <button class="lbtn plain clearkey" data-tip="停用当前 Key（列表记录保留）">停用</button>
           </div>
           <div class="keywarn hidden">还没有 API Key？可先前往 <a href="https://platform.deepseek.com/usage" target="_blank" rel="noopener noreferrer">DeepSeek 平台</a>了解并准备，获取后粘贴到上方并点「保存」。</div>
-          <div class="keylist"></div>
         </div>
         <div class="modal subjmodal hidden">
           <div class="mbox">
@@ -357,7 +336,7 @@
         </div>
         <div class="summary homework-only" role="status" aria-live="polite"><span class="smsg">正在读取页面题目…</span><span class="shint hidden">列表可滚动</span></div>
         <div class="list homework-only"></div>
-        <div class="logwrap"><div class="loghd">日志 <button class="tbtn issuebtn">异常记录</button></div><div class="log"></div></div>
+        <div class="logwrap"><div class="loghd">日志</div><div class="log"></div></div>
       </section>`;
     wire(root);
   }
@@ -367,7 +346,7 @@
     const els = {
       fab: $('.fab'), panel: $('.panel'), badge: $('.badge'), header: $('header'), settingsbtn: $('.settingsbtn'), collapse: $('.btn-collapse'), expandbtn: $('.expandbtn'),
       keyinput: $('.keyinput'), keylabel: $('.keylabel'), savekey: $('.savekey'), clearkey: $('.clearkey'),
-      keylist: $('.keylist'), keywarn: $('.keywarn'), v2input: $('.v2input'), v2title: $('.switch .title'),
+      keywarn: $('.keywarn'), v2input: $('.v2input'), v2title: $('.switch .title'),
       apiToggle: $('.apitoggle'), apisec: $('.apisec'),
       modal: $('.keymodal'), msave: $('.msave'), mtemp: $('.mtemp'), mcancel: $('.mcancel'),
       subjmodal: $('.subjmodal'), subjbody: $('.subjbody'), subjcancel: $('.subjcancel'), subjkeep: $('.subjkeep'), subjrewrite: $('.subjrewrite'),
@@ -378,38 +357,22 @@
       summary: $('.summary'), smsg: $('.smsg'), shint: $('.shint'), list: $('.list'), log: $('.log'),
       updline: $('.updline'),
     };
-    /* 引擎下拉用自绘控件（原生 select 的展开层是系统窗口，样式改不到）。
-       控件接口模仿 select：els.engine.value 读写照旧。 */
-    els.engine = HW.Dropdown.create({
-      into: $('.engineslot'),
-      items: ENGINES.map((e) => ({ id: e.id, label: e.label })),
-      value: 'api',
-      onChange: async (engine) => {
-        const r = await send('SET_CONFIG', { engine });
-        if (!r?.ok) {
-          log('引擎切换失败：' + (r?.error || '未知错误'));
-          return;
-        }
-        refreshBadge();
-        refreshKeyRow();
-        applyMode();
-        log('引擎已切换：' + engineName() + (engine === 'bridge' ? '（将自动打开豆包标签页答题）' : ''));
-      },
-    });
+    let engine = 'api';
     els.mode = HW.Dropdown.create({
       into: $('.modeslot'),
-      items: [{ id: 'homework', label: '写题' }, { id: 'watch', label: '刷课' }],
+      items: [{ id: 'homework', label: '解题（API）' }, { id: 'watch', label: '刷课（API）' }, { id: 'bridge', label: '豆包' }],
       value: 'homework',
       onChange: async (panelMode) => {
-        applyMode();
-        const r = await send('SET_CONFIG', { panelMode });
+        const nextEngine = panelMode === 'bridge' ? 'bridge' : 'api';
+        const r = await send('SET_CONFIG', { engine: nextEngine, panelMode: panelMode === 'watch' ? 'watch' : 'homework' });
+        if (r?.ok) syncConfig(r.config || { engine: nextEngine, panelMode });
         if (!r?.ok) log('模式保存失败：' + (r?.error || '请重试'));
       },
     });
     function applyMode() {
-      const isApi = els.engine.value === 'api';
+      const isApi = engine === 'api';
       const watch = isApi && els.mode.value === 'watch';
-      els.moderow.classList.toggle('hidden', !isApi);
+      els.moderow.classList.remove('hidden');
       els.panel.classList.toggle('watchmode', watch);
       els.watchview.classList.toggle('hidden', !watch);
       if (watch) loadCourseTimes();
@@ -429,7 +392,10 @@
       syncWatchTip();
     }
     chrome.storage.onChanged?.addListener((changes, area) => {
-      if (area === 'local' && changes.config) loadWatchSections();
+      if (area === 'local' && changes.config) {
+        syncConfig(changes.config.newValue || {});
+        loadWatchSections();
+      }
     });
     function updateWatchContext() {
       const nodes = HW.Watch?.nodes?.() || [];
@@ -475,7 +441,7 @@
       const at = new Date(now.getTime() + Math.max(0, seconds) * 1000);
       const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
       const days = Math.round((midnight(at) - midnight(now)) / 86400000);
-      return (days > 0 ? '明天 ' : '') + pad2(at.getHours()) + ':' + pad2(at.getMinutes());
+      return (days === 1 ? '明天 ' : days > 1 ? `${days} 天后 ` : '') + pad2(at.getHours()) + ':' + pad2(at.getMinutes());
     }
     /* 这门课还要多久：学习页用目录里的实时任务点算；目录页/切换途中用队列里记下的进度或历史耗时估。 */
     function currentCourseSeconds(course) {
@@ -484,6 +450,7 @@
         const live = HW.Watch.remainingSeconds?.();
         if (live != null) return live;
       }
+      if (limitedRun()) return null; // 学习页之外不能把整门进度当作本次限定范围
       const item = courseItems.find(c => c.key === course.key);
       const timing = courseTimes[HW.Watch.courseTimeKey({ key: course.key, cpi: item?.cpi || '' })];
       const done = Number.isFinite(item?.done) ? item.done : course.done;
@@ -516,7 +483,7 @@
         return;
       }
       const seconds = currentCourseSeconds(cur);
-      setText(els.wqtime, seconds == null ? '估算中…'
+      setText(els.wqtime, seconds == null ? '数据不足，暂无法估算'
         : seconds <= 0 ? '已接近完成'
         : `${HW.Watch.formatCourseTime(seconds)} · 约 ${clockAfter(seconds)} 结束`);
       /* 队列还在推进但这一页的循环还没起来（核验目录、正在跳页）时给一句话，别让按钮看起来像闲着 */
@@ -633,7 +600,6 @@
       try { await HW.Watch?.rememberCourseProgress?.(); }
       catch (e) { reportIssue('课程用时', '目录进度保存失败：' + e.message); }
     }
-    $('.issuebtn').addEventListener('click', () => send('OPEN_SETTINGS', { section: 'diag' }));
     document.addEventListener('load', e => { if (e.target?.tagName === 'IFRAME') { setTimeout(reportGrade, 1200); setTimeout(rememberProgress, 1500); } }, true);
     setTimeout(reportGrade, 1200);
     setTimeout(rememberProgress, 1500);
@@ -1042,7 +1008,7 @@
       }
       els.courselist.classList.add('hidden');
     }
-    const engineName = () => els.engine.label;
+    const engineName = () => engine === 'bridge' ? '豆包桥接' : 'API';
     const refreshBadge = () => (els.badge.textContent = engineName());
 
     /* 可拖动：面板按标题栏拖、悬浮球直接拖（移动 ≥4px 判定为拖动，否则算点击）。
@@ -1188,70 +1154,12 @@
     } catch {}
 
     els.collapse.addEventListener('click', () => els.panel.classList.add('hidden'));
-    // 设置页（记忆 / 诊断 / 检测更新）在独立标签页打开，见 settings.html；
-    // 注意：content script 没有 chrome.tabs，必须让后台代开
-    els.settingsbtn.addEventListener('click', async () => {
-      const r = await send('OPEN_SETTINGS');
+    // 内容脚本通过后台打开统一设置页。
+    const openSettings = async () => {
+      const r = await send('OPEN_SETTINGS', { section: 'app' });
       if (!r?.ok) log('设置页打开失败：' + (r?.error || '未知错误'));
-    });
-    const fmtTime = (t) => {
-      const d = new Date(t);
-      const p = (n) => String(n).padStart(2, '0');
-      return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
     };
-    const renderKeyList = async (showWhenApi) => {
-      const res = await send('KEY_LIST');
-      const cfg = (await send('GET_CONFIG'))?.config;
-      const list = res?.list || [];
-      const active = cfg?.api?.apiKey || '';
-      els.keylist.innerHTML = '';
-      if (!list.length || !showWhenApi) {
-        els.keylist.innerHTML = '';
-        return;
-      }
-      list.forEach((rec) => {
-        const isActive = active === rec.key;
-        const row = document.createElement('div');
-        row.className = 'krow' + (isActive ? ' active' : '');
-        const main = document.createElement('span');
-        main.className = 'kmain';
-        const pl = (IFACES.find((p) => p.id === (rec.iface || 'openai')) || {}).label || '已记住接口';
-        const stat = document.createElement('span');
-        stat.className = 'kstat';
-        stat.textContent = (isActive ? '使用中 尾号 ' : '尾号 ') + rec.key.slice(-4);
-        const meta = document.createElement('span');
-        meta.className = 'kmeta';
-        meta.textContent = `${pl} | 记于 ${fmtTime(rec.savedAt)}`;
-        main.appendChild(stat);
-        main.appendChild(meta);
-        row.appendChild(main);
-        const useBtn = document.createElement('button');
-        useBtn.className = 'kbtn';
-        useBtn.textContent = '使用';
-        useBtn.disabled = isActive;
-        useBtn.addEventListener('click', async () => {
-          const r = await send('KEY_USE', { id: rec.id });
-          if (r?.ok) {
-            log(`已切换使用尾号 ${rec.key.slice(-4)} 的 Key（${pl}）`);
-            refreshKeyRow();
-          } else log('切换失败：' + (r?.error || '未知错误'));
-        });
-        row.appendChild(useBtn);
-        const delBtn = document.createElement('button');
-        delBtn.className = 'kbtn del';
-        delBtn.textContent = '删除';
-        delBtn.dataset.tip = '删除这条记录';
-        delBtn.addEventListener('click', async () => {
-          const r = await send('KEY_REMOVE', { id: rec.id, key: rec.key });
-          if (r?.ok) {
-            log(`已删除尾号 ${rec.key.slice(-4)} 的记录${isActive ? '（正在使用，已一并停用）' : ''}`);
-            refreshKeyRow();
-          }
-        });
-        row.appendChild(delBtn);
-        els.keylist.appendChild(row);
-      });
-    };
+    els.settingsbtn.addEventListener('click', openSettings);
     const substantive = (t) => String(t || '').replace(/[^一-龥A-Za-z0-9]/g, '').length >= 20;
     function askSubjMode(count) {
       return new Promise((resolve) => {
@@ -1280,15 +1188,15 @@
     const updateKeyWarning = () => {
       els.keywarn.classList.toggle('hidden', !keyWarningOpen || hasSavedApiKey || !!els.keyinput.value.trim());
     };
-    const refreshKeyRow = async () => {
-      const isApi = els.engine.value === 'api';
+    const refreshKeyRow = async (current) => {
+      const isApi = engine === 'api';
       const open = isApi && apiSecOpen();
       // API 引擎：显示「接口与Key」抽屉（可折叠）；其他引擎：整块隐藏，空间让给题目列表和日志
       els.apiToggle.classList.toggle('hidden', !isApi);
       els.apiToggle.textContent = open ? '接口 与 API Key' : '接口 与 API Key（已折叠）';
       els.apisec.classList.toggle('hidden', !open);
       els.panel.classList.toggle('apiopen', open);
-      const cfg = (await send('GET_CONFIG'))?.config;
+      const cfg = current || (await send('GET_CONFIG'))?.config;
       const key = cfg?.api?.apiKey;
       keyWarningOpen = open;
       hasSavedApiKey = !!key;
@@ -1296,7 +1204,6 @@
       updateKeyWarning();
       /* 二次判断开关回显（与设置页那个勾选框共用 config.verify2） */
       setVerify2(cfg?.verify2 !== false);
-      await renderKeyList(open);
     };
     function setVerify2(on) {
       els.v2input.checked = !!on;
@@ -1370,6 +1277,14 @@
         refreshKeyRow();
       }
     });
+    function syncConfig(cfg) {
+      engine = cfg.engine || 'api';
+      els.mode.value = engine === 'bridge' ? 'bridge' : cfg.panelMode || 'homework';
+      els.panel.classList.toggle('bridgemode', engine === 'bridge');
+      refreshKeyRow(cfg);
+      refreshBadge();
+      applyMode();
+    }
     /* 默认只在本地读取；复用绑定校验，无法确认的区域留给手动 AI 检测。 */
     function readPageQuestions() {
       if (detecting || !els.stop.disabled) return false;
@@ -1483,8 +1398,8 @@
         if (requestId !== detectionRequest) return;
         if (!cfg) throw new Error(configResult?.error || '无法读取引擎配置，请刷新页面后重新检测');
         if (cfg.engine === 'api' && !cfg.api?.apiKey) {
-          await refreshKeyRow();
-          throw new Error('请先保存 API Key，或切换到豆包桥接后重新检测');
+          syncConfig(cfg);
+          throw new Error('请先在「设置 → 应用设置」配置 API Key，或切换豆包桥接后重新检测');
         }
         await HW.FontDecoder?.prepare(document);
         if (requestId !== detectionRequest) return;
@@ -1591,10 +1506,10 @@
       try {
         const cfg = (await send('GET_CONFIG'))?.config || {};
         if (cfg.engine === 'api' && !cfg.api?.apiKey) {
-          try { localStorage.setItem('hwApiOpen', '1'); } catch {}
-          await refreshKeyRow(); // 展开抽屉并显示红色提醒
           els.panel.classList.remove('hidden');
-          log('API 引擎未配置 Key：请在上方输入框粘贴后点「保存」');
+          try { localStorage.setItem('hwApiOpen', '1'); } catch {}
+          await refreshKeyRow(cfg);
+          log('请在上方粘贴 API Key 并保存，或在设置中切换引擎');
           return false;
         }
         // 简答题策略：ask=开始弹窗询问 / keep=保留跳过 / rewrite=清空重写
@@ -1886,11 +1801,7 @@
         const res = await send('GET_CONFIG');
         const cfg = res?.config;
         if (cfg) {
-          els.engine.value = cfg.engine;
-          els.mode.value = cfg.panelMode || 'homework';
-          applyMode();
-          refreshBadge();
-          refreshKeyRow();
+          syncConfig(cfg);
           // 旧版存的是数字档位（可能是已经删掉的 2.5/3/4），下拉会忽略不认识的 id 并保持「自动」
           if (cfg.watchRate) els.rate.value = String(cfg.watchRate);
           els.watchmute.checked = cfg.watchMuted !== false;

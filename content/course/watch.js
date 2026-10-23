@@ -25,7 +25,6 @@
   const QUIZ_TIMEOUT = 240000; // 一道测验最多等多久（AI 识题＋逐题填写）
   const MAX_KICK_FAIL = 2; // 播放未能启动时停止，不反复点播放器
   const CHAPTER_GAP = 20000; // 相邻两节切换的最小间隔，避免连续快速切页被平台风控
-  const RETRY_PAUSE = 20000; // 发现没刷完的节，隔一会儿再补，不和上一轮连成一片
   const TAB_GAP = 2000; // 同一节里切换页签前的额外停顿
   const SUBMIT_GAP = 6000; // 填完答案到点提交之间的停顿，别让提交像脚本一样 instantaneous
   /* 所有间隔都加随机抖动：固定节律本身就是机器特征。 */
@@ -664,10 +663,7 @@
 
   const tabList = () => [...document.querySelectorAll('.prev_ul li[id^="dct"]')];
 
-  /* 估算剩余时长（用户 2026-10-20 要求：面板上要能看到「预计还要多久」）。
-     做法：目录里每节的 jobUnfinishCount 总和 = 剩余任务点数；按 3 个任务点/节、
-     平均每节 8 分钟估。只是给用户一个预期，不是承诺——视频长短差异很大，
-     站点没把每个视频的时长暴露给目录树，精确不了。 */
+  /* 仅在采到足够的新版本成功任务样本后估算；缺少样本时不外推整课。 */
   function remainingJobs() {
     let total = 0;
     for (const n of nodes()) {
@@ -677,7 +673,8 @@
     return total;
   }
   function fmtLeft(sec) {
-    if (!isFinite(sec) || sec <= 0) return '快了';
+    if (!Number.isFinite(sec)) return '暂无法估算';
+    if (sec <= 0) return '快了';
     if (sec < 60) return '不到 1 分钟';
     const m = Math.round(sec / 60);
     if (m < 60) return `约 ${m} 分钟`;
@@ -691,8 +688,11 @@
     const jobs = known ? course.total - course.done : timing?.remainingJobs;
     if (!Number.isFinite(jobs) || jobs < 0) return null;
     if (!jobs) return 0;
-    // 未采到实际耗时前沿用原有粗估：2 倍速约 4 分钟/任务点。
-    const secondsPerJob = timing?.jobs > 0 && timing.seconds > 0 ? timing.seconds / timing.jobs : 480;
+    // 不再用固定「4 分钟/任务点」或旧版受等待污染的样本外推整门课程。
+    const samples = timing?.schema === 2 ? (timing.samples || []).filter(n => Number.isFinite(n) && n > 0) : [];
+    if (samples.length < 3) return null;
+    const sorted = samples.slice().sort((a, b) => a - b);
+    const secondsPerJob = sorted[Math.floor(sorted.length / 2)];
     return jobs * secondsPerJob / Math.max(0.25, Number(speed) || 2);
   }
   function courseProgress() {
@@ -898,8 +898,9 @@
       }
       try { sessionStorage.removeItem('hwCatRetry'); } catch { }
       const reason = `课程目录未加载，连续 ${size} 节状态无法核验`;
-      await chrome.runtime.sendMessage({ type: 'HW_WATCH_PAUSE', payload: { reason } });
-      opts?.onNote?.(reason);
+      await recordWatchSkip(new Error(reason), { task: '课程目录核验' });
+      await reportCourseDone(course.key, { status: 'incomplete' });
+      opts?.onNote?.(reason + '，已跳过当前课程');
       return;
     }
     try { sessionStorage.removeItem('hwCatRetry'); } catch { }
@@ -1009,7 +1010,8 @@
           return true;
         }
         try { sessionStorage.removeItem('hwStuRetry'); } catch { }
-        opts?.onNote?.('课程首页没有加载章节目录，保留队列，请手动打开章节');
+        await recordWatchSkip(new Error('课程首页未加载章节目录'), { task: '进入课程' });
+        await reportCourseDone(q.courses[q.index]?.key || '', { status: 'incomplete' });
       }
       return true;
     }
@@ -1189,21 +1191,21 @@
     if (kickFails >= MAX_KICK_FAIL) return; // 已经放弃这一节，别再点
     if (Date.now() - lastKick < 4000) return;
     lastKick = Date.now();
+    const attempt = videoAttempt;
     try { v.muted = muted; } catch { /* 静音设不上也不影响后面点按钮 */ }
     const doc = v.ownerDocument;
     const btn = pick('.vjs-big-play-button', doc) || pick('.vjs-play-control', doc);
     if (btn) { try { btn.click(); } catch { /* 控件可能正好被重建，忽略 */ } }
     setTimeout(() => {
-      if (!on || !v.paused) { kickFails = 0; return; }
+      if (!on || attempt !== videoAttempt || !v.paused) { kickFails = 0; return; }
       /* 有的课把播放按钮画在 canvas 里、或者被遮罩挡住，点按钮没反应。
          再点一次画面本身——原生播放器点画面就是播放/暂停，仍然是模拟点击，
          不改任何播放器状态（2026-10-21 赌徒的困惑实测：按钮点了两轮还在 37 秒停着）。 */
       try { v.click(); } catch { /* 画面被别的层盖住时忽略 */ }
       setTimeout(() => {
-        if (!on || !v.paused) { kickFails = 0; return; }
+        if (!on || attempt !== videoAttempt || !v.paused) { kickFails = 0; return; }
         if (++kickFails >= MAX_KICK_FAIL) {
-          note('视频点不起来：已停止，请在页面里手动播放后继续');
-          stop();
+          videoFailure = new Error('视频无法启动：点击播放后仍保持暂停');
         }
       }, 1200);
     }, 900);
@@ -1308,6 +1310,9 @@
   let gen = 0; // 每次 start/stop 自增：旧循环发现代号变了就自己退出
   let rate = 2;
   let courseTiming = null;
+  let videoFailure = null;
+  let videoAttempt = 0;
+  const failedChapters = new Set();
   let autoRate = false; // 倍速跟播放器菜单里最高档走，不看用户选的数字
   let muted = true;
   let guard = 0; // 只在看视频时开着的守倍速定时器
@@ -1326,6 +1331,8 @@
   }
 
   async function watchVideo() {
+    videoFailure = null;
+    videoAttempt++;
     const deadline = Date.now() + VIDEO_WAIT;
     const chapter = activeChapterId();
     /* findVideo() 会把 ended 的视频挪开，所以 ended 状态要从原始列表里看，
@@ -1397,9 +1404,7 @@
                10 分钟还回不来就停止并保留队列，交给自动接续，别把整轮挂死。 */
             if (!hiddenSince) hiddenSince = Date.now();
             if (Date.now() - hiddenSince > 600000) {
-              note('课程窗口超过 10 分钟回不到前台，停止并保留队列，稍后自动接续');
-              stop();
-              return false;
+              throw new Error('课程窗口超过 10 分钟无法恢复前台播放');
             }
             lastAdvance = Date.now();
             live('课程窗口不可见，等待恢复后续播');
@@ -1416,10 +1421,9 @@
           }
           hiddenSince = 0;
           if (v.error || Date.now() - lastAdvance >= 150000) {
-            note(v.error ? '播放器错误，已停止并保留队列，请核对页面' : '播放停滞超过150秒（可能网络卡住），已停止并保留队列，稍后会自动接续');
-            stop();
-            return false;
+            throw new Error(v.error ? '播放器错误：' + (v.error.message || v.error.code) : '播放停滞超过150秒');
           }
+          if (videoFailure) throw videoFailure;
           const pct = v.duration ? Math.round((v.currentTime / v.duration) * 100) : 0;
           live(`${fmtRate(v.playbackRate)}x ${pct}%`);
           /* 长时间播放时日志一行不动，看着像卡死（用户 2026-10-21 直接问了「卡了你知道不」）。
@@ -1602,13 +1606,8 @@
          不提交、也不算完成，但**不要停整轮**——停下来就永远刷不完剩下的课，
          而限定的这几节本来就有「补刷一轮、仍不行就记下继续」的兜底。
          真正需要人来的只有验证码，那条在 checkVerification 里会暂停。（2026-10-21） */
-      note('测验页：这份跳过，不提交 —— ' + ((e && e.message) || e));
-      try {
-        await chrome.runtime.sendMessage({
-          type: 'HW_ISSUE_ADD',
-          payload: { stage: '刷课测验', message: String((e && e.message) || e).slice(0, 120) },
-        });
-      } catch { /* 记不上也要继续往下走 */ }
+      if (e === STOP || e.code === 'HW_VERIFICATION_REQUIRED') throw e;
+      await recordWatchSkip(e, { task: '章节测验', submitted: false });
       return false;
     }
     if (!on) return;
@@ -1734,49 +1733,60 @@
     note('讨论页：这一节没有可发的讨论（可能只许老师发帖），跳过');
   }
 
+  async function recordWatchSkip(error, context = {}) {
+    failedChapters.add(activeChapterId());
+    const course = currentCourse();
+    const chapter = nodes().find(n => n.id === activeChapterId());
+    const message = String(error?.message || error);
+    const details = {
+      chapterId: activeChapterId(), pageKind: pageKind(), rate,
+      remainingJobs: chapter ? unfinishedOf(chapter.id) : null,
+      queueIndex: multi?.index, targetRun: multi?.targetRun,
+      tabs: tabList().map(t => ({ id: t.id, title: t.textContent.trim(), active: tabActive(t) })),
+      media: pendingVideos().slice(0, 8).map(v => ({ currentTime: v.currentTime, duration: Number.isFinite(v.duration) ? v.duration : null,
+        playbackRate: v.playbackRate, paused: v.paused, ended: v.ended, readyState: v.readyState, error: v.error?.message || v.error?.code || null })),
+      ...context,
+    };
+    const payload = { stage: '刷课跳过', message, course: course?.name || context.course || multi?.courses[multi.index]?.name || document.title,
+      chapter: context.chapter || chapter?.name || '', task: context.task || tabList().find(tabActive)?.textContent.trim() || '',
+      url: location.href, action: '跳过出错任务，继续后续；未计为完成', stack: String(error?.stack || new Error(message).stack || ''),
+      details: JSON.stringify(details, null, 2) };
+    note('已跳过：' + message + '（详情见诊断）');
+    try {
+      const result = await chrome.runtime.sendMessage({ type: 'HW_ISSUE_ADD', payload });
+      if (!result?.ok) note('异常记录保存失败：' + (result?.error || '后台无回执'));
+    } catch (e) { note('异常记录保存失败：' + String(e.message || e)); }
+  }
+
   async function courseLoop() {
     const my = gen;
     checkVerification();
     const catalog = nodes();
     let list = scopeChapters ? catalog.filter(n => scopeChapters.has(n.id)) : catalog;
     if (scopeChapters && list.length !== scopeChapters.size) {
-      note('本次限定的小节未完整加载，停止并保留队列，请刷新目录后核对');
-      stop();
-      return;
+      throw new Error('本次限定的小节未完整加载，跳过当前课程，未确认完成');
     }
     if (!list.length) {
-      note('这个页面上没找到课程目录（需要停在章节学习页）');
-      stop();
-      return;
+      throw new Error('学习页没有加载课程目录');
     }    /* 一律从目录第一节开始，不看当前打开的是哪一节：用户 2026-10-19 反馈
        他从第 43 节起刷，以为是随手挑的。从头刷完才是他要的。
        已经刷完的节（站点 jobUnfinishCount = 0）直接跳过，别让用户看着它重刷一遍。 */
     let i = 0;
     let skipped = 0;
-    /* 预计剩余时间：剩余任务点 × 平均 4 分钟/个（视频平均 8 分钟÷2 个，粗估），
-       从每节完成后的「已完成 i/N」一行里带出来给用户（用户 2026-10-20 要求）。
-       startedAt = start() 的时刻，进度是按真实耗时算的，2x 倍速已经体现在里面。 */
-    const startedAt = Date.now();
+    /* 预计用时只使用本次范围及成功任务的有效耗时样本。 */
     const timingCourse = currentCourse();
     const timingKey = timingCourse && courseTimeKey(timingCourse);
     let timing = timingKey ? (await chrome.storage.local.get(timingKey).catch(() => ({})))[timingKey] : null;
     courseTiming = timing;
     const leftText = () => {
       const jobs = scopeChapters ? list.reduce((sum, n) => sum + (unfinishedOf(n.id) || 0), 0) : remainingJobs();
+      if (!unfinishedKnown()) return '剩余时间暂无法估算（任务数量未知）';
       if (!jobs) return '剩余：快了';
-      const elapsed = (Date.now() - startedAt) / 1000;
-      const done = Math.max(1, list.length ? (i + skipped) : 1);
-      /* 按已完成节数摊均每节耗时，再乘剩余节数；没有历史就退回 4 分钟/任务点 */
-      const perNode = i + skipped > 0 ? elapsed / done : 240;
-      const left = unfinishedKnown() ? estimateCourseSeconds({ done: 0, total: jobs }, rate, timing) : (list.length - i) * perNode;
+      const left = unfinishedKnown() ? estimateCourseSeconds({ done: 0, total: jobs }, rate, timing) : null;
       return `剩余${fmtLeft(left)}（${jobs} 个任务点）`;
     };
-    const unfinishedKnown = () => {
-      for (const n of list) { if (unfinishedOf(n.id) !== null) return true; }
-      return false;
-    };
+    const unfinishedKnown = () => list.length > 0 && list.every(n => unfinishedOf(n.id) !== null);
     note(`${scopeChapters ? `本次限定 ${list.length} 个小节` : `从第 1/${list.length} 节开始（从头刷）`}· ${leftText()}`);
-    for (let pass = 0; pass < 2; pass++) {
       i = 0;
       skipped = 0;
       while (on && my === gen && i < list.length) {
@@ -1788,8 +1798,9 @@
         i++;
         continue;
       }
+      try {
       const jobsBefore = unfinishedOf(cur.id);
-      const chapterStartedAt = Date.now();
+      let chapterStartedAt = Date.now();
       const nowId = activeChapterId();
       if (nowId !== cur.id) {
         live(`进入 ${shortName(cur.name)}`);
@@ -1802,9 +1813,7 @@
         }
         lastEnterAt = Date.now();
         if (!clickNode(cur.id)) {
-          note(`第 ${i + 1} 节目的项找不到了，停止`);
-          stop();
-          return;
+          throw new Error(`第 ${i + 1} 节目录项无法打开`);
         }
         const dl = Date.now() + NODE_WAIT;
         let blocked = false;
@@ -1815,17 +1824,11 @@
           await step(300);
         }
         if (activeChapterId() !== cur.id) {
-          if (blocked) {
-            note(`站点拦住切节（本节还有任务点），先跳过第 ${i + 1} 节，本轮结束再补`);
-            i++;
-            continue;
-          }
-          note(`第 ${i + 1} 节没打开，停止`);
-          stop();
-          return;
+          throw new Error(blocked ? `站点阻止进入第 ${i + 1} 节` : `第 ${i + 1} 节打开超时`);
         }
         await step(600);
       }
+      chapterStartedAt = Date.now();
       // 三个页签依次过；有「本章讨论」页签（dct4）的节多走一个
       let jumped = false; // 页面转去了别的章节（站点自动下一节 / 用户手动点节）
       /* 换节后站点会重建页签条，偶尔比 activeChapterId 晚一拍。以前这里直接取长度，
@@ -1834,11 +1837,10 @@
       await until(() => (tabList().length ? true : null), 12000);
       const tabs = tabList().length;
       if (!tabs) {
-        note(`第 ${i + 1} 节的页签没加载出来，先跳过：${shortName(cur.name)}`);
+        await recordWatchSkip(new Error('章节页签未加载'), { chapter: cur.name });
         i++;
         continue;
       }
-      let tabFail = 0;
       for (let t = 0; on && t < tabList().length; t++) {
         /* 切页签前先处理站点的「还有任务点未完成」提示框：它盖在整页上，
            不点掉的话后面的点击全落在遮罩上，表现为「卡住」或「被带到下一节」。 */
@@ -1846,9 +1848,8 @@
         /* 页签数每轮重算：站点换卡会重建 .prev_ul，早先取的长度会过期（2026-10-22 审计）。
            单个页签超时不再直接 break 掉剩下的页签，最多容忍一个。 */
         if (!(await goto(t))) {
-          if (++tabFail < 2) { note(`页签 ${t + 1} 没加载出来，先试下一个`); continue; }
-          note('页签连续加载失败，本节剩余页签先跳过');
-          break;
+          await recordWatchSkip(new Error('页签加载失败'), { chapter: cur.name, task: `第 ${t + 1} 页签` });
+          continue;
         }
         if (activeChapterId() !== cur.id) {
           /* 页面自己跳走了：站点看完视频自动进下一节（正常推进），或者用户手动
@@ -1858,13 +1859,14 @@
           jumped = true;
           break;
         }
+        try {
         const rendered = await ensureCardRendered(t);
         if (activeChapterId() !== cur.id) {
           jumped = true;
           break;
         }
         if (!rendered) {
-          live(`${shortName(cur.name)}｜第 ${t + 1} 页是空壳卡，跳过`);
+          await recordWatchSkip(new Error('页面刷新后仍为空壳卡片'), { chapter: cur.name, task: `第 ${t + 1} 页签` });
           continue;
         }
         const kind = classify();
@@ -1877,7 +1879,7 @@
             note(`这一节视频都已完成，不重看：${shortName(cur.name)}`);
           } else {
             const done = await watchVideo();
-            if (!done) note('视频没播完就离开了');
+            if (!done) await recordWatchSkip(new Error('视频未播放完成即离开'), { chapter: cur.name });
             else note(`视频看完：${shortName(cur.name)}`);
             await step(1200);
           }
@@ -1897,7 +1899,7 @@
               if (!(await goto(t))) break;
               if (!(await until(() => bbsCard(), 8000))) break;
             }
-            if (!(await openBbsCard())) { note(`讨论没能自动完成：${shortName(cur.name)}`); break; }
+            if (!(await openBbsCard())) { await recordWatchSkip(new Error('讨论未收到完成回执'), { chapter: cur.name }); break; }
             note(`讨论已回帖：${shortName(cur.name)}`);
           }
           await step(1200);
@@ -1910,7 +1912,7 @@
              页面读不到问卷内部，靠 survey.js 在问卷页自己那一帧填写提交，
              这里只等目录角标归零（平台回执）再算完成。 */
           if (await openSurveyCard()) note(`问卷已提交：${shortName(cur.name)}`);
-          else note('问卷没能在 60 秒内计上完成，留给人工核对：' + cur.name);
+          else await recordWatchSkip(new Error('问卷60秒内未收到完成回执'), { chapter: cur.name });
           await step(1200);
           if (activeChapterId() !== cur.id) {
             jumped = true;
@@ -1959,17 +1961,22 @@
             }
           }
         }
+        } catch (e) {
+          if (e === STOP || e.code === 'HW_VERIFICATION_REQUIRED') throw e;
+          await recordWatchSkip(e, { chapter: cur.name, task: `第 ${t + 1} 页签` });
+        }
       }
       if (jumped) note('页面自动换章，按目录继续；未完成任务会在收尾时补查');
-      i++;
       /* 每节走完复查一遍任务点数：站点说这节还剩几个就直接告诉用户，别让
          「日志说刷完了、角标还挂着 1」这种对不上（12.4 节 2026-10-20 实测：
          三页签都过完了，角标还剩 1——那一节的讨论任务点根本没发出去）。
          不自动重刷：重刷大概率卡在同一处，先把真相记进日志。 */
       const left = unfinishedOf(cur.id);
-      if (on && my === gen && timingKey && jobsBefore !== null && left !== null && jobsBefore > left) {
-        timing = { ...timing, jobs: (timing?.jobs || 0) + jobsBefore - left,
-          seconds: (timing?.seconds || 0) + (Date.now() - chapterStartedAt) / 1000 * rate };
+      if (on && my === gen && timingKey && jobsBefore !== null && left === 0 && !failedChapters.has(cur.id) && jobsBefore > left) {
+        const secondsPerJob = (Date.now() - chapterStartedAt) / 1000 * rate / (jobsBefore - left);
+        const samples = timing?.schema === 2 ? timing.samples || [] : [];
+        timing = { ...timing, schema: 2, samples: secondsPerJob > 0 && secondsPerJob <= 1800
+          ? [...samples, secondsPerJob].slice(-20) : samples };
       }
       const progress = courseProgress();
       if (on && my === gen && timingKey && progress) {
@@ -1978,25 +1985,23 @@
         await chrome.storage.local.set({ [timingKey]: timing }).catch(() => {});
       }
       if (left > 0) {
-        const reason = `${shortName(cur.name)} 还剩 ${left} 个任务点未完成，已停止换节，请排查后继续`;
-        await chrome.runtime.sendMessage({ type: 'HW_WATCH_PAUSE', payload: { reason } });
-        stop();
-        note(reason);
-        return;
+        await recordWatchSkip(new Error(`仍有 ${left} 个任务点未完成`), { chapter: cur.name, remainingJobs: left });
       }
       const completed = list.filter(n => unfinishedOf(n.id) === 0).length;
       live(`${scopeChapters ? '本次' : ''}已完成 ${completed}/${list.length} 节 · ${leftText()}`);
+      i++;
+      } catch (e) {
+        if (e === STOP || e.code === 'HW_VERIFICATION_REQUIRED') throw e;
+        await recordWatchSkip(e, { chapter: cur.name, task: '进入或处理章节' });
+        i++;
+      }
     }
     if (on && my === gen) {
       note(`本轮目录已检查（跳过已完成 ${skipped} 节）`);
       if (scopeChapters && list.some(n => unfinishedOf(n.id) === null)) {
+        await recordWatchSkip(new Error('限定小节的任务计数未知，无法确认完成'), { task: '课程核验' });
+        if (multi) await reportCourseDone(multi.courses[multi.index]?.key || '', { status: 'incomplete' });
         stop();
-        if (limitedRun(multi)) {
-          note('学习页有小节无任务计数，返回平台目录核验');
-          if (!await returnToCatalog()) note('返回目录核验失败，队列保留在本页');
-          return;
-        }
-        note('限定小节的完成状态无法确认，保留队列，不报完成');
         return;
       }
       let pending = nodes().filter((n) => (!scopeChapters || scopeChapters.has(n.id)) && unfinishedOf(n.id) > 0);
@@ -2010,21 +2015,9 @@
         }
       }
       if (remain > 0) {
-        if (pass === 0) {
-          /* 不跳过没刷完的节：只把还差任务点的节挑出来补一遍（用户 2026-10-21 要求：
-             有一节没完成就直接跳过不行）。补之前先停一会儿，别和上一轮连成一片触发风控。 */
-          list = pending.slice();
-          note(`准备补刷未完成的 ${list.length} 个小节：${list.map((n) => n.name).join('、')}`);
-          live(`补刷 ${list.length} 节`);
-          await step(RETRY_PAUSE);
-          continue;
-        }
-        /* 补刷一轮还是没做完（多数是阅读/文档类任务点，站点自己不计完成）：
-           不在这里无限重来 —— 同一节反复进出既刷不动进度，也是最像机器人的行为
-           （2026-10-21 实测：赌徒的困惑 / 抓阄两节互相来回切了 20 分钟，任务点数一动不动）。
-           记成「待人工」，接着刷下一门，最后统一报告。 */
+        // 不重复进入出错小节，保留缺口并继续下一门。
         const gaps = pending.map((n) => ({ name: n.name, remain: unfinishedOf(n.id) || 0 }));
-        note(`这 ${gaps.length} 个小节补刷后仍未完成，先记下继续：${gaps.map((g) => g.name).join('、')}`);
+        note(`这 ${gaps.length} 个小节未完成，先记下继续：${gaps.map((g) => g.name).join('、')}`);
         live(`跳过 ${gaps.length} 节待人工`);
         try {
           const cur = multi && multi.courses[multi.index];
@@ -2034,14 +2027,7 @@
           await chrome.storage.local.set({ watchGaps: all.slice(-20) }).catch(() => {});
         } catch { /* 记不上也不影响继续刷 */ }
         if (multi) {
-          if (limitedRun(multi)) {
-            await chrome.runtime.sendMessage({ type: 'HW_WATCH_FOUR_GAP', payload: {
-              key: multi.courses[multi.index]?.key, sections: gaps } });
-            stop();
-            if (!await returnToCatalog()) note('返回目录核验失败，队列保留在本页');
-            return;
-          }
-          await reportCourseDone(multi.courses[multi.index]?.key || '');
+          await reportCourseDone(multi.courses[multi.index]?.key || '', { status: 'incomplete', exceptions: gaps });
           return;
         }
         stop();
@@ -2069,7 +2055,6 @@
       stop();
       return;
     }
-  }
   }
 
   /* 停止后站点可能自己把播放接回去（播放器有断点续播/自动播放），
@@ -2122,6 +2107,7 @@
     live = (opts && opts.onLive) || (() => {});
     note = (opts && opts.onNote) || (() => {});
     onStop = (opts && opts.onStop) || (() => {});
+    failedChapters.clear();
     bbsTried.clear(); // 新一轮重新认领讨论卡
     on = true;
     gen++;
@@ -2136,7 +2122,8 @@
         live('已暂停：请在网页手动完成验证码后继续');
         return;
       }
-      note('刷课出错：' + ((e && e.message) || e));
+      await recordWatchSkip(e, { task: '课程处理', action: '跳过当前课程' });
+      if (multi) await reportCourseDone(multi.courses[multi.index]?.key || '', { status: 'incomplete' });
       stop();
     });
   }
@@ -2150,8 +2137,10 @@
     estimateCourseSeconds,
     rememberCourseProgress,
     remainingSeconds: () => {
-      const progress = courseProgress();
-      return progress ? estimateCourseSeconds({ done: 0, total: progress.remainingJobs }, rate, courseTiming) : null;
+      const selected = nodes().filter(n => !scopeChapters || scopeChapters.has(n.id));
+      const counts = selected.map(n => unfinishedOf(n.id));
+      if (!selected.length || counts.some(n => n === null)) return null;
+      return estimateCourseSeconds({ done: 0, total: counts.reduce((a, b) => a + b, 0) }, rate, courseTiming);
     },
     formatCourseTime: fmtLeft,
     catalogEntries,

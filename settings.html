@@ -2,10 +2,11 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>作业助手 · 工具设置</title>
 <style>
   :root{
-    color-scheme:light;
+    color-scheme:light;--dd-h:36px;--dd-font:13px;--dd-radius:8px;--dd-line:#cbd2dc;
     --bg:#f6f7f9; --surface:#fff; --side:#fbfbfd;
     --line:#e4e7ec; --line-soft:#eef1f5;
     --text:#16191d; --text-2:#5b6472; --muted:#6b7480;
@@ -37,7 +38,16 @@
 
   .main{padding:32px 36px 56px}
   .content{max-width:680px}
-  section[hidden]{display:none}
+  [hidden]{display:none!important}
+  .settings-select{min-width:0}
+  .field .settings-select{max-width:300px}
+  .ddtrig:disabled{background:var(--ghost);color:var(--muted);cursor:not-allowed}
+  .app-form .key-field{position:relative;padding-top:14px}
+  .app-form .key-field input[type=password]{height:38px;padding:0 14px;border:2px solid #c8c8c8;border-radius:999px}
+  .app-form .key-field label{position:absolute;left:14px;top:33px;transform:translateY(-50%);color:var(--text-2);pointer-events:none;transition:top .18s ease,transform .18s ease,color .18s ease}
+  .app-form .key-field input:focus~label,.app-form .key-field input:not(:placeholder-shown)~label{top:14px;transform:translateY(-100%) scale(.9);transform-origin:left bottom}
+  .app-form .key-field input:focus~label{color:var(--accent)}
+  .app-form .key-field input[type=password]:focus{border-color:var(--accent);outline:none;box-shadow:none}
   h2{margin:0 0 16px;font-size:18px;font-weight:650;letter-spacing:-.015em;line-height:1.35;text-wrap:balance}
   .card{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:20px 22px}
   .hint{margin:0 0 10px;color:var(--text-2);text-wrap:pretty}
@@ -110,6 +120,30 @@
   .confirm li{margin:0 0 6px}
   .confirm li:last-child{margin-bottom:0}
   .guide-meta{margin:12px 0 0;color:var(--muted);font-size:12px}
+  .app-form fieldset{min-width:0;margin:24px 0 0;padding:0;border:0}
+  .app-form legend{padding:0;margin-bottom:12px;font-size:14px;font-weight:600}
+  .app-form .app-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .app-form .app-field{min-width:0;margin-bottom:14px}
+  .app-form .app-field>label{display:block;margin-bottom:5px;color:var(--text-2)}
+  .app-form input:not([type=checkbox]),.app-form select{width:100%;min-height:36px;padding:7px 10px;border:1px solid #cbd2dc;border-radius:8px;background:var(--surface);color:var(--text);font:inherit}
+  .app-form input:not([type=checkbox]):hover,.app-form select:hover{border-color:#9ba7b7}
+  .app-form input:not([type=checkbox]):focus,.app-form select:focus{border-color:var(--accent)}
+  .app-form input:disabled,.app-form select:disabled{background:var(--ghost);color:var(--muted);cursor:not-allowed}
+  .app-form .check{margin:10px 0}
+  .app-form .app-note{margin:6px 0 0;color:var(--text-2);font-size:12px;overflow-wrap:anywhere}
+  .app-form .app-risk{margin:14px 0 0;color:var(--text-2);font-size:12px}
+  .app-form .app-detail{margin-top:18px;padding-top:14px;border-top:1px solid var(--line-soft)}
+  .app-form .app-detail>summary{cursor:pointer;font-weight:500}
+  .app-form .app-detail[open]>summary{margin-bottom:14px}
+  .app-form .app-keys{list-style:none;margin:12px 0 0;padding:0}
+  .app-form .app-keys li{display:flex;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line-soft)}
+  .app-form .app-key-info{flex:1;min-width:0;overflow-wrap:anywhere}
+  .app-form .app-key-info strong{display:block;font-size:13px;font-weight:550}
+  .app-form .app-key-info small{display:block;margin-top:2px;color:var(--text-2);font-variant-numeric:tabular-nums}
+  .app-form .app-key-info .active{color:var(--ok)}
+  .app-form .app-key-actions{display:flex;gap:6px;flex:none}
+  .app-form .app-key-actions button{padding:5px 10px}
+  .app-form .app-save{margin-top:24px;padding-top:18px;border-top:1px solid var(--line)}
   @media (prefers-reduced-motion:reduce){
     .side button,button{transition:none}
     .update-progress progress::-webkit-progress-value{transition:none}
@@ -121,6 +155,12 @@
     .brand{padding:0 10px 0 2px}
     .brand p{display:none}
     .main{padding:20px 16px 40px}
+    .app-form .app-grid{grid-template-columns:1fr;gap:0}
+    .field{flex-direction:column;align-items:stretch;gap:6px}
+    .field label{width:auto}
+    .field .settings-select{max-width:none}
+    .app-form .app-keys li{gap:8px}
+    .app-form .actions{gap:8px}
   }
 </style>
 </head>
@@ -132,14 +172,95 @@
       <h1>作业助手</h1>
       <p>工具设置</p>
     </div>
-    <button type="button" data-sec="mem" aria-controls="sec-mem" aria-current="true">记忆</button>
+    <button type="button" data-sec="app" aria-controls="sec-app" aria-current="true">应用设置</button>
+    <button type="button" data-sec="mem" aria-controls="sec-mem">记忆</button>
     <button type="button" data-sec="watch" aria-controls="sec-watch">刷课</button>
     <button type="button" data-sec="diag" aria-controls="sec-diag">诊断</button>
     <button type="button" data-sec="upd" aria-controls="sec-upd">检测更新</button>
   </nav>
   <main class="main" id="main">
     <div class="content">
-      <section id="sec-mem" class="card" aria-labelledby="h-mem">
+      <section id="sec-app" class="card" aria-labelledby="h-app">
+        <h2 id="h-app">应用设置</h2>
+        <p class="hint">设置答题引擎、API Key 与答题偏好。题目会发送至所选 AI 服务，请核对参考答案后自行提交。</p>
+        <form id="appForm" class="app-form">
+          <fieldset id="appFields" disabled>
+            <legend>答题偏好</legend>
+            <div class="app-grid">
+              <div class="app-field">
+                <label for="engine">答题引擎</label>
+                <select id="engine"><option value="api">API</option><option value="bridge">豆包网页桥接（免费）</option></select>
+              </div>
+              <div class="app-field">
+                <label for="subjMode">简答题已有内容时</label>
+                <select id="subjMode">
+                  <option value="ask">每次开始时询问（推荐）</option>
+                  <option value="keep">保留已有内容，跳过</option>
+                  <option value="rewrite">清空已有内容，重新生成</option>
+                </select>
+              </div>
+            </div>
+            <label class="check"><input id="verify2" type="checkbox">选择题 / 判断题二次判断（更稳，每题多一次 AI 调用）</label>
+
+            <fieldset id="apiFields">
+              <legend>接口与 API Key</legend>
+              <div class="app-field">
+                <div class="key-field">
+                  <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder=" " aria-describedby="keyStatus keyRisk">
+                  <label for="apiKey">粘贴 API Key</label>
+                </div>
+                <p class="app-note" id="keyStatus">正在读取当前 Key…</p>
+                <p class="app-note">还没有 API Key？可前往 <a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">DeepSeek 平台</a>获取。</p>
+              </div>
+              <div class="actions">
+                <button type="button" id="saveKey">识别并记住</button>
+                <button type="button" class="ghost" id="tempKey">临时使用</button>
+                <button type="button" class="ghost" id="clearKey">停用当前 Key</button>
+              </div>
+              <p class="app-risk" id="keyRisk">Key 会保存在本机插件存储中，能读取浏览器数据或操作本机的人、程序可能获得它。临时使用不会加入已保存列表，当前 Key 仍会写入本机配置。</p>
+              <div class="confirm" id="keyConfirm" hidden>
+                <p>确认了解上面的存储风险后，可识别并记住 Key；也可以只临时使用。</p>
+                <div class="actions">
+                  <button type="button" id="keyConfirmSave">了解并记住</button>
+                  <button type="button" class="ghost" id="keyConfirmTemp">临时使用</button>
+                  <button type="button" class="ghost" id="keyCancel">取消</button>
+                </div>
+              </div>
+              <div class="msg" id="keyMsg" role="status" aria-live="polite"></div>
+              <ul class="app-keys" id="savedKeys" aria-label="已保存的 API Key"></ul>
+              <details class="app-detail" id="apiDetails">
+                <summary>手动配置接口</summary>
+                <p class="hint">通常只需粘贴 Key 后点「识别并记住」，插件会自动匹配接口与模型。自定义接口在这里填写，再点下方「保存设置」。</p>
+                <div class="app-grid">
+                  <div class="app-field">
+                    <label for="provider">接口类型</label>
+                    <select id="provider"><option value="auto">自动识别（推荐）</option><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic Messages</option></select>
+                  </div>
+                  <div class="app-field"><label for="model">模型名 / 接入点</label><input id="model" placeholder="deepseek-chat" spellcheck="false"></div>
+                </div>
+                <div class="app-field"><label for="baseURL">接口地址 baseURL</label><input id="baseURL" type="url" placeholder="https://api.deepseek.com/v1" spellcheck="false"></div>
+                <p class="app-note" id="providerHint"></p>
+                <div class="actions"><button type="button" class="ghost" id="test">测试连接</button></div>
+                <div class="msg" id="testMsg" role="status" aria-live="polite"></div>
+              </details>
+            </fieldset>
+
+            <fieldset id="bridgeFields" hidden>
+              <legend>豆包网页桥接</legend>
+              <p class="hint">题目会发送到你的豆包会话并读取回复。如遇登录或验证，请在豆包页面手动处理；每题约 10～40 秒。</p>
+              <div class="app-grid">
+                <div class="app-field"><label for="delayMin">每题间隔下限（毫秒）</label><input id="delayMin" type="number" min="1000" step="500" value="3000" required></div>
+                <div class="app-field"><label for="delayMax">每题间隔上限（毫秒）</label><input id="delayMax" type="number" min="1500" step="500" value="8000" required></div>
+              </div>
+              <label class="check"><input id="newChat" type="checkbox" checked>每题新开对话，避免上下文串扰</label>
+            </fieldset>
+            <div class="actions app-save"><button type="submit" id="save">保存设置</button></div>
+          </fieldset>
+          <div class="msg" id="msg" role="status" aria-live="polite">正在读取设置…</div>
+        </form>
+      </section>
+
+      <section id="sec-mem" class="card" aria-labelledby="h-mem" hidden>
         <h2 id="h-mem">记忆</h2>
         <p class="hint">插件会把每道题的 AI 答案记在本机（答题记忆），同一题再次作答时直接使用；某道题一直答错时，清除后重新作答。</p>
         <p class="hint">清除只删答题记忆，不改动页面上已填写的答案，也不影响 API Key 与接口配置。</p>

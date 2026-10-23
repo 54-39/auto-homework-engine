@@ -1,7 +1,9 @@
 import { isUpdaterHostReady } from './tools/updater-setup-core.mjs';
 import { exportIssueHistory, ISSUE_PREFIX } from './background/issue-history.js';
+import './options/settings-controls.js';
+import './options/options.js';
 
-/* 工具设置页（settings.html）：侧边栏收纳 记忆 / 诊断 / 检测更新。
+/* 工具设置页（settings.html）：侧边栏收纳 应用设置 / 记忆 / 刷课 / 诊断 / 检测更新。
    由面板「设置」按钮打开（后台 OPEN_SETTINGS 消息），逻辑走后台消息或脚本注入。 */
 (() => {
   const $ = (s) => document.querySelector(s);
@@ -39,10 +41,10 @@ import { exportIssueHistory, ISSUE_PREFIX } from './background/issue-history.js'
 
   /* 侧边栏：切换分区，并把当前分区同步到 URL hash（刷新、前进后退都停在原分区） */
   const navBtns = [...document.querySelectorAll('.side button')];
-  const secs = { mem: $('#sec-mem'), watch: $('#sec-watch'), diag: $('#sec-diag'), upd: $('#sec-upd') };
+  const secs = { app: $('#sec-app'), mem: $('#sec-mem'), watch: $('#sec-watch'), diag: $('#sec-diag'), upd: $('#sec-upd') };
   let onSection = () => {};
   const goto = (id, push) => {
-    const key = secs[id] ? id : 'mem';
+    const key = secs[id] ? id : 'app';
     navBtns.forEach((b) => b.setAttribute('aria-current', String(b.dataset.sec === key)));
     Object.entries(secs).forEach(([k, el]) => (el.hidden = k !== key));
     if (push) location.hash = key;
@@ -153,7 +155,7 @@ import { exportIssueHistory, ISSUE_PREFIX } from './background/issue-history.js'
       const meta = document.createElement('small');
       meta.textContent = new Date(issue.firstAt || issue.at).toLocaleString() + ' · v' + issue.version + (issue.count > 1 ? ` · 旧版合并记录 ${issue.count} 次` : '');
       const body = document.createElement('pre');
-      body.textContent = [['章节', issue.chapter], ['页面', issue.url], ['题目', issue.question], ['答案 / 回执', issue.answer]]
+      body.textContent = [['课程', issue.course], ['章节', issue.chapter], ['任务', issue.task], ['处理结果', issue.action], ['错误堆栈', issue.stack], ['详细上下文', issue.details], ['页面', issue.url], ['题目', issue.question], ['答案 / 回执', issue.answer]]
         .filter(([, value]) => value).map(([label, value]) => `${label}：${value}`).join('\n\n') || '没有附加内容';
       details.append(summary, meta, body); li.append(details); list.append(li);
     }

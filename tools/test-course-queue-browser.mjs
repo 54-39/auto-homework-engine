@@ -54,9 +54,9 @@ async function queueChecks() {
   });
   await check('每门课程按剩余任务和倍速估算，实际耗时修正；完成课程为零，未知进度不猜', () => {
     const c = HW.Watch.courseLinks()[0];
-    ok(HW.Watch.estimateCourseSeconds(c, 2) === 240);
-    ok(HW.Watch.estimateCourseSeconds(c, 1) === 480);
-    ok(HW.Watch.estimateCourseSeconds(c, 2, { jobs: 2, seconds: 240 }) === 60);
+    ok(HW.Watch.estimateCourseSeconds(c, 2) === null);
+    ok(HW.Watch.estimateCourseSeconds(c, 1) === null);
+    ok(HW.Watch.estimateCourseSeconds(c, 2, { schema: 2, samples: [120,120,120] }) === 60);
     ok(HW.Watch.estimateCourseSeconds({ ...c, done: c.total }, 2) === 0);
     ok(HW.Watch.estimateCourseSeconds({ ...c, done: null }, 2) === null);
     ok(HW.Watch.estimateCourseSeconds({ ...c, done: -1 }, 2) === null);
@@ -290,16 +290,16 @@ async function queueChecks() {
       await HW.Watch.rememberCourseProgress();
       const key = HW.Watch.courseTimeKey(HW.Watch.currentCourse());
       ok(store[key].remainingJobs === 3);
-      ok(HW.Watch.remainingSeconds() === 720);
+      ok(HW.Watch.remainingSeconds() === null);
       const course = { done: null, total: null };
-      ok(HW.Watch.estimateCourseSeconds(course, 2, store[key]) === 720);
+      ok(HW.Watch.estimateCourseSeconds(course, 2, store[key]) === null);
       document.querySelector('#cur971 input').value = '';
       await HW.Watch.rememberCourseProgress();
       ok(store[key].remainingJobs === 3 && HW.Watch.remainingSeconds() === null, '未知目录覆盖了已有进度');
       document.querySelectorAll('input').forEach(el => { el.value = '0'; });
       await HW.Watch.rememberCourseProgress();
       ok(HW.Watch.estimateCourseSeconds(course, 2, store[key]) === 0);
-      ok(HW.Watch.estimateCourseSeconds({ done: 0, total: 1 }, 2, store[key]) === 240, '新页面的未完成进度被旧缓存覆盖');
+      ok(HW.Watch.estimateCourseSeconds({ done: 0, total: 1 }, 2, store[key]) === null, '新页面的未完成进度被旧缓存覆盖');
     } finally { chrome.storage = previous; history.replaceState({}, '', '/'); }
   });
 

@@ -45,6 +45,8 @@ function recordIssue(entry, sender = {}) {
     try { const u = new URL(sender.url || sender.tab?.url || entry.url); url = u.origin + u.pathname; } catch { /* 无页面上下文 */ }
     const item = { at: new Date().toISOString(), version: chrome.runtime.getManifest().version,
       stage: clean(entry.stage || '异常'), message: clean(entry.message), url,
+      course: clean(entry.course), task: clean(entry.task), action: clean(entry.action),
+      stack: clean(entry.stack), details: clean(entry.details),
       chapter: clean(entry.chapter), question: clean(entry.question), answer: clean(entry.answer),
       score: typeof entry.score === 'number' ? entry.score : null, count: 1 };
     if (!item.message) return;
@@ -605,7 +607,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse(await confirmUpdatePage(payload.transactionId, sender));
       } else if (type === 'OPEN_SETTINGS') {
         // 面板是 content script，没有 chrome.tabs 权限，由后台代开设置页
-        await chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') + (payload.section === 'diag' ? '#diag' : '') });
+        const section = ['app', 'mem', 'watch', 'diag', 'upd'].includes(payload.section) ? payload.section : 'app';
+        await chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') + '#' + section });
         sendResponse({ ok: true });
       } else if (type === 'HW_START') {
         sendResponse(await startRun(payload.questions || [], tabId, sender.url || sender.tab?.url));

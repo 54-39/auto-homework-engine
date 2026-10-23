@@ -19,9 +19,17 @@ function fixtureBoot() {
   window.testMode = 'mixed';
   window.testApiKey = 'fixture-only';
   window.frameCourseResults = [];
-  window.testStore = {};
+  window.testStore = { config: { engine: 'api', panelMode: 'homework', verify2: true } };
   window.testStorageListeners = [];
   const listeners = [];
+  const currentConfig = () => ({ ...testStore.config, api: { ...testStore.config.api, apiKey: window.testApiKey } });
+  window.setExternalConfig = (patch) => {
+    const oldValue = currentConfig();
+    testStore.config = { ...oldValue, ...patch, api: { ...oldValue.api, ...patch.api } };
+    window.testApiKey = testStore.config.api.apiKey;
+    testStorageListeners.forEach(fn => fn({ config: { oldValue, newValue: currentConfig() } }, 'local'));
+    return currentConfig();
+  };
   window.chrome = {
     storage: { local: { get: async keys => Object.fromEntries((Array.isArray(keys) ? keys : [keys]).map(key => [key, testStore[key]])), set: async value => Object.assign(testStore, value) },
       onChanged: { addListener: fn => testStorageListeners.push(fn) } },
@@ -30,7 +38,8 @@ function fixtureBoot() {
       sendMessage: async (msg) => {
         testCalls.push(msg.type);
         testMessages.push(msg);
-        if (msg.type === 'GET_CONFIG') return { ok: true, config: { engine: 'api', api: { apiKey: window.testApiKey }, verify2: true } };
+        if (msg.type === 'GET_CONFIG') return { ok: true, config: currentConfig() };
+        if (msg.type === 'SET_CONFIG') return { ok: true, config: setExternalConfig(msg.payload) };
         if (msg.type === 'KEY_LIST') return { ok: true, list: [] };
         if (msg.type === 'CHECK_UPDATE') return { ok: false };
         if (msg.type === 'HW_WATCH_COURSES') return { ok: true, courses: window.frameCourseResults };
@@ -48,10 +57,7 @@ function fixtureBoot() {
   };
   document.querySelectorAll('[role="checkbox"]').forEach((el) => el.addEventListener('click', () => el.setAttribute('aria-checked', String(el.getAttribute('aria-checked') !== 'true'))));
   /* 每门课刷几节已改到设置页（config.watchSections），面板不再有勾选框：测试直接改配置并触发 onChanged */
-  window.setWatchSections = (n) => {
-    testStore.config = { ...(testStore.config || {}), watchSections: n };
-    testStorageListeners.forEach((fn) => fn({ config: { newValue: testStore.config } }, 'local'));
-  };
+  window.setWatchSections = n => setExternalConfig({ watchSections: n });
   document.querySelectorAll('#judge .answerBg').forEach((el) => el.addEventListener('click', () => {
     document.querySelectorAll('#judge .answerBg').forEach((row) => row.setAttribute('aria-checked', String(row === el)));
     document.querySelector('[name="answer30"]').value = el.querySelector('[data]').getAttribute('data');
@@ -344,6 +350,21 @@ async function browserChecks() {
     for (let i = 0; i < 100; i++) { if (fn()) return; await wait(20); }
     throw new Error('UI wait timed out');
   };
+  await check('主面板保留 Key 和二次判断，低频项移入设置且首次保存仍提示风险', async () => {
+    ok(!ui.querySelector('.engineslot, .keylist, .issuebtn'), '引擎、已保存 Key 列表或异常记录仍占据主面板');
+    await until(() => ui.querySelector('.apisec').getBoundingClientRect().height > 0);
+    ok(ui.querySelector('.keyinput') && ui.querySelector('.v2input'), '常用 API 操作被移出面板');
+    ui.querySelector('.settingsbtn').click();
+    await until(() => testMessages.some(m => m.type === 'OPEN_SETTINGS' && m.payload?.section === 'app'));
+    ok(ui.querySelector('.modeslot .ddtrig'), '模式入口丢失');
+    ui.querySelector('.keyinput').value = 'first-use-fixture';
+    ui.querySelector('.savekey').click();
+    await until(() => ui.querySelector('.keymodal').getBoundingClientRect().height > 0);
+    ok(!testCalls.includes('KEY_SAVE') && !testApiKey, '首次风险确认前已保存或启用 Key');
+    ui.querySelector('.mcancel').click();
+    ui.querySelector('.keyinput').value = '';
+    ui.querySelector('.keyinput').dispatchEvent(new Event('input'));
+  });
   await check('打开即显示学习通原生五类题目，无 Key、无 AI 请求且不自动答题', async () => {
     await until(() => HW.questions.some(q => q.meta.stem.includes('原生单选')));
     const native = HW.questions.filter(q => q.meta.stem.startsWith('原生'));
@@ -524,6 +545,53 @@ async function browserChecks() {
     ok(ui.querySelector('.btnrow').getBoundingClientRect().height > 0);
     ok(ui.querySelector('.watchview').getBoundingClientRect().height === 0);
   });
+  await check('模式直接在解题API、刷课API和豆包之间切换并保存引擎', async () => {
+    await setPanelMode('bridge');
+    ok(testStore.config.engine === 'bridge' && testStore.config.panelMode === 'homework');
+    ok(ui.querySelector('.modeslot .ddname').textContent === '豆包');
+    await setPanelMode('watch');
+    ok(testStore.config.engine === 'api' && testStore.config.panelMode === 'watch');
+    ok(ui.querySelector('.modeslot .ddname').textContent === '刷课（API）');
+    await setPanelMode('homework');
+    ok(ui.querySelector('.modeslot .ddname').textContent === '解题（API）');
+    const input = ui.querySelector('.keyinput'), label = ui.querySelector('.keylabel');
+    input.value = ''; input.blur(); await wait(220);
+    const before = label.getBoundingClientRect().top;
+    input.focus(); await wait(220);
+    ok(label.getBoundingClientRect().bottom <= input.getBoundingClientRect().top + 1 && label.getBoundingClientRect().top < before);
+    ok(getComputedStyle(input).boxShadow === 'none' && getComputedStyle(input).outlineStyle === 'none', 'Key聚焦不能增加外框或光晕');
+    ok(parseFloat(getComputedStyle(input).borderTopLeftRadius) >= input.clientHeight / 2);
+    input.blur();
+  });
+  await check('应用设置的引擎、Key 和二次判断即时回显，换 Key 不清除已识别题目', async () => {
+    await setDetectionUI('mixed');
+    const questions = [...HW.questions];
+    ok(questions.length > 0, '缺少已识别题目，无法验证换 Key 的影响');
+    try {
+      setExternalConfig({ api: { apiKey: '' }, verify2: false });
+      await until(() => ui.querySelector('.keylabel').textContent === '粘贴 API Key' && !ui.querySelector('.v2input').checked);
+      ok(ui.querySelector('.keywarn').getBoundingClientRect().height > 0, '无 Key 时缺少准备提示');
+      setExternalConfig({ api: { apiKey: 'replacement-3eb1' }, verify2: true });
+      await until(() => ui.querySelector('.keylabel').textContent.includes('3eb1') && ui.querySelector('.v2input').checked);
+      ok(ui.querySelector('.keywarn').getBoundingClientRect().height === 0, '已启用 Key 后仍显示未配置提示');
+      ok(HW.questions.length === questions.length && HW.questions.every((q, i) => q === questions[i]), '换 Key 清除了已有题目');
+      setExternalConfig({ panelMode: 'watch' });
+      await until(() => ui.querySelector('.watchview').getBoundingClientRect().height > 0);
+      setExternalConfig({ engine: 'bridge', api: { apiKey: '' } });
+      await until(() => ui.querySelector('.badge').textContent.includes('豆包'));
+      ok(ui.querySelector('.watchview').getBoundingClientRect().height === 0, '豆包引擎仍显示仅 API 支持的刷课界面');
+      ok(ui.querySelector('.moderow').getBoundingClientRect().height > 0);
+      ok(ui.querySelector('.modeslot .ddname').textContent === '豆包');
+      ok(ui.querySelector('.apisec').getBoundingClientRect().height === 0, '豆包引擎仍显示 API 配置');
+      setExternalConfig({ engine: 'api', panelMode: 'homework', api: { apiKey: 'fixture-only' } });
+      await until(() => ui.querySelector('.badge').textContent === 'API' && ui.querySelector('.moderow').getBoundingClientRect().height > 0);
+      ok(ui.querySelector('.keylabel').textContent.includes('only') && ui.querySelector('.v2input').checked);
+      ok(ui.querySelector('.btnrow').getBoundingClientRect().height > 0);
+    } finally {
+      setExternalConfig({ engine: 'api', panelMode: 'homework', api: { apiKey: 'fixture-only' } });
+      await wait(50);
+    }
+  });
   await check('课程名后显示预计用时，完成课程默认折叠；延迟进度和倍速变化保留勾选', async () => {
     const extra = document.createElement('div');
     extra.id = 'localCourseFixture';
@@ -532,6 +600,7 @@ async function browserChecks() {
       ['802', '已经学完的课程', '任务点进度: 7/7'],
       ['803', '稍后加载进度的课程', ''],
     ].map(([id, name, progress]) => `<div class="course"><a href="https://mooc1.chaoxing.com/visit/stucoursemiddle?courseid=${id}&clazzid=901&cpi=101">${name}</a><p class="lateProgress">${progress}</p></div>`).join('');
+    testStore['watchTime:801|901|101'] = { schema: 2, samples: [480,480,480] };
     document.body.append(extra);
     await until(() => ui.querySelectorAll('.crow[data-i]').length === 3);
     const row = i => ui.querySelector(`.crow[data-i="${i}"]`);
@@ -559,7 +628,7 @@ async function browserChecks() {
     ui.querySelector('.ddlist:not(.hidden) [data-id="1"]').click();
     await until(() => row(0).querySelector('.ctime').textContent.includes('16 分钟'));
     const course = HW.Watch.courseLinks()[0], key = HW.Watch.courseTimeKey(course);
-    await chrome.storage.local.set({ [key]: { jobs: 2, seconds: 240 } });
+    await chrome.storage.local.set({ [key]: { schema: 2, samples: [120,120,120] } });
     testStorageListeners.forEach(fn => fn({ [key]: { newValue: testStore[key] } }, 'local'));
     await until(() => row(0).querySelector('.ctime').textContent.includes('4 分钟'));
     ok(row(0).querySelector('input').checked, '用时更新丢掉已选课程');
@@ -579,6 +648,7 @@ async function browserChecks() {
   });
   await check('个人中心内嵌课程列表可读，切换列表后保留勾选，进度异步更新用时', async () => {
     const first = HW.Watch.courseLinks()[0];
+    testStore['watchTime:804|901|' + first.cpi] = { schema: 2, samples: [480,480,480] };
     window.frameCourseResults = [first, { ...first, key: '804|901', courseid: '804', name: '内嵌页面课程', done: 0, total: 2 }];
     document.getElementById('localCourseFixture').remove();
     const frame = document.createElement('iframe');
@@ -709,6 +779,56 @@ try {
     fs.writeFileSync(path.join(output, `ui-${mode}.png`), Buffer.from(shot.data, 'base64'));
     console.log('UI', mode, JSON.stringify(state));
   }
+  const measurePanel = () => evaluate(`(() => {
+    const s=document.querySelector('#hw-panel-host').shadowRoot,p=s.querySelector('.panel');
+    const rect=selector=>s.querySelector(selector).getBoundingClientRect().toJSON();
+    return {panel:rect('.panel'),list:rect('.list'),log:rect('.logwrap'),buttons:rect('.btnrow'),
+      viewport:{width:innerWidth,height:innerHeight},overflow:p.scrollWidth>p.clientWidth+1||p.scrollHeight>p.clientHeight+1};
+  })()`);
+  const assertSlenderPanel = g => {
+    assert.ok(g.panel.height / g.panel.width >= 2, '桌面面板未保持修长比例');
+    assert.ok(g.log.height <= g.panel.height / 2, '日志留白超过面板一半');
+    assert.ok(g.panel.left>=0 && g.panel.right<=g.viewport.width && g.panel.top>=0 && g.panel.bottom<=g.viewport.height && !g.overflow, '面板超出视口或内容溢出');
+    assert.ok(g.list.height>=120 && g.log.height>=96 && g.buttons.height>0, '列表、日志或操作区被挤压');
+    assert.ok(g.buttons.bottom<=g.list.top && g.list.bottom<=g.log.top && g.log.bottom<=g.panel.bottom, '操作、列表和日志区域重叠');
+  };
+  await pause(250);
+  const apiGeometry = await measurePanel();
+  assertSlenderPanel(apiGeometry);
+  results.push({ name: '桌面面板保持修长比例，操作、题目和日志区域完整且无溢出', ok: true });
+  const apiShot = await call('Page.captureScreenshot', { format: 'png' });
+  fs.writeFileSync(path.join(output, 'ui-homework-api-1280.png'), Buffer.from(apiShot.data, 'base64'));
+  try {
+    await evaluate('setExternalConfig({engine:"bridge",panelMode:"homework",api:{apiKey:""}})');
+    await pause(250);
+    const bridge = await measurePanel();
+    assertSlenderPanel(bridge);
+    const shot = await call('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync(path.join(output, 'ui-homework-bridge-1280.png'), Buffer.from(shot.data, 'base64'));
+    results.push({ name: '豆包面板保持修长，日志留白不过半且无溢出', ok: true });
+  } finally {
+    await evaluate('setExternalConfig({engine:"api",panelMode:"homework",api:{apiKey:"fixture-only"}})');
+    await pause(250);
+  }
+  const panelStyle = await evaluate('document.querySelector("#hw-panel-host").shadowRoot.querySelector(".panel").getAttribute("style")');
+  const listStyle = await evaluate('document.querySelector("#hw-panel-host").shadowRoot.querySelector(".list").getAttribute("style")');
+  for (const baseline of ['squat', 'blank']) {
+    try {
+      if (baseline === 'squat') {
+        await evaluate('(()=>{const p=document.querySelector("#hw-panel-host").shadowRoot.querySelector(".panel");p.style.height="auto";p.style.minHeight="380px";})()');
+      } else {
+        await evaluate('(()=>{setExternalConfig({engine:"bridge",panelMode:"homework"});const s=document.querySelector("#hw-panel-host").shadowRoot,p=s.querySelector(".panel");p.style.width="360px";p.style.height="792px";s.querySelector(".list").style.height="170px";})()');
+      }
+      await pause(250);
+      const geometry = await measurePanel();
+      assert.throws(() => assertSlenderPanel(geometry), baseline === 'squat' ? /未保持修长比例/ : /日志留白超过/, '诊断未拒绝矮胖或空白过多的旧布局');
+    } finally {
+      await evaluate(`(()=>{setExternalConfig({engine:'api',panelMode:'homework',api:{apiKey:'fixture-only'}});const s=document.querySelector('#hw-panel-host').shadowRoot,p=s.querySelector('.panel'),list=s.querySelector('.list');${panelStyle === null ? "p.removeAttribute('style')" : `p.setAttribute('style',${JSON.stringify(panelStyle)})`};${listStyle === null ? "list.removeAttribute('style')" : `list.setAttribute('style',${JSON.stringify(listStyle)})`};})()`);
+      await pause(250);
+    }
+  }
+  results.push({ name: '几何诊断能拒绝 auto 高度的矮胖布局及日志留白过半的空撑布局', ok: true });
+  assertSlenderPanel(await measurePanel());
   await call('Emulation.setDeviceMetricsOverride', { width: 420, height: 800, deviceScaleFactor: 1, mobile: false });
   await evaluate('setDetectionUI("mixed")');
   await pause(250); // 等待面板既有的高度过渡完成，避免测到中间态。
@@ -720,6 +840,19 @@ try {
   assert.ok(geometry.top >= 0 && geometry.bottom <= geometry.height);
   // 刷课那一行是加在固定高度的面板里的，必须确认它没把日志区压没
   assert.ok(!geometry.watchVisible && geometry.logHeight >= 96, 'writing view contains watch controls or squeezed logs');
+  try {
+    await evaluate('setExternalConfig({engine:"bridge",panelMode:"homework",api:{apiKey:""}})');
+    await pause(250);
+    const bridge = await measurePanel();
+    assert.ok(bridge.panel.left>=0 && bridge.panel.right<=bridge.viewport.width && bridge.panel.top>=0 && bridge.panel.bottom<=bridge.viewport.height && !bridge.overflow);
+    assert.ok(bridge.log.height>=96 && bridge.buttons.bottom<=bridge.list.top && bridge.list.bottom<=bridge.log.top && bridge.log.bottom<=bridge.panel.bottom);
+    const shot = await call('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync(path.join(output, 'ui-homework-bridge-420.png'), Buffer.from(shot.data, 'base64'));
+    results.push({ name: '豆包修长面板在窄屏完整可见，操作和日志无重叠', ok: true });
+  } finally {
+    await evaluate('setExternalConfig({engine:"api",panelMode:"homework",api:{apiKey:"fixture-only"}})');
+    await pause(250);
+  }
   for (const width of [1280, 420]) {
     await call('Emulation.setDeviceMetricsOverride', { width, height: 800, deviceScaleFactor: 1, mobile: false });
     await evaluate('setPanelMode("watch")');
@@ -751,6 +884,17 @@ try {
     const shot=await call('Page.captureScreenshot',{format:'png'});
     fs.writeFileSync(path.join(output, `ui-no-questions-${width}.png`),Buffer.from(shot.data,'base64'));
   }
+  await call('Emulation.setDeviceMetricsOverride', { width:1280, height:900, deviceScaleFactor:1, mobile:false });
+  for (const preview of [{ id:'api-no-key', engine:'api', key:'' }, { id:'api', engine:'api', key:'fixture-3eb1' }, { id:'bridge', engine:'bridge', key:'' }]) {
+    await evaluate(`(()=>{localStorage.setItem('hwApiOpen','1');setExternalConfig({engine:${JSON.stringify(preview.engine)},panelMode:'homework',verify2:true,api:{apiKey:${JSON.stringify(preview.key)}}});const s=document.querySelector('#hw-panel-host').shadowRoot;s.querySelector('.keyinput').value='';s.querySelector('.keyinput').dispatchEvent(new Event('input'));s.querySelector('.log').textContent='';})()`);
+    await pause(250);
+    const geometry=await measurePanel();
+    assertSlenderPanel(geometry);
+    const p=geometry.panel;
+    const shot=await call('Page.captureScreenshot',{format:'png',clip:{x:p.x,y:p.y,width:p.width,height:p.height,scale:2}});
+    fs.writeFileSync(path.join(output, `panel-${preview.id}-clean.png`),Buffer.from(shot.data,'base64'));
+  }
+  await evaluate('setExternalConfig({engine:"api",panelMode:"homework",api:{apiKey:"fixture-only"}})');
   for (const asyncFailure of [false,true]) {
     const state=await evaluate(`(async()=>{
       const errors=[];window.addEventListener('unhandledrejection',e=>errors.push(String(e.reason)));

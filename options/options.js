@@ -1,154 +1,180 @@
-/* 配置页逻辑：预设供应商、读写配置（走后台合并存储）、测试 API 连通性 */
+/* 应用设置与工具设置同页；配置仍由后台合并，Key 列表沿用面板的 KEY_* 协议。 */
 const IFACES = {
-  auto: { label: '自动识别（推荐）', baseURL: '', model: '', hint: '粘贴 Key 保存后自动并行尝试已知接口，谁先通过鉴权用谁；接口地址和模型都会自动匹配并记住。' },
-  openai: { label: 'OpenAI Chat Completions', baseURL: '', model: '', hint: '通用协议。需填写接口地址（如 https://api.deepseek.com/v1）和模型名（如 deepseek-chat）。' },
-  anthropic: { label: 'Anthropic Messages', baseURL: 'https://ark.cn-beijing.volces.com/api/coding', model: 'doubao-seed-code', hint: 'Claude 系协议（/v1/messages）。火山 Coding Plan 地址已预填，模型名照抄使用配置页。' },
+  auto: { baseURL: '', model: '', hint: '自动匹配已知接口；识别成功后会记住接口地址和模型。' },
+  openai: { baseURL: '', model: '', hint: '填写服务商提供的 HTTPS 接口地址和模型名，支持 OpenAI 兼容接口。' },
+  anthropic: { baseURL: 'https://ark.cn-beijing.volces.com/api/coding', model: 'doubao-seed-code', hint: 'Anthropic Messages 协议。已预填火山 Coding Plan 地址，模型名可按服务商配置修改。' },
+};
+const $ = id => document.getElementById(id);
+let config = {};
+
+const out = (id, text, kind = '') => {
+  $(id).textContent = text;
+  $(id).className = 'msg' + (kind ? ' ' + kind : '');
+};
+const send = async (type, payload) => {
+  try { return await chrome.runtime.sendMessage({ type, payload }); }
+  catch (e) { return { ok: false, error: e.message || String(e) }; }
+};
+const apiFields = () => ({ iface: $('provider').value, baseURL: $('baseURL').value.trim(), model: $('model').value.trim() });
+const cleanKey = () => $('apiKey').value.replace(/[^\x21-\x7E]/g, '').trim();
+const showEngine = () => {
+  const api = $('engine').value === 'api';
+  $('apiFields').hidden = !api;
+  $('apiFields').disabled = !api;
+  $('bridgeFields').hidden = api;
+  $('bridgeFields').disabled = api;
+  $('verify2').disabled = !api;
+};
+const showAPI = api => {
+  $('provider').value = IFACES[api.iface] ? api.iface : (api.baseURL ? 'openai' : 'auto');
+  $('baseURL').value = api.baseURL || '';
+  $('model').value = api.model || '';
+  $('providerHint').textContent = IFACES[$('provider').value].hint;
 };
 
-const $ = (id) => document.getElementById(id);
-
-/* 引擎 / 接口类型与面板共用同一份自绘下拉（原生 select 的展开层是系统窗口，样式改不到）；
-   尺寸差异由 options.html 的 :root 变量覆盖。控件接口模仿 select：.value 读写照旧。 */
-const engineCtl = HW.Dropdown.create({
-  into: $('engine'),
-  items: [
-    { id: 'api', label: 'API 引擎（OpenAI 兼容）' },
-    { id: 'bridge', label: '豆包网页桥接（免费）' },
-  ],
-  value: 'api',
-});
-const providerCtl = HW.Dropdown.create({
-  into: $('provider'),
-  items: Object.entries(IFACES).map(([id, v]) => ({ id, label: v.label })),
-  value: 'auto',
-  onChange: (iface) => {
-    const p = IFACES[iface];
-    $('baseURL').value = p.baseURL;
-    $('model').value = p.model;
-    $('providerHint').textContent = p.hint || '';
-  },
-});
-
-function currentAPIConfig() {
-  return {
-    iface: providerCtl.value,
-    baseURL: $('baseURL').value.trim(),
-    model: $('model').value.trim(),
-    apiKey: $('apiKey').value.trim(),
-  };
-}
-
-const msg = (text, cls = '') => ($('msg').textContent = text), setCls = (cls) => ($('msg').className = 'msg ' + cls);
-
-async function requestAPIHostPermission(baseURL) {
-  let url;
-  try { url = new URL(baseURL); } catch { return false; }
-  if (url.protocol !== 'https:') {
-    msg('接口地址必须使用 HTTPS');
-    setCls('err');
+async function refreshKeys() {
+  const [current, keys] = await Promise.all([send('GET_CONFIG'), send('KEY_LIST')]);
+  if (!current?.ok || !keys?.ok) {
+    out('keyMsg', '读取 Key 失败：' + (current?.error || keys?.error || '请刷新重试'), 'err');
     return false;
   }
-  const origin = `${url.origin}/*`;
-  if (await chrome.permissions.contains({ origins: [origin] })) return true;
-  const granted = await chrome.permissions.request({ origins: [origin] });
-  if (!granted) {
-    msg('未授予该接口域名权限，配置未保存');
-    setCls('err');
+  config = current.config;
+  const active = config.api?.apiKey || '';
+  const list = keys.list || [];
+  $('keyStatus').textContent = active
+    ? `使用中：尾号 ${active.slice(-4)}${list.some(rec => rec.key === active) ? '' : '（未加入已保存列表）'}`
+    : '当前未使用 Key';
+  $('clearKey').disabled = !active;
+  $('savedKeys').replaceChildren();
+  for (const rec of list) {
+    const isActive = rec.key === active;
+    const row = document.createElement('li');
+    const info = document.createElement('div');
+    info.className = 'app-key-info';
+    const title = document.createElement('strong');
+    title.textContent = `${isActive ? '使用中 · ' : ''}尾号 ${rec.key.slice(-4)}`;
+    if (isActive) title.className = 'active';
+    const meta = document.createElement('small');
+    const iface = rec.iface === 'anthropic' ? 'Anthropic Messages' : 'OpenAI 兼容';
+    meta.textContent = `${iface} · ${new Date(rec.savedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}`;
+    info.append(title, meta);
+    const actions = document.createElement('div');
+    actions.className = 'app-key-actions';
+    const use = document.createElement('button');
+    use.type = 'button'; use.className = 'ghost'; use.textContent = '使用'; use.disabled = isActive;
+    use.setAttribute('aria-label', `使用尾号 ${rec.key.slice(-4)} 的 Key`);
+    use.addEventListener('click', () => changeKey('KEY_USE', { id: rec.id }, `已使用尾号 ${rec.key.slice(-4)} 的 Key`));
+    const remove = document.createElement('button');
+    remove.type = 'button'; remove.className = 'ghost'; remove.textContent = '删除';
+    remove.setAttribute('aria-label', `删除尾号 ${rec.key.slice(-4)} 的 Key`);
+    remove.addEventListener('click', () => changeKey('KEY_REMOVE', { id: rec.id, key: rec.key }, `已删除该 Key${isActive ? '，并停用' : ''}`));
+    actions.append(use, remove); row.append(info, actions); $('savedKeys').append(row);
   }
-  return granted;
+  return true;
 }
 
-$('save').addEventListener('click', async () => {
-  const rawKey = $('apiKey').value;
-  const cleanKey = rawKey.replace(/[^\x21-\x7E]/g, '').trim();
-  if (rawKey && !cleanKey) {
-    msg('Key 无效：清理掉中文/全角/空格后为空，请重新复制');
-    setCls('err');
-    return;
+async function requestAPIHostPermission(baseURL, msgId) {
+  let url;
+  try { url = new URL(baseURL); } catch { out(msgId, '接口地址无效，请填写完整的 HTTPS 地址', 'err'); return false; }
+  if (url.protocol !== 'https:') { out(msgId, '接口地址必须使用 HTTPS', 'err'); return false; }
+  try {
+    const origins = [`${url.origin}/*`];
+    if (await chrome.permissions.contains({ origins })) return true;
+    if (await chrome.permissions.request({ origins })) return true;
+    out(msgId, '未授予该接口域名权限，请允许访问后重试', 'err');
+  } catch (e) { out(msgId, '无法申请接口访问权限：' + e.message, 'err'); }
+  return false;
+}
+
+async function changeKey(type, payload, message) {
+  $('appFields').disabled = true;
+  out('keyMsg', type === 'KEY_SAVE' ? '正在自动识别接口与模型，请稍候…' : '正在更新 Key…');
+  try {
+    const result = await send(type, payload);
+    if (!result?.ok) return out('keyMsg', '操作失败：' + (result?.error || '请重试'), 'err');
+    if (type === 'KEY_SAVE' || (type === 'SET_CONFIG' && payload.api?.apiKey)) $('apiKey').value = '';
+    if (await refreshKeys()) {
+      showAPI(config.api || {});
+      out('keyMsg', message, 'ok');
+    }
+  } finally { $('appFields').disabled = false; }
+}
+
+async function saveKey(remember, acknowledge = false) {
+  const key = cleanKey();
+  if (!key) { out('keyMsg', '请粘贴有效的 API Key', 'err'); $('apiKey').focus(); return; }
+  if (acknowledge) {
+    const result = await send('SET_CONFIG', { keyWarned: true });
+    if (!result?.ok) return out('keyMsg', '无法保存风险告知状态：' + (result?.error || '请重试'), 'err');
+    config.keyWarned = true;
   }
-  if (cleanKey !== rawKey.trim()) {
-    $('apiKey').value = cleanKey;
+  $('keyConfirm').hidden = true;
+  if (remember) await changeKey('KEY_SAVE', { key, iface: 'auto' }, '已识别接口并记住 Key');
+  else {
+    const api = $('apiDetails').open ? apiFields() : { iface: 'auto', baseURL: '', model: '' };
+    if (api.baseURL && !(await requestAPIHostPermission(api.baseURL, 'keyMsg'))) return;
+    await changeKey('SET_CONFIG', { api: { apiKey: key, ...api } }, '已临时使用 Key，未加入已保存列表');
   }
-  const api = currentAPIConfig();
-  if (api.baseURL && !(await requestAPIHostPermission(api.baseURL))) return;
-  const payload = {
-    engine: engineCtl.value,
-    subjMode: $('subjMode').value,
-    verify2: $('verify2').checked,
-    api,
-    bridge: {
-      delayMin: +$('delayMin').value || 3000,
-      delayMax: +$('delayMax').value || 8000,
-      newChat: $('newChat').checked,
-    },
-  };
-  const res = await chrome.runtime.sendMessage({ type: 'SET_CONFIG', payload });
-  if (res?.ok) {
-    msg('已保存 ✓');
-    setCls('ok');
-  } else {
-    msg('保存失败：' + (res?.error || '未知错误'));
-    setCls('err');
+}
+
+$('engine').addEventListener('change', showEngine);
+$('provider').addEventListener('change', () => showAPI({ iface: $('provider').value, ...IFACES[$('provider').value] }));
+$('saveKey').addEventListener('click', () => {
+  if (!cleanKey()) { out('keyMsg', '请先粘贴 API Key', 'err'); $('apiKey').focus(); return; }
+  if (config.keyWarned) return saveKey(true);
+  $('keyConfirm').hidden = false;
+  $('keyConfirmSave').focus();
+});
+$('tempKey').addEventListener('click', () => saveKey(false));
+$('keyConfirmSave').addEventListener('click', () => saveKey(true, true));
+$('keyConfirmTemp').addEventListener('click', () => saveKey(false, true));
+$('keyCancel').addEventListener('click', () => { $('keyConfirm').hidden = true; $('apiKey').focus(); });
+$('clearKey').addEventListener('click', () => changeKey('SET_CONFIG', { api: { apiKey: '' } }, '已停用当前 Key，列表记录保留，可随时重新使用'));
+
+$('appForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const api = apiFields();
+  const bridge = { delayMin: +$('delayMin').value, delayMax: +$('delayMax').value, newChat: $('newChat').checked };
+  if ($('engine').value === 'bridge' && bridge.delayMax < bridge.delayMin) {
+    out('msg', '间隔上限不能小于下限，请调整后再保存', 'err'); $('delayMax').focus(); return;
   }
+  if ($('engine').value === 'api' && api.iface !== 'auto' && (!api.baseURL || !api.model)) {
+    $('apiDetails').open = true;
+    out('msg', '请填写自定义接口地址与模型名，或选择自动识别', 'err'); return;
+  }
+  if ($('engine').value === 'api' && api.baseURL && !(await requestAPIHostPermission(api.baseURL, 'msg'))) return;
+  $('appFields').disabled = true;
+  out('msg', '正在保存设置…');
+  const payload = { engine: $('engine').value, subjMode: $('subjMode').value, verify2: $('verify2').checked, api, bridge };
+  const result = await send('SET_CONFIG', payload);
+  $('appFields').disabled = false;
+  if (result?.ok) {
+    config = result.config;
+    out('msg', '设置已保存' + ($('apiKey').value.trim() ? '；新粘贴的 Key 请点「识别并记住」或「临时使用」' : ''), 'ok');
+  } else out('msg', '保存失败：' + (result?.error || '请重试'), 'err');
 });
 
 $('test').addEventListener('click', async () => {
-  const api = currentAPIConfig();
-  if (!api.baseURL || !api.apiKey || !api.model) {
-    msg('请先填写 baseURL、模型名和 API Key');
-    setCls('err');
-    return;
-  }
-  if (!(await requestAPIHostPermission(api.baseURL))) return;
-  msg('测试中…');
-  setCls('');
-  const res = await chrome.runtime.sendMessage({ type: 'TEST_API', payload: { api } });
-  if (res?.ok) {
-    msg('连接成功，模型回复：' + res.reply);
-    setCls('ok');
-  } else {
-    msg('连接失败：' + (res?.error || '未知错误'));
-    setCls('err');
-  }
+  const api = { ...apiFields(), apiKey: cleanKey() || config.api?.apiKey || '' };
+  if (!api.baseURL || !api.apiKey || !api.model) return out('testMsg', '请填写接口地址、模型名和 API Key，或先识别并记住 Key', 'err');
+  if (!(await requestAPIHostPermission(api.baseURL, 'testMsg'))) return;
+  $('test').disabled = true;
+  out('testMsg', '正在测试连接…');
+  const result = await send('TEST_API', { api });
+  $('test').disabled = false;
+  out('testMsg', result?.ok ? '连接成功：' + result.reply : '连接失败：' + (result?.error || '请重试'), result?.ok ? 'ok' : 'err');
 });
 
-$('memAckReset').addEventListener('click', async () => {
-  const res = await chrome.runtime.sendMessage({ type: 'SET_CONFIG', payload: { clearAck: false } });
-  if (res?.ok) {
-    $('memAckRow').hidden = true;
-    msg('已恢复：下次在设置页清除记忆会先显示确认');
-    setCls('ok');
-  }
-});
-
-$('clearKey').addEventListener('click', async () => {
-  const res = await chrome.runtime.sendMessage({ type: 'SET_CONFIG', payload: { api: { apiKey: '' } } });
-  if (res?.ok) {
-    $('apiKey').value = '';
-    $('keyStatus').textContent = '已清除（当前未保存 Key）';
-  }
-});
-
-// 初始化：读配置回显
 (async () => {
-  const res = await chrome.runtime.sendMessage({ type: 'GET_CONFIG' });
-  const cfg = res?.config;
-  if (!cfg) return;
-  engineCtl.value = cfg.engine;
-  if (cfg.subjMode) $('subjMode').value = cfg.subjMode;
-  $('verify2').checked = cfg.verify2 !== false;
-  const api = cfg.api || {};
-  providerCtl.value = IFACES[api.iface] ? api.iface : (api.baseURL ? 'openai' : 'auto');
-  $('baseURL').value = api.baseURL || '';
-  $('model').value = api.model || '';
-  $('apiKey').value = api.apiKey || '';
-  $('keyStatus').textContent = api.apiKey
-    ? `当前已保存（尾号 ${api.apiKey.slice(-4)}），下方输入框输入新值可覆盖`
-    : '当前未保存 Key';
-  $('providerHint').textContent = IFACES[providerCtl.value].hint || '';
-  $('memAckRow').hidden = !cfg.clearAck;
-  const bridge = cfg.bridge || {};
-  $('delayMin').value = bridge.delayMin ?? 3000;
-  $('delayMax').value = bridge.delayMax ?? 8000;
-  $('newChat').checked = bridge.newChat !== false;
+  if (!(await refreshKeys())) { out('msg', '设置读取失败，请刷新页面后重试', 'err'); return; }
+  $('engine').value = config.engine || 'api';
+  $('subjMode').value = config.subjMode || 'ask';
+  $('verify2').checked = config.verify2 !== false;
+  showAPI(config.api || {});
+  $('delayMin').value = config.bridge?.delayMin ?? 3000;
+  $('delayMax').value = config.bridge?.delayMax ?? 8000;
+  $('newChat').checked = config.bridge?.newChat !== false;
+  showEngine();
+  $('appFields').disabled = false;
+  out('msg', '');
 })();
