@@ -1835,6 +1835,53 @@
     } catch (e) { note('异常记录保存失败：' + String(e.message || e)); }
   }
 
+  const STALL_TIMEOUT = 5 * 60 * 1000;
+  let stallState = null;
+  let stallRecording = false;
+  function progressSnapshot() {
+    const chapterId = activeChapterId();
+    const tab = tabList().find(tabActive);
+    const documents = docs();
+    const media = allVideos().map(v => ({ position: Math.floor(v.currentTime || 0),
+      duration: Number.isFinite(v.duration) ? v.duration : null, paused: v.paused, ended: v.ended, readyState: v.readyState }));
+    const frames = documents.map(doc => ({ path: new URL(doc.URL || location.href).pathname,
+      readyState: doc.readyState, scroll: Math.floor(doc.scrollingElement?.scrollTop || 0),
+      viewers: [...doc.querySelectorAll('#viewerContainer,#docContainer,.fileBox,.pdfViewer')].map(el => Math.floor(el.scrollTop || 0)),
+      pages: [...doc.querySelectorAll('#pageNum,#pagenum,.current-page,[aria-label="页码"]')]
+        .map(el => String(el.value || el.textContent || '').trim().slice(0, 40)) }));
+    return { chapterId, taskId: tab?.id || '', remainingJobs: unfinishedOf(chapterId),
+      finishedJobs: documents.reduce((count, doc) => count + doc.querySelectorAll('.ans-job-finished').length, 0),
+      answers: (HW.questions || []).map(q => q._status || 'queued'), media, frames };
+  }
+  async function observeProgress(active = on) {
+    if (!active) { stallState = null; return; }
+    if (stallRecording) return;
+    const state = progressSnapshot();
+    // 播放按钮反复变暂停/播放、日志和倒计时变化都不算实际进展。
+    const key = JSON.stringify({ ...state, media: state.media.map(v => [v.position, v.ended]),
+      frames: state.frames.map(frame => [frame.path, frame.scroll, frame.viewers, frame.pages]) });
+    const now = Date.now();
+    if (!stallState || stallState.key !== key) { stallState = { key, since: now, reported: false }; return; }
+    if (stallState.reported || now - stallState.since < STALL_TIMEOUT) return;
+    stallState.reported = true;
+    stallRecording = true;
+    const chapter = nodes().find(n => n.id === state.chapterId);
+    const message = '页面连续 5 分钟没有实际进展，已自动记录现场';
+    try {
+      const result = await chrome.runtime.sendMessage({ type: 'HW_ISSUE_ADD', payload: {
+        stage: '刷课停滞', message, course: currentCourse()?.name || document.title,
+        chapter: chapter?.name || '', task: tabList().find(tabActive)?.textContent.trim() || '',
+        url: location.href, action: '自动记录停滞现场，保留当前队列；未计为完成',
+        details: JSON.stringify({ idleSeconds: Math.floor((now - stallState.since) / 1000),
+          lastProgressAt: new Date(stallState.since).toISOString(), running: on,
+          hidden: document.hidden, stopTrace: HW.Watch?.stopTrace, ...state }),
+        scene: HW.Diagnostics?.capture(),
+      } });
+      note(result?.ok ? message : '停滞现场保存失败：' + (result?.error || '后台无回执'));
+    } catch (e) { note('停滞现场保存失败：' + String(e.message || e)); }
+    finally { stallRecording = false; }
+  }
+
   async function courseLoop() {
     const my = gen;
     checkVerification();
@@ -2228,6 +2275,7 @@
   }
 
   HW.Watch = {
+    observeProgress,
     quizDocument,
     start,
     stop,

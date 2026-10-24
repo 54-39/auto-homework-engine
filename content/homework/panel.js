@@ -879,18 +879,24 @@
     let reviveCount = 0;
     let reviveMark = '';
     let userStopped = false;
-    const stopByUser = () => { userStopped = true; };
+    const stopByUser = () => { userStopped = true; HW.Watch?.observeProgress?.(false); };
     /* 面板脚本是 all_frames 注入的，这段只能由顶层框架跑，
        否则每个 iframe 都会各自来一次「接续」，同时开好几轮循环。 */
     if (window.top === window) setInterval(async () => {
       try {
-        if (HW.Watch?.running) { reviveCount = 0; reviveMark = ''; return; }
-        if (userStopped) return;
-        if (Date.now() < reviveAt) return;
-        if (HW.Watch?.pageKind?.() !== 'study') return; // 只在学习页接续，别在其他页面乱点
+        if (userStopped || HW.Watch?.pageKind?.() !== 'study') {
+          await HW.Watch?.observeProgress?.(false);
+          return;
+        }
+        if (HW.Watch?.running) {
+          await HW.Watch.observeProgress?.();
+          reviveCount = 0; reviveMark = ''; return;
+        }
         const r = await send('HW_WATCH_QUEUE_GET');
         const q = r?.queue;
+        await HW.Watch?.observeProgress?.(!!q && !q.paused);
         if (!q || q.paused) return;
+        if (Date.now() < reviveAt) return;
         const ids = q.courses?.[q.index]?.chapterIds;
         if (!Array.isArray(ids) || !ids.length) return;
         const left = ids.reduce((sum, id) => sum + (HW.Watch.unfinishedOf?.(id) || 0), 0);
