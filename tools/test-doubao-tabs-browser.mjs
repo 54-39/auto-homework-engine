@@ -42,7 +42,7 @@ for (const file of ['background/engines/engine.js', 'background/engines/bridge-e
   fs.copyFileSync(path.join(root, file), path.join(stage, file));
 if (!publicPage) {
   const engine = path.join(stage, 'background/engines/bridge-engine.js');
-  fs.writeFileSync(engine, fs.readFileSync(engine, 'utf8').replace('https://www.doubao.com/chat/', origin + '/chat/').replace('*://*.doubao.com/*', 'http://127.0.0.1/*'));
+  fs.writeFileSync(engine, fs.readFileSync(engine, 'utf8').replace('https://www.doubao.com/chat/', origin + '/chat/').replaceAll('*://*.doubao.com/*', 'http://127.0.0.1/*'));
   const client = path.join(stage, 'content/doubao/doubao-bridge.js');
   fs.writeFileSync(client, fs.readFileSync(client, 'utf8').replace('const sentDeadline = Date.now() + 30000;', 'const sentDeadline = Date.now() + 900;'));
 } else {
@@ -51,7 +51,7 @@ if (!publicPage) {
   assert.equal(code.split('    clickSend();').length, 2, '真实页面检查必须在唯一发送动作之前终止');
   fs.writeFileSync(client, code.replace('    clickSend();', "    throw new Error('TAB_INPUT_VERIFIED_NO_SEND');"));
 }
-fs.writeFileSync(path.join(stage, 'background/test-worker.mjs'), `import {requestWithBridge} from './engines/bridge-engine.js';globalThis.bridgeAsk=prompt=>requestWithBridge([{role:'user',content:prompt}],{newChat:true});`);
+fs.writeFileSync(path.join(stage, 'background/test-worker.mjs'), `import {requestWithBridge,openBridgeSplit} from './engines/bridge-engine.js';globalThis.bridgeAsk=prompt=>requestWithBridge([{role:'user',content:prompt}],{newChat:true});globalThis.bridgeSplit=tabId=>openBridgeSplit(tabId);`);
 fs.writeFileSync(path.join(stage, 'manifest.json'), JSON.stringify({
   manifest_version: 3, name: '豆包标签页桥接回归', version: '1.0.0',
   permissions: ['tabs', 'scripting'], host_permissions: [publicPage ? '*://*.doubao.com/*' : 'http://127.0.0.1/*'],
@@ -147,7 +147,23 @@ try {
   assert.ok(afterReopen.some(t => t.id !== bridgeTab.id && t.url.startsWith(origin) && !t.active));
   assert.equal(sent.length, 4);
   console.log('PASS 用户关闭豆包页后，下次请求能重新打开并正常取答');
-  fs.writeFileSync(path.join(output, 'tabs-results.json'), JSON.stringify({ groups: 6, sendDelay, sent, tabs: afterReopen }, null, 2));
+  let split = null, groups = 6;
+  if (await evaluate(worker, "typeof chrome.tabs.createSplit === 'function'")) {
+    const leftId = before[0].id;
+    split = await evaluate(worker, `bridgeSplit(${leftId})`);
+    assert.equal(split.reused, true);
+    const pair = await evaluate(worker, `Promise.all([chrome.tabs.get(${leftId}),chrome.tabs.get(${split.tabId})]).then(t=>t.map(x=>({id:x.id,splitViewId:x.splitViewId,index:x.index})))`);
+    assert.ok(pair[0].splitViewId >= 0); assert.equal(pair[0].splitViewId, pair[1].splitViewId);
+    assert.equal(pair[1].index, pair[0].index + 1); assert.equal(sent.length, 4);
+    console.log('PASS 真实 Edge 原生分屏复用现有豆包页，左右两页共用 splitViewId，不发题');
+    assert.equal((await evaluate(worker, 'bridgeAsk("split-view")')).raw, '{"answers":["B"]}');
+    assert.equal(sent.length, 5);
+    assert.equal((await evaluate(worker, `bridgeSplit(${leftId})`)).tabId, split.tabId);
+    assert.equal((await evaluate(worker, 'chrome.tabs.query({})')).length, afterReopen.length);
+    console.log('PASS 原生分屏内继续取答，重复点击复用分屏且不新增标签');
+    groups += 2;
+  } else console.log('SKIP 当前浏览器没有原生分屏 API，兼容提示由专项单元测试覆盖');
+  fs.writeFileSync(path.join(output, 'tabs-results.json'), JSON.stringify({ groups, sendDelay, sent, tabs: afterReopen, split }, null, 2));
   }
 } finally {
   worker?.close();

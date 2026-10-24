@@ -42,7 +42,12 @@ function fixtureBoot() {
         if (msg.type === 'SET_CONFIG') return { ok: true, config: setExternalConfig(msg.payload) };
         if (msg.type === 'KEY_LIST') return { ok: true, list: [] };
         if (msg.type === 'CHECK_UPDATE') return { ok: false };
-        if (msg.type === 'HW_WATCH_COURSES') return { ok: true, courses: window.frameCourseResults };
+        if (msg.type === 'HW_BRIDGE_SPLIT') return window.bridgeSplitResult || { ok: true };
+        if (msg.type === 'HW_WATCH_COURSES') {
+          if (window.testCourseError) return { ok: false, error: '模拟课程读取失败' };
+          if (window.holdCourseRead) return new Promise(resolve => { window.releaseCourseRead = () => { window.holdCourseRead = false; resolve({ ok: true, courses: window.frameCourseResults }); }; });
+          return { ok: true, courses: window.frameCourseResults };
+        }
         if (msg.type === 'HW_ISSUE_ADD' && window.testIssueFailure) return { ok: false, error: '模拟磁盘写入失败' };
         if (msg.type === 'HW_DETECT_QUESTIONS') {
           const result = () => ({ ok: true, questions: window.makeSpecs(HW.AIDetection.collect()).concat(window.unknownSpec(HW.AIDetection.collect())) });
@@ -736,6 +741,21 @@ async function browserChecks() {
       await wait(50);
     }
   });
+  await check('豆包模式可点击并排查看，失败有提示，不自动开始答题', async () => {
+    await setPanelMode('bridge');
+    const button=ui.querySelector('.bridgesplit');
+    ok(!ui.querySelector('.bridgebar').classList.contains('hidden'));
+    const before=testCalls.filter(type=>type==='HW_START').length;
+    button.click();ok(button.disabled && button.getAttribute('aria-busy')==='true');
+    await until(()=>!button.disabled);
+    ok(testCalls.includes('HW_BRIDGE_SPLIT') && ui.querySelector('.bridgestatus').textContent.includes('已并排显示'));
+    window.bridgeSplitResult={ok:false,error:'当前浏览器不支持一键分屏，请用 Edge 工具栏的分屏按钮选择豆包页面'};
+    button.click();await until(()=>!button.disabled);
+    ok(ui.querySelector('.bridgestatus').textContent.includes('工具栏'));
+    ok(testCalls.filter(type=>type==='HW_START').length===before);
+    delete window.bridgeSplitResult;
+    await setPanelMode('homework');ok(ui.querySelector('.bridgebar').classList.contains('hidden'));
+  });
   await check('课程名后显示预计用时，完成课程默认折叠；延迟进度和倍速变化保留勾选', async () => {
     const extra = document.createElement('div');
     extra.id = 'localCourseFixture';
@@ -795,13 +815,14 @@ async function browserChecks() {
     await until(() => !ui.querySelector('.watchbtn').textContent.includes('前 4 节'));
     await setPanelMode('homework');
   });
-  await check('个人中心内嵌课程列表可读，切换列表后保留勾选，进度异步更新用时', async () => {
+  await check('个人中心非固定地址的内嵌课程列表可读，保留勾选并更新进度', async () => {
     const first = HW.Watch.courseLinks()[0];
     testStore['watchTime:804|901|' + first.cpi] = { schema: 2, samples: [480,480,480] };
     window.frameCourseResults = [first, { ...first, key: '804|901', courseid: '804', name: '内嵌页面课程', done: 0, total: 2 }];
     document.getElementById('localCourseFixture').remove();
     const frame = document.createElement('iframe');
-    frame.src = '/visit/interaction';
+    frame.id = 'courseListFrame';
+    frame.src = '/space/index';
     document.body.append(frame);
     await setPanelMode('watch');
     await until(() => ui.querySelectorAll('.crow[data-i]').length === 2);
@@ -812,6 +833,41 @@ async function browserChecks() {
     window.frameCourseResults[1] = { ...frameCourseResults[1], done: 2 };
     frame.dispatchEvent(new Event('load'));
     await until(() => ui.querySelector('.ccompleted').contains(ui.querySelector('.crow[data-i="1"]')));
+    await setPanelMode('homework');
+  });
+  await check('刷新课程等待正在读取的结果，不重复请求且保留勾选', async () => {
+    await setPanelMode('watch');
+    const button = ui.querySelector('.courserefresh');
+    ok(button && !button.disabled && button.textContent === '刷新课程', '没有可用的刷新课程按钮');
+    window.holdCourseRead = true;
+    document.getElementById('courseListFrame').dispatchEvent(new Event('load'));
+    await until(() => !!window.releaseCourseRead);
+    const calls = testCalls.filter(type => type === 'HW_WATCH_COURSES').length;
+    button.click();
+    ok(button.disabled && button.getAttribute('aria-busy') === 'true', '读取期间未禁用刷新按钮');
+    button.click();
+    ok(testCalls.filter(type => type === 'HW_WATCH_COURSES').length === calls, '重复发起课程读取');
+    window.frameCourseResults.push({ ...frameCourseResults[0], key: '805|901', courseid: '805', name: '新加载的课程', done: 0, total: 3 });
+    window.releaseCourseRead();
+    await until(() => !button.disabled);
+    ok(ui.querySelectorAll('.crow[data-i]').length === 3);
+    ok(ui.querySelector('.crow[data-i="0"] input').checked, '刷新丢掉已有勾选');
+    ok(ui.querySelector('.watchline').textContent === '已读取 3 门课程');
+  });
+  await check('刷新课程有失败提示，空结果仍可重试，再次读取能恢复', async () => {
+    const button = ui.querySelector('.courserefresh');
+    window.testCourseError = true;
+    button.click(); await until(() => !button.disabled);
+    ok(ui.querySelector('.watchline').textContent.includes('读取失败'), '失败被错误显示为成功');
+    window.testCourseError = false;
+    const courses = window.frameCourseResults;
+    window.frameCourseResults = [];
+    button.click(); await until(() => !button.disabled);
+    ok(!ui.querySelector('.watchempty').classList.contains('hidden'));
+    ok(!button.disabled && ui.querySelector('.watchline').textContent.includes('暂未读到课程'));
+    window.frameCourseResults = courses;
+    button.focus(); button.click(); await until(() => !button.disabled);
+    ok(ui.querySelectorAll('.crow[data-i]').length === 3 && ui.activeElement === button, '刷新后键盘焦点丢失');
     await setPanelMode('homework');
   });
   await check('开始刷课后标题下持续显示剩余时间，与任务状态行分别展示', async () => {
@@ -895,7 +951,7 @@ const questionnaire = `<!doctype html><meta charset="utf-8"><style>.optionRadio,
   `<div class="question-item"><input type="hidden" name="questionId"><div class="question-list"><span class="topic-txt">${stem}</span>${i === 2 ? '<textarea></textarea>' :
     ['男', '女'].map((word, j) => `<div class="${i ? 'optionCheckbox' : 'optionRadio'}" role="${i ? 'checkbox' : 'radio'}" aria-checked="false"><span class="ipt-radio"><input type="${i ? 'checkbox' : 'radio'}" name="answer${i}" value="${j}"></span><span class="optionName">${'AB'[j]}.</span><div class="optionContent">${word}</div></div>`).join('')}</div></div>`).join('')}</div></form>
 <script>document.addEventListener('click', e => {if(!e.target.matches('input'))return;setTimeout(()=>document.querySelectorAll('.optionRadio,.optionCheckbox').forEach(el=>el.setAttribute('aria-checked',String(el.querySelector('input').checked))),100);});</script>`;
-const server = http.createServer((req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(req.url.startsWith('/page/questionnaire/') ? questionnaire : req.url === '/visit/interaction' ? '<!doctype html><title>内嵌课程列表样例</title>' : req.url === '/no-questions' ? inbox : html); });
+const server = http.createServer((req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(req.url.startsWith('/page/questionnaire/') ? questionnaire : ['/visit/interaction', '/space/index'].includes(req.url) ? '<!doctype html><title>内嵌课程列表样例</title>' : req.url === '/no-questions' ? inbox : html); });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const child = spawn(edge, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
   '--disable-crash-reporter', '--disable-breakpad', '--remote-debugging-port=0', '--disable-features=CalculateNativeWinOcclusion', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore', windowsHide: true });
@@ -1006,7 +1062,7 @@ try {
       if (baseline === 'squat') {
         await evaluate('(()=>{const p=document.querySelector("#hw-panel-host").shadowRoot.querySelector(".panel");p.style.height="auto";p.style.minHeight="380px";})()');
       } else {
-        await evaluate('(()=>{setExternalConfig({engine:"bridge",panelMode:"homework"});const s=document.querySelector("#hw-panel-host").shadowRoot,p=s.querySelector(".panel");p.style.width="360px";p.style.height="792px";s.querySelector(".list").style.height="170px";})()');
+        await evaluate('(()=>{setExternalConfig({engine:"bridge",panelMode:"homework"});const s=document.querySelector("#hw-panel-host").shadowRoot,p=s.querySelector(".panel");s.querySelector(".bridgebar").classList.add("hidden");p.style.width="360px";p.style.height="792px";s.querySelector(".list").style.height="170px";})()');
       }
       await pause(250);
       const geometry = await measurePanel();

@@ -115,11 +115,17 @@
     button.act{flex:1;height:32px;border:0;border-radius:6px;background:#2563EB;color:#fff;cursor:pointer;font-size:12px;font-weight:500}
     button.act.ghost{background:#fff;color:#374151;border:1px solid #CCD2D9;font-weight:400}
     button.act:disabled{opacity:.45;cursor:not-allowed}
+    .bridgebar{display:flex;flex-direction:column;gap:4px;flex:none}
+    .bridgebar button.act{flex:none;width:100%}
+    .bridgestatus{margin:0;color:#4B5563;font-size:11px;line-height:1.6}
     .panel.watchmode .homework-only{display:none}
     .watchview{display:flex;flex-direction:column;gap:8px;flex:1.6 1 0;min-height:0}
     .watchview>*{flex:none}
     .watchview .courselist{flex:1 1 140px;min-height:80px}
     .watchintro{padding:4px 0 6px;border-bottom:1px solid #DCE3ED}
+    .watchtitle{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+    .courserefresh{min-height:28px}
+    .courserefresh:disabled{opacity:.55;cursor:wait}
     .watchheading{margin:0 0 4px;font-size:16px;font-weight:600;line-height:1.4;color:#111827}
     .watchcontext{margin:0;color:#4B5563;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
     .watchmeta{margin-top:6px;font-size:11px;color:#4B5563;font-variant-numeric:tabular-nums}
@@ -264,6 +270,7 @@
           <button class="tbtn btn-collapse" data-tip="收起面板">收起</button>
         </header>
         <div class="row moderow"><label>模式</label><div class="dd modeslot"></div></div>
+        <div class="bridgebar hidden"><button type="button" class="act ghost bridgesplit">并排查看豆包</button><p class="bridgestatus hidden" role="status" aria-live="polite"></p></div>
         <div class="hintline homework-only">题目发送至所选 AI；请核对后自行提交</div>
         <div class="updline hidden" data-tip="点击「更新」启动更新事务；下载、验证与回滚状态请在设置页查看，成功后作业页面需 F5"></div>
         <button class="apitoggle hidden">接口 与 API Key</button>
@@ -320,13 +327,13 @@
           <button class="act ghost stop" disabled>停止</button>
         </div>
         <div class="watchview hidden">
-          <div class="watchintro"><h2 class="watchheading">课程学习</h2><p class="watchcontext">打开课程或勾选清单，继续未完成的章节。</p><div class="watchmeta"></div></div>
+          <div class="watchintro"><div class="watchtitle"><h2 class="watchheading">课程学习</h2><button type="button" class="lbtn plain courserefresh">刷新课程</button></div><p class="watchcontext">打开课程或勾选清单，继续未完成的章节。</p><div class="watchmeta"></div></div>
           <div class="watchrow">
             <div class="watchrate"><span>倍速</span><div class="dd rateslot"></div></div>
             <label class="muteopt" data-tip="当前课程页所有视频静音，后续章节沿用；取消后恢复声音"><input class="watchmute" type="checkbox" checked>全部静音</label>
           </div>
           <div class="courselist hidden"></div>
-          <p class="watchempty hidden">请先打开超星课程列表，或进入要学习的课程。</p>
+          <p class="watchempty hidden">暂未读取到课程，可点击「刷新课程」重试，或进入课程后开始学习。</p>
           <div class="watchqueue hidden" role="status" aria-live="polite">
             <div class="wqrow"><span class="wqk">正在刷</span><span class="wqv wqnow"></span></div>
             <div class="wqrow"><span class="wqk">剩余</span><span class="wqv wqrest"></span></div>
@@ -351,8 +358,8 @@
       apiToggle: $('.apitoggle'), apisec: $('.apisec'),
       modal: $('.keymodal'), msave: $('.msave'), mtemp: $('.mtemp'), mcancel: $('.mcancel'),
       subjmodal: $('.subjmodal'), subjbody: $('.subjbody'), subjcancel: $('.subjcancel'), subjkeep: $('.subjkeep'), subjrewrite: $('.subjrewrite'),
-      detect: $('.detect'), start: $('.start'), stop: $('.stop'),
-      watch: $('.watchbtn'), watchmute: $('.watchmute'), watchline: $('.watchline'), courselist: $('.courselist'),
+      detect: $('.detect'), start: $('.start'), stop: $('.stop'), bridgebar: $('.bridgebar'), bridgesplit: $('.bridgesplit'), bridgestatus: $('.bridgestatus'),
+      watch: $('.watchbtn'), watchmute: $('.watchmute'), watchline: $('.watchline'), courselist: $('.courselist'), courserefresh: $('.courserefresh'),
       watchqueue: $('.watchqueue'), wqnow: $('.wqnow'), wqrest: $('.wqrest'), wqtime: $('.wqtime'),
       moderow: $('.moderow'), watchview: $('.watchview'), watchheading: $('.watchheading'), watchcontext: $('.watchcontext'), watchmeta: $('.watchmeta'), watchempty: $('.watchempty'),
       summary: $('.summary'), smsg: $('.smsg'), shint: $('.shint'), list: $('.list'), log: $('.log'),
@@ -375,10 +382,28 @@
       const watch = isApi && els.mode.value === 'watch';
       els.moderow.classList.remove('hidden');
       els.panel.classList.toggle('watchmode', watch);
+      els.bridgebar.classList.toggle('hidden', engine !== 'bridge');
       els.watchview.classList.toggle('hidden', !watch);
       if (watch) loadCourseTimes();
       updateWatchContext();
     }
+    els.bridgesplit.addEventListener('click', async () => {
+      const focused = root.activeElement === els.bridgesplit;
+      els.bridgesplit.disabled = true;
+      els.bridgesplit.textContent = '正在打开分屏…';
+      els.bridgesplit.setAttribute('aria-busy', 'true');
+      try {
+        const result = await send('HW_BRIDGE_SPLIT');
+        els.bridgestatus.textContent = result?.ok ? '已并排显示，可直接在豆包侧登录或处理验证。' : result?.error || '分屏未打开，请用 Edge 工具栏的分屏按钮选择豆包';
+      } catch (e) { els.bridgestatus.textContent = '分屏未打开：' + String(e.message || e); }
+      finally {
+        els.bridgestatus.classList.remove('hidden');
+        els.bridgesplit.disabled = false;
+        els.bridgesplit.textContent = '并排查看豆包';
+        els.bridgesplit.removeAttribute('aria-busy');
+        if (focused) els.bridgesplit.focus({ preventScroll: true });
+      }
+    });
     /* 每门课处理几节由设置页决定（用户 2026-10-23 要求：不要再写死在面板里）。
        0 = 整门课程；N>0 = 从第一节起连续完成 N 节，只处理进度低于 35% 的课。 */
     let watchSections = 0;
@@ -751,36 +776,59 @@
     let courseItems = [];
     let courseTimes = {};
     let embeddedCourses = [];
-    let courseFrameLoading = false;
+    let courseFrameLoading = null;
     let courseFrameFailed = false;
-    const hasCourseFrame = () => [...document.querySelectorAll('iframe')].some(f => {
-      try { return /\/visit\/interaction\/?$/.test(new URL(f.src, location.href).pathname); } catch { return false; }
-    });
+    const hasCourseFrame = () => !/\/mycourse\/(studentstudy|studentcourse)/.test(location.pathname)
+      && [...document.querySelectorAll('iframe')].some(f => {
+        try {
+          const url = new URL(f.src, location.href);
+          return /(^|\.)chaoxing\.com$/.test(url.hostname) || url.origin === location.origin;
+        } catch { return false; }
+      });
     function availableCourses() {
       const local = HW.Watch?.courseLinks?.() || [];
-      return local.length ? local : hasCourseFrame() ? embeddedCourses : [];
+      return local.length ? local : embeddedCourses;
     }
-    async function refreshEmbeddedCourses() {
-      if (!hasCourseFrame()) {
-        if (embeddedCourses.length) { embeddedCourses = []; renderCourses(); }
+    function refreshEmbeddedCourses(force = false) {
+      if (courseFrameLoading) return courseFrameLoading;
+      if (!hasCourseFrame() && !force) {
+        embeddedCourses = [];
+        if (availableCourses().map(c => c.key).join('|') !== courseItems.map(c => c.key).join('|')) renderCourses();
         return;
       }
-      if (courseFrameLoading) return;
-      courseFrameLoading = true;
-      try {
-        const result = await send('HW_WATCH_COURSES');
-        if (!result?.ok) throw new Error(result?.error || '未读到内嵌课程清单');
-        courseFrameFailed = false;
-        embeddedCourses = result.courses || [];
-        const keys = availableCourses().map(c => c.key).join('|');
-        if (keys !== courseItems.map(c => c.key).join('|')) renderCourses();
-        else { updateCourseTimes(); updateWatchContext(); }
-      } catch (e) {
-        if (!courseFrameFailed) reportIssue('课程识别', e.message);
-        courseFrameFailed = true;
-        setWatchLine('课程清单读取失败，请刷新页面后重试', true);
-      } finally { courseFrameLoading = false; }
+      courseFrameLoading = (async () => {
+        try {
+          const result = await send('HW_WATCH_COURSES');
+          if (!result?.ok) throw new Error(result?.error || '未读到内嵌课程清单');
+          courseFrameFailed = false;
+          embeddedCourses = result.courses || [];
+          const keys = availableCourses().map(c => c.key).join('|');
+          if (keys !== courseItems.map(c => c.key).join('|')) renderCourses();
+          else { updateCourseTimes(); updateWatchContext(); }
+        } catch (e) {
+          if (!courseFrameFailed) reportIssue('课程识别', e.message);
+          courseFrameFailed = true;
+          setWatchLine('课程清单读取失败，可点「刷新课程」重试', true);
+        } finally { courseFrameLoading = null; }
+      })();
+      return courseFrameLoading;
     }
+    els.courserefresh.addEventListener('click', async () => {
+      const focused = root.activeElement === els.courserefresh;
+      els.courserefresh.disabled = true;
+      els.courserefresh.textContent = '读取中…';
+      els.courserefresh.setAttribute('aria-busy', 'true');
+      try {
+        await refreshEmbeddedCourses(true);
+        renderCourses();
+        if (!courseFrameFailed) setWatchLine(availableCourses().length ? `已读取 ${availableCourses().length} 门课程` : '暂未读到课程，请确认课程列表已加载');
+      } finally {
+        els.courserefresh.disabled = false;
+        els.courserefresh.textContent = '刷新课程';
+        els.courserefresh.removeAttribute('aria-busy');
+        if (focused) els.courserefresh.focus({ preventScroll: true });
+      }
+    });
     /* 完成的课收进折叠区。卡片没有「任务点进度」的课（青服团、安全教育这类不开任务的）
        原来一律算未完成、永远挂在勾选区顶部；只有本机刷课记录里还留着未完成任务点时
        才把它们当未完成，否则按「没有可刷的内容」归入已完成区。 */
@@ -866,7 +914,7 @@
       /* 队列状态每 3 秒对一次：脚本跳页后按钮文字、队列信息、剩余时间都跟着走，
          不再等用户点一下才发现早停了或者早就在跑（2026-10-23 反馈） */
       if (!els.panel.classList.contains('hidden')) refreshQueueInfo();
-      if (!els.panel.classList.contains('hidden') && els.mode.value === 'watch' && (embeddedCourses.length || hasCourseFrame())) refreshEmbeddedCourses();
+      if (!els.panel.classList.contains('hidden') && els.mode.value === 'watch') refreshEmbeddedCourses();
     }, 3000);
 
     /* ---------------- 看门狗：循环意外停住时自己接回去 ----------------
@@ -1550,6 +1598,7 @@
     async function startAnswering(opts) {
       if (!$('.issuewarn').classList.contains('hidden')) return false;
       const auto = !!(opts && opts.auto);
+      const retry = auto && !!opts.retry;
       if (!HW.questions?.length) return false;
       if (!requireCurrentPage()) return false;
       try {
@@ -1582,7 +1631,7 @@
         const questions = [];
         for (const q of HW.questions) {
           const pageAnswer = HW.Extractor.currentAnswer(q); // 硬证据（input.checked / 学习类 / 文本值）
-          const cached = await cachedAnswer(q);
+          const cached = retry ? null : await cachedAnswer(q);
           let decision = 'ask'; // 没写（或读不出）→ 问引擎后填写
           let refAnswer = null;
           let skipNote = '';
@@ -1610,6 +1659,7 @@
           }
           questions.push({
             ...q.meta,
+            _retry: retry,
             _decision: decision,
             _pageAnswer: pageAnswer,
             _refAnswer: refAnswer,
@@ -1656,7 +1706,7 @@
     /* 刷课先读取原生题目，漏检时调用一次 AI 补漏，再填写并继续原生提交。
        无人值守时简答策略按「保留跳过」处理。
        挂在 HW.Panel 上（每次 init 覆盖，面板只在顶层框架加载，实例唯一）。 */
-    async function runHomework() {
+    async function runHomework(opts = {}) {
       autoRun = true; // 无人值守：自己点选项导致的签名变化不算「页面已变化」
       autoDocument = HW.Watch?.quizDocument?.() || document;
       try {
@@ -1695,7 +1745,7 @@
               { question: still.map((el) => (el.querySelector('.stem')?.textContent || '').slice(0, 60)).join('；') });
           }
         }
-        const started = await startAnswering({ auto: true });
+        const started = await startAnswering({ auto: true, retry: !!opts.retry });
         if (!started) throw new Error('没能开始填写，不提交测验');
         // 等后台把这一页的题填完（HW_DONE / HW_STOPPED 都会把按钮解锁）
         const deadline = Date.now() + 180000;

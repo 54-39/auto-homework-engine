@@ -35,6 +35,7 @@ function fixture(failure) {
     tabList: () => [{ id: 'dct1', textContent: '测验一' }, { id: 'dct2', textContent: '测验二' }],
     tabActive: item => item.id === 'dct' + (tab + 1),
     dismissUnfinishedDialog: async () => false, jitter: n => n,
+    dismissQuizRetryNotice: () => false,
     step: async () => {}, until: async predicate => predicate(),
     clickNode: id => { if (failure === 'entry' && id === '1') throw Error('目录点击异常'); active = id; return true; },
     goto: async index => { tab = index; calls.push(active + ':' + tab); return true; },

@@ -173,6 +173,12 @@ try {
     try { await installed();await startup();assert.deepEqual(injected,[10,10]); }
     finally {chrome.runtime.getManifest=originalManifest;chrome.tabs.query=originalQuery;chrome.scripting=originalScripting;}
   });
+  await test('豆包分屏只接受超星来源，旧浏览器返回可操作的手动分屏提示', async () => {
+    const unsupported = await call('HW_BRIDGE_SPLIT', {}, 'https://mooc1.chaoxing.com/work');
+    assert.equal(unsupported.ok, false); assert.match(unsupported.error, /不支持一键分屏/);
+    const outside = await call('HW_BRIDGE_SPLIT', {}, 'https://example.invalid/');
+    assert.equal(outside.ok, false); assert.match(outside.error, /超星作业页面/);
+  });
   await test('个人中心跨域课程清单逐框读取并去重，不接受非超星页面', async () => {
     const original = chrome.scripting;
     let calls = 0;
@@ -185,8 +191,9 @@ try {
       const result = await call('HW_WATCH_COURSES', {}, 'https://i.mooc.chaoxing.com/space/index');
       assert.equal(result.ok, true); assert.equal(result.courses.length, 2);
       assert.equal(result.courses[0].total, 5);
+      assert.equal((await call('HW_WATCH_COURSES', {}, 'https://i.chaoxing.com/base?ws=1')).courses.length, 2);
       assert.equal((await call('HW_WATCH_COURSES', {}, 'https://example.invalid/')).ok, false);
-      assert.equal(calls, 1);
+      assert.equal(calls, 2);
       const { readFile } = await import('node:fs/promises');
       const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
       assert.equal(manifest.content_scripts[0].all_frames, true);
@@ -256,6 +263,29 @@ try {
       assert.equal(updates[0].options.url, courses[0].scUrl);
       await call('HW_WATCH_STOP');
     } finally { chrome.tabs.update = originalUpdate; }
+  });
+  await test('测验重做次数串行持久化，重复与并发登记只允许一次，刷新后仍保留', async () => {
+    const originalGet = chrome.storage.local.get, originalSet = chrome.storage.local.set;
+    chrome.storage.local.get = async key => structuredClone(await originalGet(key));
+    try {
+    const url = 'https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=1&clazzid=2&chapterId=3';
+    const courses = [{ key: '1|2', scUrl: url }];
+    await call('HW_WATCH_START', { courses }, url);
+    const payload = { key: '1|2', chapterId: '3' };
+    const claims = await Promise.all([call('HW_WATCH_QUIZ_RETRY', payload, url), call('HW_WATCH_QUIZ_RETRY', payload, url)]);
+    assert.equal(claims.filter(r => r.first).length, 1);
+    assert.equal((await call('HW_WATCH_QUIZ_RETRY', payload, url)).first, false);
+    assert.deepEqual((await call('HW_WATCH_QUEUE_GET', {}, url)).queue.courses[0].quizRetries, ['3']);
+    assert.equal((await call('HW_WATCH_QUIZ_RETRY', { ...payload, key: 'wrong' }, url)).ok, false);
+    const outsider = await new Promise(resolve => handler({ type: 'HW_WATCH_QUIZ_RETRY', payload }, { url, tab: { id: 32, url } }, resolve));
+    assert.equal(outsider.ok, false);
+    chrome.storage.local.set = async value => { if (value.watchQueue) throw Error('重做次数写入失败'); return originalSet(value); };
+    assert.equal((await call('HW_WATCH_QUIZ_RETRY', { ...payload, chapterId: '4' }, url)).ok, false);
+    chrome.storage.local.set = originalSet;
+    assert.deepEqual((await call('HW_WATCH_QUEUE_GET', {}, url)).queue.courses[0].quizRetries, ['3']);
+    await call('HW_WATCH_STOP');
+    assert.equal((await call('HW_WATCH_QUIZ_RETRY', { ...payload, chapterId: '4' }, url)).ok, false);
+    } finally { chrome.storage.local.get = originalGet; chrome.storage.local.set = originalSet; }
   });
   await test('原生章节地址保留stuenc，仅当前队列属主可打开同一课程目录', async () => {
     const original = chrome.tabs.update, updates = [];

@@ -4,10 +4,42 @@ import { buildMessages, parseAnswer } from './engine.js';
 
 const DOUBAO_URL = 'https://www.doubao.com/chat/';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let preferredTabId = null;
+
+export async function openBridgeSplit(sourceTabId) {
+  if (typeof chrome.tabs.createSplit !== 'function') {
+    throw new Error('当前浏览器不支持一键分屏，请用 Edge 工具栏的分屏按钮选择豆包页面');
+  }
+  const source = await chrome.tabs.get(sourceTabId);
+  const tabs = await chrome.tabs.query({ url: '*://*.doubao.com/*' });
+  const paired = tabs.find(t => source.splitViewId >= 0 && t.splitViewId === source.splitViewId);
+  if (paired) {
+    preferredTabId = paired.id;
+    await chrome.tabs.update(source.id, { active: true });
+    return { tabId: paired.id, reused: true };
+  }
+  if (source.splitViewId >= 0) throw new Error('当前页面已与其他网页分屏，请先退出该分屏，或在分屏中手动选择豆包');
+  let target = tabs.find(t => t.windowId === source.windowId && !(t.splitViewId >= 0))
+    || tabs.find(t => !(t.splitViewId >= 0))
+    || await chrome.tabs.create({ url: DOUBAO_URL, windowId: source.windowId, index: source.index + 1, active: false, pinned: source.pinned });
+  if (target.pinned !== source.pinned) await chrome.tabs.update(target.id, { pinned: source.pinned });
+  if (target.windowId !== source.windowId) await chrome.tabs.move(target.id, { windowId: source.windowId, index: source.index + 1 });
+  target = await chrome.tabs.get(target.id);
+  if (source.groupId >= 0 && target.groupId !== source.groupId) await chrome.tabs.group({ tabIds: target.id, groupId: source.groupId });
+  else if (!(source.groupId >= 0) && target.groupId >= 0) await chrome.tabs.ungroup(target.id);
+  target = await chrome.tabs.get(target.id);
+  const current = await chrome.tabs.get(source.id);
+  const index = current.index + (target.windowId === current.windowId && target.index < current.index ? 0 : 1);
+  await chrome.tabs.move(target.id, { windowId: current.windowId, index });
+  await chrome.tabs.createSplit([source.id, target.id]);
+  preferredTabId = target.id;
+  await chrome.tabs.update(source.id, { active: true });
+  return { tabId: target.id, reused: tabs.some(t => t.id === target.id) };
+}
 
 async function ensureBridge() {
   const tabs = await chrome.tabs.query({ url: '*://*.doubao.com/*' });
-  const tab = tabs[0] || await chrome.tabs.create({ url: DOUBAO_URL, active: false });
+  const tab = tabs.find(t => t.id === preferredTabId) || tabs[0] || await chrome.tabs.create({ url: DOUBAO_URL, active: false });
   return { tabId: tab.id, send: message => chrome.tabs.sendMessage(tab.id, message, { frameId: 0 }) };
 }
 

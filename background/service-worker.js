@@ -1,6 +1,6 @@
 /* 后台 Service Worker：引擎路由、题目队列、答案缓存、与作业页消息中转、热重载、自动更新检查 */
 import { answerWithAPI, testAPI, sanitizeKey, detectEndpoint, requestWithAPI } from './engines/api-engine.js';
-import { answerWithBridge, requestWithBridge } from './engines/bridge-engine.js';
+import { answerWithBridge, requestWithBridge, openBridgeSplit } from './engines/bridge-engine.js';
 import { detectQuestions } from './engines/detection-engine.js';
 import { hashKey, compareVersions, isMajorUpdate } from './engines/engine.js';
 import { appendIssue, readIssuePage, clearIssueHistory } from './issue-history.js';
@@ -28,6 +28,7 @@ const detectingTabs = new Map();
 /*　MV3 的后台空闲 30 秒就被回收，整门课要刷几小时，队列只放内存必然丢，
     所以每次都顺手落一份到 storage.local；新页面来问时再读回来。 */
 const WQ_KEY = 'watchQueue';
+let quizRetryClaims = Promise.resolve();
 let fontIndex;
 let watchQueue = null; // { courses:[{key,scUrl,name}], index, tabId, rate, autoRate }
 let issueWrites = Promise.resolve();
@@ -505,7 +506,7 @@ async function startRun(questions, tabId, sourceUrl, auto = false) {
       sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'asking' } });
       try {
         const key = await cacheKeyOf(item.q);
-        let ans = await cached(key);
+        let ans = activeRun.auto && item.q._retry ? null : await cached(key);
         if (ans && /采用初答|先刷完|复核不一致|复核失败/.test(ans.note || '')) ans = null;
         if (activeRun.cancelled || run !== activeRun) return;
         const fromCache = !!ans;
@@ -676,6 +677,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (!run.auto) pauseRun(run.tabId, '填写失败，队列已暂停：' + it.error);
         }
         sendResponse({ ok: true });
+      } else if (type === 'HW_BRIDGE_SPLIT') {
+        const here = new URL(sender.url || sender.tab?.url || 'about:blank');
+        if (tabId == null || !/(^|\.)chaoxing\.com$/.test(here.hostname)) throw new Error('请在超星作业页面打开豆包分屏');
+        sendResponse({ ok: true, ...await openBridgeSplit(tabId) });
       } else if (type === 'HW_WATCH_COURSES') {
         const here = new URL(sender.url || sender.tab?.url || 'about:blank');
         if (tabId == null || !/(^|\.)chaoxing\.com$/.test(here.hostname)) throw new Error('只能读取当前超星页面的课程清单');
@@ -776,6 +781,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!course.attempted.some(start => start === payload.start)) course.attempted.push(payload.start);
         await saveQueue(q);
         sendResponse({ ok: true });
+      } else if (type === 'HW_WATCH_QUIZ_RETRY') {
+        const claim = quizRetryClaims.then(async () => {
+          const q = await loadQueue(), course = q?.courses[q.index];
+          if (!q || q.paused || q.tabId !== tabId || course?.key !== payload.key || !/^\d+$/.test(String(payload.chapterId)))
+            return { ok: false, error: '重做测验与当前刷课队列不一致' };
+          course.quizRetries ||= [];
+          const chapterId = String(payload.chapterId);
+          if (course.quizRetries.includes(chapterId)) return { ok: true, first: false };
+          course.quizRetries.push(chapterId);
+          await chrome.storage.local.set({ [WQ_KEY]: q });
+          return { ok: true, first: true };
+        });
+        quizRetryClaims = claim.catch(() => {});
+        sendResponse(await claim);
       } else if (type === 'HW_WATCH_RETRY_ONCE') {
         /* 每门课只补跑一次：跑完仍缺就如实记未达标，不在目录页和课程页之间来回拉锯。 */
         const q = await loadQueue();

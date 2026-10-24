@@ -6,8 +6,8 @@ import { randomUUID } from 'node:crypto';
 const source = fs.readFileSync(new URL('../background/service-worker.js', import.meta.url), 'utf8');
 const start = source.indexOf('async function fillAnswer(');
 const queue = source.slice(start < 0 ? source.indexOf('async function startRun(') : start, source.indexOf('async function rerunOne('));
-const ack = source.slice(source.indexOf("} else if (type === 'HW_FILLED') {") + "} else if (type === 'HW_FILLED') {".length,
-  source.indexOf("} else if (type === 'HW_WATCH_COURSES') {"));
+const ackStart = source.indexOf("} else if (type === 'HW_FILLED') {") + "} else if (type === 'HW_FILLED') {".length;
+const ack = source.slice(ackStart, source.indexOf('} else if (type ===', ackStart));
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function fixture() {
@@ -27,6 +27,14 @@ function fixture() {
     done: () => messages.filter(m => m.type === 'HW_DONE'),
     ack: (message, ok = true, tabId = 7) => context.acknowledge({ index: message.payload.index, fillToken: message.payload.fillToken, ok }, tabId),
   };
+}
+for (const auto of [true, false]) {
+  const f = fixture();let asks = 0;
+  f.context.askEngine = async () => { asks++;return { answer: 'A' }; };
+  await f.context.startRun([{ type: 'choice', _retry: true }], 7, 'https://mooc1.chaoxing.com/test', auto);
+  await wait(30);assert.equal(asks, auto ? 1 : 0);assert.equal(f.answer()[0].payload.answer, auto ? 'A' : 'B');
+  await f.ack(f.answer()[0]);await wait(400);
+  console.log('PASS 平台要求重做时重新取答案，人工模式不受重做标记影响：auto=' + auto);
 }
 for (const decision of ['ask', 'rewrite']) {
   const f = fixture();

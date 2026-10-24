@@ -9,6 +9,8 @@ const check = (name, cond, extra = '') => {
   if (!cond) bad++;
 };
 
+const retryQuestion = { type: 'choice', stem: '选择正确答案', options: [{ key: 'A', text: '甲' }], _retry: true };
+check('平台要求的重做独立核对答案，仅限刷课策略', buildMessages(retryQuestion, { bestEffort: true })[1].content.includes('唯一一次重做') && !buildMessages(retryQuestion)[1].content.includes('唯一一次重做'));
 /* —— 写作题提示词（q.writing = true）—— */
 const wq = { type: 'subjective', writing: true, stem: '请以 My Unforgettable Trip 为题写一篇英语作文，用课文生词词组至少5个。' };
 const wm = buildMessages(wq);

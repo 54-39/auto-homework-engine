@@ -495,10 +495,13 @@
        必须跨全部同源文档找，只看第一层 iframe 会拿到 null（2026-10-22 实测）。 */
     let topicDoc = null;
     try { topicDoc = card.querySelector('iframe')?.contentDocument; } catch { /* 跨域时停止 */ }
-    const main = (topicDoc ? docs(topicDoc) : []).map(d => d.getElementById?.('topicMainDiv')).find(Boolean);
+    const main = await until(() => {
+      try { topicDoc = card.querySelector('iframe')?.contentDocument; } catch { return null; }
+      return (topicDoc ? docs(topicDoc) : []).map(d => d.getElementById?.('topicMainDiv')).find(el => el?.getAttribute('data')) || null;
+    }, 8000);
     const topicUrl = main?.getAttribute('data') || '';
     let u;
-    try { u = new URL(topicUrl); } catch { note('讨论卡没有话题地址，留给人工核对'); return false; }
+    try { u = new URL(topicUrl); } catch { await recordWatchSkip(new Error('讨论卡内层话题未加载，未发帖'), { task: '讨论卡' }, true); return false; }
     if (!/(^|\.)chaoxing\.com$/.test(u.hostname)) { note('讨论话题地址不在超星域，留给人工核对'); return false; }
     const inner = topicDoc?.getElementById('frame_content');
     if (inner) {
@@ -1360,6 +1363,7 @@
     await wait(ms);
     if (!on || my !== gen) throw STOP;
     checkVerification();
+    dismissQuizRetryNotice();
   }
 
   async function watchVideo() {
@@ -1499,6 +1503,7 @@
      **文字写的是「提交」**（不是「确定」——UI 自动化把它的无障碍名读成「确定」，
      按文字找永远找不到，真实页面 2026-10-20 就是这样白等了 20 次）。 */
   function findConfirm() {
+    if (docs().some(doc => { const dialog = doc.querySelector('#workpop'); return visible(dialog) && QUIZ_RETRY_NOTICE.test(dialog.textContent || ''); })) return null;
     for (const d of docs()) {
       let el = null;
       try { el = d.querySelector('#popok'); } catch { /* 换下一层文档 */ }
@@ -1512,9 +1517,9 @@
     return findButton(/^(确定|确认)$/);
   }
 
-  function findButton(re) {
+  function findButton(re, roots = docs()) {
     for (const sel of [CLICKABLE, 'span,div']) {
-      for (const d of docs()) {
+      for (const d of roots) {
         let list;
         try { list = d.querySelectorAll(sel); } catch { continue; }
         for (const el of list) {
@@ -1540,12 +1545,16 @@
      「任务点已完成 / 已完成 / 查看已批阅作业」），不能把这种情况当失败
      （真实页面 2026-10-20 实测：2.2 节手动交过之后，全页 10 个文档里一个「提交」都没有）。 */
   function quizDone() {
-    const t = docs().map((d) => d.body?.innerText || '').join(' ');
+    const quiz = quizDocument();
+    if (quiz && findButton(/^提交$/, [quiz])) return false;
+    if (quiz && (/selectWorkQuestionYiPiYue/.test(quiz.URL || '') || /查看已批阅作业/.test(quiz.title || '') || quiz.querySelector('.Finalresult'))) return true;
+    const roots = quiz ? [quiz] : docs();
+    const t = roots.map((d) => d.body?.innerText || '').join(' ');
     if (/任务点已完成|查看已批阅|已交卷/.test(t)) return true;
     if (/已完成.{0,6}章节测验/.test(t)) return true;
     /* 交过卷的页面根本没有「提交」按钮，只剩「第1次作答本次成绩…」这类回执。
        所以「页面上没有『提交』又没有『待完成』」就当已经交过，别把已完成的节当成失败。 */
-    if (!/待完成|任务点未完成|未交卷/.test(t) && !findButton(/^提交$/)) return true;
+    if (!/待完成|任务点未完成|未交卷/.test(t) && !findButton(/^提交$/, roots)) return true;
     return false;
   }
 
@@ -1561,6 +1570,20 @@
         answer: text.split('我的答案：')[1]?.slice(0, 1200) || '' };
     }
     return null;
+  }
+
+  const quizRetrySignals = new Set();
+  const QUIZ_RETRY_NOTICE = /未达(?:到)?及格线[，,、\s]*(?:请)?重做/;
+  function dismissQuizRetryNotice() {
+    for (const doc of docs()) {
+      const dialog = doc.querySelector('#workpop');
+      if (!visible(dialog) || !QUIZ_RETRY_NOTICE.test(dialog.textContent || '')) continue;
+      const chapter = quizDocument() ? activeChapterId() : lastQuizGrade?.chapter || activeChapterId();
+      quizRetrySignals.add(chapter);
+      const close = [...dialog.querySelectorAll('#popno,#popCloseFocus,.popClose')].find(visible);
+      if (close) { close.click(); return true; }
+    }
+    return false;
   }
 
   async function submitQuiz() {
@@ -1582,13 +1605,19 @@
     // 站点会弹一层「确认提交？」对话框，按钮是「确定」（不是「提交」）
     for (let i = 0; i < 20 && on; i++) {
       await step(500);
+      if (quizDone() && quizGrade()) {
+        const grade = quizGrade();
+        lastQuizGrade = { chapter: activeChapterId(), score: grade.score, total: grade.total };
+        HW.Panel?.reportGrade?.();
+        live(`测验已交卷：${grade.score}/${grade.total}，任务点以平台回执为准`);
+        return true;
+      }
       const yes = findConfirm();
       if (yes) {
         await step(jitter(1200)); // 确认框也停一下再点，别零延迟
         try { yes.click(); } catch { /* 对话框可能刚被换掉 */ }
         await step(1500);
-        const okText = docs().map((d) => d.body?.innerText || '').join(' ');
-        if (/任务点已完成|已完成/.test(okText)) live('测验页：已提交，任务点已完成');
+        if (unfinishedOf(activeChapterId()) === 0) live('测验页：已提交，任务点已完成');
         else live('测验页：已点提交，结果请在页面上核对');
         let grade = quizGrade();
         for (let check = 0; check < 10 && on && !grade; check++) { await step(250); grade = quizGrade(); }
@@ -1626,34 +1655,72 @@
     return false;
   }
 
-  async function runQuiz() {
+  async function runQuiz(retry = false) {
+    if (!on) return false;
+    const my = gen, chapter = activeChapterId();
+    dismissQuizRetryNotice();
     if (quizDone()) {
       const grade = quizGrade();
       if (grade) lastQuizGrade = { chapter: activeChapterId(), score: grade.score, total: grade.total };
-      live('测验页：任务已完成，跳过答题');
-      return true;
+      live('测验页：已经交卷，保留平台任务点状态');
+    } else {
+      const P = HW.Panel;
+      if (!P || typeof P.runHomework !== 'function') {
+        note('测验页：面板没有暴露自动答题，跳过');
+        return;
+      }
+      live('测验页：AI 答题中…');
+      try {
+        const r = await P.runHomework({ timeout: QUIZ_TIMEOUT, retry });
+        live('测验页：' + (r || '已填写'));
+      } catch (e) {
+        /* 这一份测验读不出来（字形无法唯一还原、图片题、结构不认识…）：
+           不提交、也不算完成，但**不要停整轮**——停下来就永远刷不完剩下的课，
+           而限定的这几节本来就有「补刷一轮、仍不行就记下继续」的兜底。
+           真正需要人来的只有验证码，那条在 checkVerification 里会暂停。（2026-10-21） */
+        if (e === STOP || e.code === 'HW_VERIFICATION_REQUIRED') throw e;
+        await recordWatchSkip(e, { task: '章节测验', submitted: false });
+        return false;
+      }
+      if (!on || my !== gen || activeChapterId() !== chapter) return false;
+      await step(600);
+      if (activeChapterId() !== chapter) return false;
+      await submitQuiz();
     }
-    const P = HW.Panel;
-    if (!P || typeof P.runHomework !== 'function') {
-      note('测验页：面板没有暴露自动答题，跳过');
-      return;
-    }
-    live('测验页：AI 答题中…');
-    try {
-      const r = await P.runHomework({ timeout: QUIZ_TIMEOUT });
-      live('测验页：' + (r || '已填写'));
-    } catch (e) {
-      /* 这一份测验读不出来（字形无法唯一还原、图片题、结构不认识…）：
-         不提交、也不算完成，但**不要停整轮**——停下来就永远刷不完剩下的课，
-         而限定的这几节本来就有「补刷一轮、仍不行就记下继续」的兜底。
-         真正需要人来的只有验证码，那条在 checkVerification 里会暂停。（2026-10-21） */
-      if (e === STOP || e.code === 'HW_VERIFICATION_REQUIRED') throw e;
-      await recordWatchSkip(e, { task: '章节测验', submitted: false });
+    if (!on || my !== gen || activeChapterId() !== chapter) return false;
+    const quiz = quizDocument();
+    if (!quizRetrySignals.has(chapter) && !QUIZ_RETRY_NOTICE.test(quiz?.body?.innerText || '')) return true;
+    const failed = async message => {
+      await recordWatchSkip(new Error(message), { task: '章节测验重做', score: quizGrade() });
+      if (on && my === gen) dismissQuizRetryNotice();
       return false;
-    }
-    if (!on) return;
-    await step(600);
-    await submitQuiz();
+    };
+    if (retry) return failed('平台仍提示未达及格线，本轮已重做一次，保留未完成并继续后续章节');
+    const redo = [...(quiz?.querySelectorAll('a.jb_btn_bg,button') || [])].find(el => visible(el) && !el.disabled
+      && /^重做/.test(el.textContent.trim()) && !/剩余\s*0\s*次/.test(el.textContent));
+    if (!redo) return failed('平台要求重做，但没有可用的原生重做入口，保留未完成');
+    const claim = await chrome.runtime.sendMessage({ type: 'HW_WATCH_QUIZ_RETRY', payload: { key: currentCourse()?.key, chapterId: chapter } });
+    if (!on || my !== gen || activeChapterId() !== chapter) return false;
+    if (!claim?.ok || !claim.first) return failed(claim?.ok ? '本轮已经重做过这份测验，保留未完成并继续' : '无法登记本轮重做次数，未重复交卷：' + (claim?.error || '后台无回执'));
+    quizRetrySignals.delete(chapter);
+    live('平台要求重做：正在打开本轮唯一一次重做');
+    redo.click();
+    let confirmed = false;
+    const ready = await until(() => {
+      const next = quizDocument();
+      if (activeChapterId() !== chapter) return null;
+      if (next && !quizDone() && findButton(/^提交$/, [next])) return true;
+      if (!confirmed) for (const doc of docs()) {
+        const dialog = doc.querySelector('#workpop');
+        if (!visible(dialog) || !/重做|重新作答/.test(dialog.textContent || '')) continue;
+        const yes = dialog.querySelector('#popok');
+        if (visible(yes)) { confirmed = true; yes.click(); break; }
+      }
+      return null;
+    }, 15000);
+    if (!on || my !== gen || activeChapterId() !== chapter) return false;
+    if (!ready) return failed('原生重做入口未打开新的答题页，保留未完成并继续');
+    return runQuiz(true);
   }
 
   /* ---------------- 本章讨论：替用户发一条相关的短帖（用户 2026-10-20 批准） ----------------
@@ -1793,7 +1860,7 @@
         for (const h of d.querySelectorAll('.ans-attach-ct')) {
           const src = h.querySelector('iframe')?.src || '';
           if (src.includes('/ananas/modules/insertbbs/') && !h.classList.contains('ans-job-finished') && bbsTried.has(bbsKeyOf(h))) {
-            out.push('讨论卡已回帖、站点未计入完成');
+            out.push('讨论卡本轮已尝试处理，但未确认平台任务点完成');
             return out;
           }
         }
@@ -1885,6 +1952,7 @@
   async function courseLoop() {
     const my = gen;
     checkVerification();
+    dismissQuizRetryNotice();
     const catalog = nodes();
     let list = scopeChapters ? catalog.filter(n => scopeChapters.has(n.id)) : catalog;
     if (scopeChapters && list.length !== scopeChapters.size) {
@@ -2127,7 +2195,7 @@
            导出记录即可看到「为什么没完成」的完整链条。 */
         const g = lastQuizGrade && lastQuizGrade.chapter === cur.id ? lastQuizGrade : null;
         const quizNote = !g ? '' : g.score >= g.total ? '本节测验已满分，剩余任务点与测验无关'
-          : `本节测验 ${g.score}/${g.total} 分，站点不认低分卷为完成`;
+          : `本节测验 ${g.score}/${g.total} 分` + (quizRetrySignals.has(cur.id) ? '，平台提示未达及格线' : '，剩余任务点原因尚待核对');
         const trail = chapterSkipTrail.length ? '；过程：' + chapterSkipTrail.join('；') : '';
         await recordWatchSkip(new Error((`仍有 ${leftNow} 个任务点未完成` + (quizNote ? '；' + quizNote : '') + trail).slice(0, 300)),
           { chapter: cur.name, remainingJobs: leftNow, process: chapterSkipTrail.slice(), jobs: unfinishedJobSummary() });
@@ -2254,6 +2322,7 @@
     onStop = (opts && opts.onStop) || (() => {});
     failedChapters.clear();
     bbsTried.clear(); // 新一轮重新认领讨论卡
+    quizRetrySignals.clear();
     on = true;
     gen++;
     live('准备中…');
