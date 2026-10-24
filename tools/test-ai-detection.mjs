@@ -168,7 +168,7 @@ try {
     chrome.tabs.query=async spec=>{assert.deepEqual(spec.url,script.matches);return [{id:10,url:'https://mooc1.chaoxing.com/work',status:'complete'},{id:11,url:'https://mooc1.chaoxing.com/work',status:'complete'}];};
     chrome.scripting={executeScript:async spec=>{
       if(spec.func)return [{result:spec.target.tabId===11}];
-      assert.deepEqual(spec.files,script.js);injected.push(spec.target.tabId);return [];
+      assert.deepEqual(spec.files,script.js);assert.equal(spec.target.allFrames,true);injected.push(spec.target.tabId);return [];
     }};
     try { await installed();await startup();assert.deepEqual(injected,[10,10]); }
     finally {chrome.runtime.getManifest=originalManifest;chrome.tabs.query=originalQuery;chrome.scripting=originalScripting;}
@@ -199,6 +199,20 @@ try {
       assert.equal(manifest.content_scripts[0].all_frames, true);
       assert.match(await readFile(new URL('../content/homework/content.js', import.meta.url), 'utf8'), /window.top !== window.self/);
     } finally { chrome.scripting = original; }
+  });
+  await test('手动刷新空清单会补加载内层读取脚本再读取，正常清单不重复注入', async () => {
+    const original = chrome.scripting;let loaded=false;const calls=[];
+    chrome.scripting={executeScript:async spec=>{
+      assert.equal(spec.target.tabId,31);assert.equal(spec.target.allFrames,true);
+      if(spec.files){calls.push('inject');assert.deepEqual(spec.files,['content/course/watch.js']);loaded=true;return[];}
+      calls.push('read');return[{frameId:1,result:loaded?[{key:'1|2',name:'课程一'}]:[]}];
+    }};
+    try{
+      assert.equal((await call('HW_WATCH_COURSES',{},'https://i.chaoxing.com/base?ws=1&t=1792814483878')).courses.length,0);
+      assert.equal((await call('HW_WATCH_COURSES',{refresh:true},'https://i.chaoxing.com/base?ws=1&t=1792814489999')).courses.length,1);
+      assert.deepEqual(calls,['read','read','inject','read']);
+      await call('HW_WATCH_COURSES',{refresh:true},'https://i.chaoxing.com/base');assert.equal(calls.filter(x=>x==='inject').length,1);
+    }finally{chrome.scripting=original;}
   });
   await test('异常独立保存，超过旧上限后保留全部历史，并完整导出', async () => {
     assert.deepEqual((await call('HW_ISSUE_LIST')).issues, []);

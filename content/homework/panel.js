@@ -790,15 +790,17 @@
       return local.length ? local : embeddedCourses;
     }
     function refreshEmbeddedCourses(force = false) {
-      if (courseFrameLoading) return courseFrameLoading;
+      if (courseFrameLoading) return force
+        ? courseFrameLoading.then(() => availableCourses().length ? undefined : refreshEmbeddedCourses(true))
+        : courseFrameLoading;
       if (!hasCourseFrame() && !force) {
         embeddedCourses = [];
         if (availableCourses().map(c => c.key).join('|') !== courseItems.map(c => c.key).join('|')) renderCourses();
         return;
       }
-      courseFrameLoading = (async () => {
+      courseFrameLoading = Promise.resolve().then(async () => {
         try {
-          const result = await send('HW_WATCH_COURSES');
+          const result = await send('HW_WATCH_COURSES', { refresh: force });
           if (!result?.ok) throw new Error(result?.error || '未读到内嵌课程清单');
           courseFrameFailed = false;
           embeddedCourses = result.courses || [];
@@ -810,7 +812,7 @@
           courseFrameFailed = true;
           setWatchLine('课程清单读取失败，可点「刷新课程」重试', true);
         } finally { courseFrameLoading = null; }
-      })();
+      });
       return courseFrameLoading;
     }
     els.courserefresh.addEventListener('click', async () => {

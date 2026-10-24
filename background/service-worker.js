@@ -685,7 +685,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const here = new URL(sender.url || sender.tab?.url || 'about:blank');
         if (tabId == null || !/(^|\.)chaoxing\.com$/.test(here.hostname)) throw new Error('只能读取当前超星页面的课程清单');
         // 个人中心把课程列表放在跨域 iframe 中；在各自隔离上下文读取 DOM，不请求站点接口。
-        const frames = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => globalThis.HW?.Watch?.courseLinks?.() || [] });
+        const readFrames = () => chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => globalThis.HW?.Watch?.courseLinks?.() || [] });
+        let frames = await readFrames();
+        if (payload.refresh && !frames.some(frame => frame.result?.length)) {
+          // 扩展更新前已打开的内层页面可能没有读取器；仅查旧对象永远为空，需像 F5 一样补加载。
+          await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['content/course/watch.js'] });
+          frames = await readFrames();
+        }
         const courses = new Map();
         for (const frame of frames) for (const course of frame.result || []) {
           const old = courses.get(course.key);
@@ -950,7 +956,7 @@ async function injectOpenHomeworkTabs(loadedTab) {
           if (!(await chrome.permissions.contains({ origins: [new URL(tab.url).origin + '/*'] }))) throw new Error(WATCH_HOST_ACCESS_ERROR);
           const [{ result: ready } = {}] = await chrome.scripting.executeScript({ target: { tabId: tab.id },
             func: () => !!globalThis.HW?.Panel && !!document.getElementById('hw-panel-host') });
-          if (!ready) await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: script.js });
+          if (!ready) await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: script.js });
         } catch (e) {
           const raw = String(e.message || e);
           const message = /Cannot access|permission to access/i.test(raw)

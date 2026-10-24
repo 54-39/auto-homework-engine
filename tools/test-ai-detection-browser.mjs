@@ -44,6 +44,7 @@ function fixtureBoot() {
         if (msg.type === 'CHECK_UPDATE') return { ok: false };
         if (msg.type === 'HW_BRIDGE_SPLIT') return window.bridgeSplitResult || { ok: true };
         if (msg.type === 'HW_WATCH_COURSES') {
+          window.lastCourseRefresh = msg.payload?.refresh === true;
           if (window.testCourseError) return { ok: false, error: '模拟课程读取失败' };
           if (window.holdCourseRead) return new Promise(resolve => { window.releaseCourseRead = () => { window.holdCourseRead = false; resolve({ ok: true, courses: window.frameCourseResults }); }; });
           return { ok: true, courses: window.frameCourseResults };
@@ -854,6 +855,17 @@ async function browserChecks() {
     ok(ui.querySelector('.crow[data-i="0"] input').checked, '刷新丢掉已有勾选');
     ok(ui.querySelector('.watchline').textContent === '已读取 3 门课程');
   });
+  await check('自动读取尚未结束且返回空清单时，手动刷新仍补发强制读取', async () => {
+    const button=ui.querySelector('.courserefresh'),saved=window.frameCourseResults;
+    window.frameCourseResults=[];window.holdCourseRead=true;
+    document.getElementById('courseListFrame').dispatchEvent(new Event('load'));
+    await until(()=>window.holdCourseRead && !!window.releaseCourseRead);
+    const before=testCalls.filter(type=>type==='HW_WATCH_COURSES').length;
+    button.click();window.releaseCourseRead();window.frameCourseResults=saved;
+    await until(()=>!button.disabled);
+    ok(testCalls.filter(type=>type==='HW_WATCH_COURSES').length===before+1,'手动刷新丢失在已有空请求中');
+    ok(window.lastCourseRefresh && ui.querySelectorAll('.crow[data-i]').length===3);
+  });
   await check('刷新课程有失败提示，空结果仍可重试，再次读取能恢复', async () => {
     const button = ui.querySelector('.courserefresh');
     window.testCourseError = true;
@@ -868,6 +880,18 @@ async function browserChecks() {
     window.frameCourseResults = courses;
     button.focus(); button.click(); await until(() => !button.disabled);
     ok(ui.querySelectorAll('.crow[data-i]').length === 3 && ui.activeElement === button, '刷新后键盘焦点丢失');
+    await setPanelMode('homework');
+  });
+  await check('刷新通信同步失败后按钮解锁，再次点击仍能恢复，不陷入空结果循环', async () => {
+    await setPanelMode('watch');
+    const button=ui.querySelector('.courserefresh'),saved=window.frameCourseResults,original=chrome.runtime.sendMessage;
+    window.frameCourseResults=[];button.click();await until(()=>!button.disabled);
+    chrome.runtime.sendMessage=msg=>{if(msg.type==='HW_WATCH_COURSES')throw Error('模拟扩展上下文失效');return original(msg);};
+    try{
+      button.click();await until(()=>!button.disabled);button.click();await until(()=>!button.disabled);
+      ok(ui.querySelector('.watchline').textContent.includes('读取失败'));
+    }finally{chrome.runtime.sendMessage=original;window.frameCourseResults=saved;}
+    button.click();await until(()=>!button.disabled);ok(ui.querySelectorAll('.crow[data-i]').length===3);
     await setPanelMode('homework');
   });
   await check('开始刷课后标题下持续显示剩余时间，与任务状态行分别展示', async () => {
