@@ -47,14 +47,12 @@
     el.focus();
     document.execCommand('selectAll', false, null);
     document.execCommand('insertText', false, text);
-    await sleep(400);
-    if (squash(el.textContent).includes(squash(text))) return true;
+    if (await waitUntil(() => squash(el.textContent).includes(squash(text)), 400)) return true;
     // 重试一次（个别情况下首次 insertText 被吞）
     el.focus();
     document.execCommand('selectAll', false, null);
     document.execCommand('insertText', false, text);
-    await sleep(400);
-    if (squash(el.textContent).includes(squash(text))) return true;
+    if (await waitUntil(() => squash(el.textContent).includes(squash(text)), 400)) return true;
     throw new Error('问题未能写入豆包输入框');
   }
 
@@ -66,10 +64,13 @@
   }
 
   async function newChat() {
+    const empty = () => findEditor() && !squash(findEditor().textContent) &&
+      !document.querySelector('[data-testid="send_message"],[data-testid="receive_message"]');
+    if (empty()) return;
     const btn = document.querySelector('[data-testid="create_conversation_button"]');
     if (btn) {
       btn.click();
-      await sleep(1500);
+      if (!(await waitUntil(empty, 5000))) throw new Error('豆包新对话未就绪，请检查登录或验证状态');
     }
   }
 
@@ -87,8 +88,19 @@
       };
       const mo = new MutationObserver(finish);
       const timer = setTimeout(finish, timeoutMs);
-      mo.observe(document.body, { subtree: true, childList: true, characterData: true });
+      mo.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true,
+        attributeFilter: ['disabled', 'contenteditable', 'aria-disabled'] });
     });
+  }
+
+  async function waitUntil(predicate, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (!predicate()) {
+      const left = deadline - Date.now();
+      if (left <= 0) return false;
+      await waitForChange(Math.min(left, 250));
+    }
+    return true;
   }
 
   /* 完整问一次：新对话 → 填入 → 发送 → 等回答文本稳定 2 秒 → 返回。
@@ -98,7 +110,6 @@
     if (useNewChat) await newChat();
     const editor = findEditor();
     if (!editor) throw new Error('豆包输入框未就绪');
-    await sleep(800); // 等新对话页面稳定，避免基线取到旧 DOM
 
     const seenRecv = new Set([...document.querySelectorAll('[data-testid="receive_message"]')]);
     const seenSent = new Set([...document.querySelectorAll('[data-testid="send_message"]')]);
@@ -111,30 +122,23 @@
       );
 
     await setInput(prompt);
-    await sleep(200);
+    if (!(await waitUntil(() => {
+      const btn = document.querySelector('button[data-testid="chat_input_send_button"]');
+      return btn && !btn.disabled;
+    }, 3000))) throw new Error('豆包发送按钮不可用，请检查登录或验证状态');
     clickSend();
 
-    // 确认消息已发出：出现"新的"用户气泡（最多等 30 秒）；12 秒仍无气泡且页面也没有
-    // 我们这条内容的任何气泡时，自动重发一次（输入/点击偶发被吞的自愈）
+    // 只发送一次，最多等 30 秒确认气泡；未发出时暂停交给用户处理，避免重复提问。
     const sentDeadline = Date.now() + 30000;
-    let retried = false;
     let sent = false;
     while (Date.now() < sentDeadline) {
       if (hasFreshSent() || hasBubbleWithPrompt()) {
         sent = true;
         break;
       }
-      if (!retried && Date.now() > sentDeadline - 18000) {
-        retried = true;
-        if (!hasBubbleWithPrompt()) {
-          await setInput(prompt);
-          await sleep(300);
-          clickSend();
-        }
-      }
       await waitForChange(1000);
     }
-    if (!sent) throw new Error('消息似乎未发出（可能遇到风控验证，请在豆包标签页手动确认一次）');
+    if (!sent) throw new Error('消息似乎未发出，已暂停；点击通知打开豆包检查登录或验证');
 
     // 等回答：只认发送后"新出现"的 receive_message（元素身份），文本稳定 2 秒视为生成完成
     const t0 = Date.now();

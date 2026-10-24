@@ -385,6 +385,9 @@ try {
     return r.result.value;
   };
   for (let i = 0; i < 100 && !(await evaluate('document.readyState === "complete" && !!window.runLoopChecks && !!window.HW')); i++) await pause(50);
+  await call('Emulation.setFocusEmulationEnabled', { enabled: true });
+  await call('Page.bringToFront');
+  assert.equal(await evaluate('document.hidden'), false, '整课回归必须在可见页面运行');
   console.log('precheck:', JSON.stringify(await evaluate(`(function(){
     const li = document.querySelector('#dct2');
     li.click();

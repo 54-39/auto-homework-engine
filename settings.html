@@ -20,7 +20,8 @@
   html{scrollbar-color:#cbd2da transparent}
   body{margin:0;background:var(--bg);color:var(--text);font:13px/1.65 system-ui,'Microsoft YaHei',sans-serif;caret-color:var(--accent);-webkit-font-smoothing:antialiased}
   ::selection{background:#dbe6ff;color:#101828}
-  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  :focus-visible{outline:2px solid #64748b;outline-offset:2px}
+  input[type=checkbox]{accent-color:#4b5563}
 
   .skip{position:absolute;left:-9999px;top:8px;z-index:9;background:var(--surface);color:var(--text);padding:8px 12px;border:1px solid var(--line);border-radius:8px}
   .skip:focus{left:12px}
@@ -42,12 +43,6 @@
   .settings-select{min-width:0}
   .field .settings-select{max-width:300px}
   .ddtrig:disabled{background:var(--ghost);color:var(--muted);cursor:not-allowed}
-  .app-form .key-field{position:relative;padding-top:14px}
-  .app-form .key-field input[type=password]{height:38px;padding:0 14px;border:2px solid #c8c8c8;border-radius:999px}
-  .app-form .key-field label{position:absolute;left:14px;top:33px;transform:translateY(-50%);color:var(--text-2);pointer-events:none;transition:top .18s ease,transform .18s ease,color .18s ease}
-  .app-form .key-field input:focus~label,.app-form .key-field input:not(:placeholder-shown)~label{top:14px;transform:translateY(-100%) scale(.9);transform-origin:left bottom}
-  .app-form .key-field input:focus~label{color:var(--accent)}
-  .app-form .key-field input[type=password]:focus{border-color:var(--accent);outline:none;box-shadow:none}
   h2{margin:0 0 16px;font-size:18px;font-weight:650;letter-spacing:-.015em;line-height:1.35;text-wrap:balance}
   .card{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:20px 22px}
   .hint{margin:0 0 10px;color:var(--text-2);text-wrap:pretty}
@@ -68,7 +63,7 @@
 
   .count{margin:0 0 14px;color:var(--text);font-variant-numeric:tabular-nums}
   .check{display:flex;align-items:flex-start;gap:8px;margin:0 0 4px;cursor:pointer;color:var(--text-2)}
-  .check input{margin:3px 0 0;accent-color:var(--accent);cursor:pointer}
+  .check input{margin:3px 0 0;cursor:pointer}
 
   .kv{margin:0 0 18px;padding:0}
   .kv>div{display:flex;gap:14px;padding:4px 0}
@@ -80,7 +75,7 @@
   .field label{flex:none;width:132px;color:var(--text-2)}
   .field select{font:inherit;color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:7px 10px;min-width:180px;cursor:pointer;touch-action:manipulation}
   .field select:hover{border-color:#c9d0da}
-  .field select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .field select:focus-visible{border-color:#64748b;outline:none;box-shadow:none}
 
   .actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:14px}
   .confirm .actions{margin-top:0}
@@ -127,8 +122,17 @@
   .app-form .app-field>label{display:block;margin-bottom:5px;color:var(--text-2)}
   .app-form input:not([type=checkbox]),.app-form select{width:100%;min-height:36px;padding:7px 10px;border:1px solid #cbd2dc;border-radius:8px;background:var(--surface);color:var(--text);font:inherit}
   .app-form input:not([type=checkbox]):hover,.app-form select:hover{border-color:#9ba7b7}
-  .app-form input:not([type=checkbox]):focus,.app-form select:focus{border-color:var(--accent)}
+  .app-form input:not([type=checkbox]):focus,.app-form select:focus{border-color:#64748b;outline:none;box-shadow:none}
   .app-form input:disabled,.app-form select:disabled{background:var(--ghost);color:var(--muted);cursor:not-allowed}
+  .app-form .input-field{--input-top:14px;position:relative;padding-top:var(--input-top)}
+  .app-form .app-grid .input-field{--input-top:26px}
+  .app-form .input-field input{height:38px;padding:0 14px;border:2px solid #c8c8c8;border-radius:999px}
+  .app-form .input-field input::placeholder{color:var(--muted);opacity:0}
+  .app-form .input-field input:focus::placeholder{opacity:1}
+  .app-form .input-field label{position:absolute;left:14px;top:calc(var(--input-top) + 19px);transform:translateY(-50%);color:var(--text-2);pointer-events:none;transition:top .18s ease,transform .18s ease,color .18s ease}
+  .app-form .input-field input:focus~label,.app-form .input-field input:not(:placeholder-shown)~label{top:var(--input-top);transform:translateY(-100%) scale(.9);transform-origin:left bottom}
+  .app-form .input-field input:focus~label{color:#374151}
+  .app-form .input-field input:focus{border-color:#64748b;outline:none;box-shadow:none}
   .app-form .check{margin:10px 0}
   .app-form .app-note{margin:6px 0 0;color:var(--text-2);font-size:12px;overflow-wrap:anywhere}
   .app-form .app-risk{margin:14px 0 0;color:var(--text-2);font-size:12px}
@@ -205,7 +209,7 @@
             <fieldset id="apiFields">
               <legend>接口与 API Key</legend>
               <div class="app-field">
-                <div class="key-field">
+                <div class="input-field">
                   <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder=" " aria-describedby="keyStatus keyRisk">
                   <label for="apiKey">粘贴 API Key</label>
                 </div>
@@ -236,9 +240,9 @@
                     <label for="provider">接口类型</label>
                     <select id="provider"><option value="auto">自动识别（推荐）</option><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic Messages</option></select>
                   </div>
-                  <div class="app-field"><label for="model">模型名 / 接入点</label><input id="model" placeholder="deepseek-chat" spellcheck="false"></div>
+                  <div class="app-field"><div class="input-field"><input id="model" placeholder="deepseek-chat" spellcheck="false"><label for="model">模型名 / 接入点</label></div></div>
                 </div>
-                <div class="app-field"><label for="baseURL">接口地址 baseURL</label><input id="baseURL" type="url" placeholder="https://api.deepseek.com/v1" spellcheck="false"></div>
+                <div class="app-field"><div class="input-field"><input id="baseURL" type="url" placeholder="https://api.deepseek.com/v1" spellcheck="false"><label for="baseURL">接口地址 baseURL</label></div></div>
                 <p class="app-note" id="providerHint"></p>
                 <div class="actions"><button type="button" class="ghost" id="test">测试连接</button></div>
                 <div class="msg" id="testMsg" role="status" aria-live="polite"></div>
@@ -249,8 +253,8 @@
               <legend>豆包网页桥接</legend>
               <p class="hint">题目会发送到你的豆包会话并读取回复。如遇登录或验证，请在豆包页面手动处理；每题约 10～40 秒。</p>
               <div class="app-grid">
-                <div class="app-field"><label for="delayMin">每题间隔下限（毫秒）</label><input id="delayMin" type="number" min="1000" step="500" value="3000" required></div>
-                <div class="app-field"><label for="delayMax">每题间隔上限（毫秒）</label><input id="delayMax" type="number" min="1500" step="500" value="8000" required></div>
+                <div class="app-field"><div class="input-field"><input id="delayMin" type="number" min="1000" step="500" value="3000" placeholder=" " required><label for="delayMin">每题间隔下限（毫秒）</label></div></div>
+                <div class="app-field"><div class="input-field"><input id="delayMax" type="number" min="1500" step="500" value="8000" placeholder=" " required><label for="delayMax">每题间隔上限（毫秒）</label></div></div>
               </div>
               <label class="check"><input id="newChat" type="checkbox" checked>每题新开对话，避免上下文串扰</label>
             </fieldset>

@@ -189,28 +189,30 @@ async function callIface(cfg, messages, maxTokens) {
 }
 
 async function run(q, endpoint, maxTokens, opts = {}) {
-  const msgs = buildMessages(q);
+  const msgs = buildMessages(q, { bestEffort: opts.auto === true });
   const cfg = { ...endpoint, apiKey: sanitizeKey(endpoint.apiKey) };
   let content = await callIface(cfg, msgs, maxTokens);
   let answer;
   try { answer = parseAnswer(q, content); }
-  catch (e) { e.answerPreview = content; throw e; }
+  catch (e) { e.answerPreview = content; e.code = 'HW_ANSWER_UNAVAILABLE'; throw e; }
   let note = '';
-  /* 两次结论冲突或复核失败时不能任选一个继续填写；交给既有失败即停流程。
-     用户 2026-10-21 23:38 明确：先刷完，不强求正确率——所以这里改成保留初答继续填，
-     把差异如实写进 note，事后可以回头看错题；填空题仍按原逻辑严格校验。 */
+  /* 返回未确认原因与初答，刷课可采用初答或猜选兜底；人工解题保持失败即停。 */
   if (['multi', 'judge'].includes(q.type) && answer && opts.verify2 !== false) {
     let verification = '';
+    let received = false;
     try {
       const messages = q.type === 'multi' ? buildMultiVerify(q, answer) : buildJudgeVerify(q, answer);
       verification = await callIface(cfg, messages, 1024);
+      received = true;
       const checked = q.type === 'judge' ? parseJudgeVerify(verification) : parseAnswer(q, verification);
-      if (!checked) note = '复核未给出明确答案，采用初答';
-      else if (checked !== answer) note = `复核不一致（初答 ${answer} / 复核 ${checked}），采用初答继续`;
-      else note = (q.type === 'multi' ? '多选' : '判断题') + '已二次复核确认';
+      if (!checked) throw new Error('复核未给出明确答案');
+      if (checked !== answer) throw new Error(`复核不一致（初答 ${answer} / 复核 ${checked}）`);
+      note = (q.type === 'multi' ? '多选' : '判断题') + '已二次复核确认';
     } catch (error) {
-      /* 复核请求本身失败（网络/额度）也不该让整份测验作废，保留初答。 */
-      note = '复核失败，采用初答：' + String(error.message || error).slice(0, 60);
+      error.answerPreview = '初答：' + content + '\n复核：' + verification;
+      error.candidateAnswer = answer;
+      if (received) error.code = 'HW_ANSWER_UNAVAILABLE';
+      throw error;
     }
   }
   return { answer, raw: content, note: note || undefined };

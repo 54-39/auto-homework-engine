@@ -152,9 +152,11 @@ try {
     return {};
   };
   const realInterval = globalThis.setInterval;
+  const importTimeout = globalThis.setTimeout;
   globalThis.setInterval = () => 0;
+  globalThis.setTimeout = (fn, ms, ...args) => ms === 45000 ? 0 : importTimeout(fn, ms, ...args);
   globalThis.fetch = async () => ({ ok: true, json: async () => ({ t: 0 }) });
-  try { await import('../background/service-worker.js'); } finally { globalThis.setInterval = realInterval; }
+  try { await import('../background/service-worker.js'); } finally { globalThis.setInterval = realInterval; globalThis.setTimeout = importTimeout; }
   const call = (type, payload = {}, url = 'https://mooc1.chaoxing.com/work') => new Promise((resolve) =>
     handler({ type, payload }, { url, tab: { id: 31, url } }, resolve));
   const success = (content) => ({ ok: true, json: async () => ({ choices: [{ message: { content } }] }) });
@@ -163,7 +165,7 @@ try {
     const script={matches:['*://*.chaoxing.com/*'],js:['content/homework/panel.js','content/homework/content.js']};
     const injected=[];
     chrome.runtime.getManifest=()=>({version:'0.9.4',content_scripts:[script]});
-    chrome.tabs.query=async spec=>{assert.deepEqual(spec.url,script.matches);return [{id:10},{id:11}];};
+    chrome.tabs.query=async spec=>{assert.deepEqual(spec.url,script.matches);return [{id:10,url:'https://mooc1.chaoxing.com/work',status:'complete'},{id:11,url:'https://mooc1.chaoxing.com/work',status:'complete'}];};
     chrome.scripting={executeScript:async spec=>{
       if(spec.func)return [{result:spec.target.tabId===11}];
       assert.deepEqual(spec.files,script.js);injected.push(spec.target.tabId);return [];
@@ -290,6 +292,19 @@ try {
     assert.equal((await call('HW_DETECT_QUESTIONS', { batches: ['资料'] })).questions.length, 1);
     store.config = { engine: 'api', api: cfg };
   });
+  await test('豆包识题遇到验证同样发送处理通知，不要求用户一直盯网页', async () => {
+    const originalSend = chrome.tabs.sendMessage, originalNotify = chrome.notifications.create;
+    const notices = [];
+    store.config = { engine: 'bridge', bridge: {} };
+    chrome.notifications.create = (...args) => notices.push(args);
+    chrome.tabs.sendMessage = async (_, message) => message.type === 'BRIDGE_PING'
+      ? { ok: true, ready: true } : message.type === 'BRIDGE_ASK' ? { ok: false, error: '需要验证' } : {};
+    try {
+      const result = await call('HW_DETECT_QUESTIONS', { batches: ['题目资料'] });
+      assert.equal(result.ok, false);
+      assert.ok(notices.some(args => args[0] === 'hw-doubao-attention'));
+    } finally { chrome.tabs.sendMessage = originalSend; chrome.notifications.create = originalNotify; store.config = { engine: 'api', api: cfg }; }
+  });
   await test('后台重复检测被拒绝，取消后不继续下一批且释放检测状态', async () => {
     let release;
     let calls = 0;
@@ -316,13 +331,28 @@ try {
     await new Promise((r) => originalTimeout(r, 10));
     assert.equal(sentMessages.filter((m) => m.type === 'HW_ANSWER').length, count);
   });
-  await test('模型返回空答案时客观题按「先刷完」选第一项继续，不暂停整轮', async () => {
+  await test('刷课无法确定的题猜选兜底，等待回执后继续后续题', async () => {
     const before = sentMessages.length;
-    globalThis.fetch = async () => success('{"answers":[]}');
-    await call('HW_START', { questions: [{ type: 'choice', stem: '无法确定答案时的回归题', options: [{ key: 'A', text: '甲' }, { key: 'B', text: '乙' }] }] });
+    let calls = 0;
+    globalThis.fetch = async () => success(++calls === 1 ? '{"answers":[]}' : '{"answers":["乙"]}');
+    await call('HW_START', { auto: true, questions: ['无法确定答案时的回归题', '后续可解题'].map(stem => ({ type: 'choice', stem, options: [{ key: 'A', text: '甲' }, { key: 'B', text: '乙' }] })) });
+    for (let i = 0; i < 200 && !sentMessages.slice(before).some(m => m.type === 'HW_ANSWER'); i++) await new Promise(r => originalTimeout(r, 5));
+    const answer = sentMessages.slice(before).find(m => m.type === 'HW_ANSWER');
+    assert.ok(answer && !sentMessages.slice(before).some(m => m.type === 'HW_DONE'), '必须等页面填写回执');
+    assert.equal(answer.payload.index,0);
+    assert.ok(['A','B'].includes(answer.payload.answer));
+    assert.equal(answer.payload.fallback,true);
+    await call('HW_FILLED', { index: answer.payload.index, fillToken: answer.payload.fillToken, ok: true });
+    for (let i = 0; i < 200 && sentMessages.slice(before).filter(m => m.type === 'HW_ANSWER').length<2; i++) await new Promise(r => originalTimeout(r, 5));
+    const next=sentMessages.slice(before).filter(m=>m.type==='HW_ANSWER')[1];
+    assert.equal(next.payload.index,1);
+    assert.equal(next.payload.answer,'B');
+    await call('HW_FILLED',{index:next.payload.index,fillToken:next.payload.fillToken,ok:true});
     for (let i = 0; i < 200 && !sentMessages.slice(before).some(m => m.type === 'HW_DONE'); i++) await new Promise(r => originalTimeout(r, 5));
-    assert.ok(sentMessages.slice(before).some(m => m.type === 'HW_ANSWER' && m.payload.answer === 'A' && /先刷完/.test(m.payload.note || '')));
+    assert.equal(sentMessages.slice(before).filter(m => m.type === 'HW_ANSWER').length, 2);
     assert.ok(sentMessages.slice(before).some(m => m.type === 'HW_DONE' && !m.payload.paused));
+    const done = sentMessages.slice(before).find(m => m.type === 'HW_DONE');
+    assert.equal(done.payload.failed, 0); assert.equal(done.payload.filled, 2);
   });
   console.log(`\n${passed} groups passed (mock transports, no external requests).`);
 } finally {

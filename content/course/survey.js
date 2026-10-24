@@ -74,7 +74,7 @@
     if (item.querySelector('input[type="radio"]:checked,input[type="checkbox"]:checked')) return null;
     /* 自由填答不代写：问卷里出现填空/简答，说明老师想看真实想法，留给人工。 */
     if (item.querySelector('textarea:not(#text_title),input[type="text"]')) return { blocked: stem };
-    const options = [...item.querySelectorAll('.optionRadio')].filter(visible);
+    const options = [...item.querySelectorAll('.optionRadio,.optionCheckbox')].filter(visible);
     if (!options.length) return { blocked: stem };
     const value = pick(best(options));
     return value ? { stem, value } : { blocked: stem };
@@ -108,6 +108,7 @@
 
   async function run() {
     if (!isSurvey() || submitted()) return;
+    if (/手动结束|已结束/.test(document.querySelector('.tip')?.textContent || '')) return;
     if (!(await queueRunning())) return;
     let items = [];
     for (let i = 0; i < 60; i++) {

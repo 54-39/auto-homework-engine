@@ -10,7 +10,7 @@
     *{box-sizing:border-box;font:12px/1.5 system-ui,'Microsoft YaHei','PingFang SC',sans-serif}
     /* 浏览器自带表面跟随面板主题：选中态、键盘焦点环、滚动条（原生 Windows 样式与浅色卡片不搭） */
     ::selection{background:#DBE6FD;color:#111827}
-    :focus-visible:not(input){outline:2px solid #2563EB;outline-offset:2px}
+    :focus-visible:not(input){outline:2px solid #64748B;outline-offset:2px}
     .fab{box-sizing:content-box;padding:0;font-family:inherit;position:fixed;right:24px;bottom:24px;width:56px;height:56px;border-radius:50%;background:#2563EB;border:1px solid rgba(255,255,255,.35);color:#fff;
       display:flex;align-items:center;justify-content:center;font-size:24px;cursor:pointer;user-select:none;touch-action:none;
       box-shadow:0 6px 14px -2px rgba(15,23,42,.16);z-index:2147483646}
@@ -83,7 +83,7 @@
        白球保持纯白：实测背景是 #F6F8FE~#FFFFFF，球与背景仍有约 1.03~1.10 的亮度差，
        加上球投影和深灰三角，开态的球依然清晰可辨。 */
     .switch input:checked+.slider{background-color:transparent}
-    .switch input:focus-visible+.slider{outline:2px solid #2563EB;outline-offset:2px}
+    .switch input:focus-visible+.slider{outline:2px solid #64748B;outline-offset:2px}
     /* 文字深灰：轨道改浅灰/淡浅蓝之后，白字对比度只有 1.35/1.22，等于看不见（用户 2026-10-15 报过看不清） */
     .switch .slider .title{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-weight:600;color:#313033;white-space:nowrap;transition:all .4s;user-select:none}
     .switch .slider .ball{position:absolute;top:0;left:-1px;width:36px;height:36px;border-radius:50%;background-color:#fff;transition:.4s}
@@ -99,12 +99,12 @@
     .inputGroup{flex:1;min-width:0;position:relative}
     .inputGroup input{width:100%;height:36px;padding:0 14px;outline:none;caret-color:#2563EB;border:2px solid rgb(200,200,200);border-radius:999px;background:#fff;color:#111827;font-size:12px;transition:border-color .18s ease,box-shadow .18s ease}
     .inputGroup input::placeholder{color:transparent}
-    .inputGroup :is(input:focus,input:valid){border-color:rgb(150,150,200)}
-    .inputGroup input:focus{border-color:#2563EB;outline:none;box-shadow:none}
+    .inputGroup :is(input:focus,input:valid){border-color:#64748B}
+    .inputGroup input:focus{border-color:#64748B;outline:none;box-shadow:none}
     .inputGroup label{position:absolute;left:0;top:50%;transform:translateY(-50%);margin-left:14px;pointer-events:none;transition:top .18s ease,transform .18s ease,color .18s ease;color:#646464;font-size:12px;white-space:nowrap;background:transparent}
     /* 聚焦/已填时标签浮到输入框上方：底边正好贴上边缘，不压边框、不带任何背景（用户明确要求去掉原来的白底） */
     .inputGroup :is(input:focus,input:valid)~label{top:0;transform:translateY(-100%) scale(.9);transform-origin:0 100%;margin-left:12px;max-width:calc(100% - 24px);overflow:hidden;text-overflow:ellipsis}
-    .inputGroup input:focus~label{color:#2563EB}
+    .inputGroup input:focus~label{color:#374151}
     .lbtn{border:0;background:none;cursor:pointer;font-size:12px;padding:0 2px;flex:none}
     .lbtn.primary{color:#2563EB;font-weight:500}
     .lbtn.plain{color:#6B7280}
@@ -127,8 +127,8 @@
     .watchrate{display:flex;align-items:center;gap:8px;color:#374151}
     .watchrow .rateslot{flex:none;width:116px}
     .muteopt{display:flex;align-items:center;gap:6px;flex:none;min-height:32px;font-size:12px;color:#374151;white-space:nowrap;cursor:pointer}
-    .muteopt input{width:14px;height:14px;margin:0;accent-color:#2563EB;cursor:pointer}
-    .muteopt input:focus-visible{outline:2px solid #2563EB;outline-offset:2px}
+    .muteopt input{width:14px;height:14px;margin:0;accent-color:#4B5563;cursor:pointer}
+    .muteopt input:focus-visible{outline:2px solid #64748B;outline-offset:2px}
     /* 队列信息：多门课程排队时，正在刷哪门、还剩几门、这门还要多久一目了然（用户 2026-10-23 要求） */
     .watchqueue{flex:none;display:flex;flex-direction:column;gap:3px;padding:8px 10px;border:1px solid #DCE3ED;border-radius:8px;background:rgba(255,255,255,.72)}
     .wqrow{display:flex;gap:8px;align-items:baseline;line-height:1.5}
@@ -143,13 +143,14 @@
     .courselist{flex:none;height:clamp(120px,20vh,170px);overflow:auto;border:1px solid #CCD2D9;background:#fff;border-radius:8px;padding:6px;display:flex;flex-direction:column;gap:2px}
     .crow{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:4px;cursor:pointer;flex:none}
     .crow:hover{background:#F5F8FF}
-    .crow input{flex:none;margin:0;cursor:pointer;accent-color:#2563EB}
+    .crow input{flex:none;margin:0;cursor:pointer;accent-color:#4B5563}
+    .crow input:focus-visible{outline:2px solid #64748B;outline-offset:2px}
     .crow .cname{flex:1;min-width:0;font-size:11.5px;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .crow .cprog{flex:none;font-size:10.5px;color:#9AA1A9}
     .crow .ctime{flex:none;font-size:10.5px;color:#4B5563;white-space:nowrap;font-variant-numeric:tabular-nums}
     .ccompleted{flex:none;border-top:1px solid #E5E7EB;margin-top:4px;padding-top:4px}
     .ccompleted summary{padding:5px 6px;font-size:11.5px;color:#4B5563;cursor:pointer}
-    .ccompleted summary:focus-visible{outline:2px solid #2563EB;outline-offset:-2px;border-radius:4px}
+    .ccompleted summary:focus-visible{outline:2px solid #64748B;outline-offset:-2px;border-radius:4px}
     .crow.all .cname{font-weight:600;color:#111827}
     .summary{background:#F3F4F6;border-radius:6px;padding:4px 10px;min-height:28px;display:flex;align-items:center;gap:8px;font-size:11.5px;color:#4B5563;flex:none}
     .summary .smsg{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -162,7 +163,7 @@
     .pending-reason{flex-basis:100%;margin:0 0 0 24px;color:#6B7280;font-size:11px;line-height:1.6;overflow-wrap:anywhere}
     .item .retry-detect{width:auto;min-height:28px;padding:2px 4px;border:0;background:transparent;color:#2563EB;cursor:pointer;font:inherit;font-size:11px}
     .retry-detect:hover{background:#E8EFFD;border-radius:4px}
-    .retry-detect:focus-visible{outline:2px solid #2563EB;outline-offset:2px}
+    .retry-detect:focus-visible{outline:2px solid #64748B;outline-offset:2px}
     .item .no{color:#9AA1A9;font-size:11px;font-weight:500;width:16px;text-align:right;flex:none}
     .item .type{flex:none;font-size:10.5px;color:#fff;border-radius:4px;padding:2px 6px;font-weight:500;background:#2563EB}
     .item .type.t-choice{background:#059669}
@@ -647,6 +648,8 @@
        把自己判成「页面已变化」并把题目清空（真实页面 2026-10-20 就是这样卡住的）。
        无人值守期间（autoRun）跳过这套守卫，换节时由 watch.js 重新检测。 */
     let autoRun = false;
+    let autoDocument = null;
+    let answerPauseReason = '';
     const watchPage = (snapshot) => {
       stopWatching();
       for (const doc of snapshot.documents) {
@@ -1305,22 +1308,23 @@
     /* 默认只在本地读取；复用绑定校验，无法确认的区域留给手动 AI 检测。 */
     function readPageQuestions() {
       if (detecting || !els.stop.disabled) return false;
+      const sourceDocument = autoDocument || document;
       nativeDetection = true;
       stopWatching();
-      if (HW.FontDecoder && !HW.FontDecoder.ready(document)) {
+      if (HW.FontDecoder && !HW.FontDecoder.ready(sourceDocument)) {
         detectionSnapshot = null;
         HW.questions = []; rows = []; els.list.replaceChildren(); els.start.disabled = true;
         setSummary('正在还原页面字体…', false);
         if (!preparingFonts) {
           preparingFonts = true;
-          HW.FontDecoder.prepare(document).then(() => {
+          HW.FontDecoder.prepare(sourceDocument).then(() => {
             if (nativeDetection && !detecting && els.stop.disabled) readPageQuestions();
           }, e => setSummary('页面字体未能还原：' + errorText(e), true)).finally(() => { preparingFonts = false; });
         }
         return false;
       }
       try {
-        const snapshot = HW.AIDetection.collect();
+        const snapshot = HW.AIDetection.collect(sourceDocument);
         const items = [];
         for (const doc of snapshot.documents) {
           if (doc.body?.isContentEditable) continue; // 富文本编辑器正文不是另一份题目
@@ -1393,6 +1397,10 @@
     async function detectQuestions() {
       if (detecting || !els.stop.disabled) return false;
       if (HW.CXAdapter?.discussion(document)) return readPageQuestions();
+      const nativeQuestions = autoRun ? HW.questions || [] : [];
+      const nativeSnapshot = detectionSnapshot;
+      const nativePending = autoRun ? [...els.list.querySelectorAll('.item.pending')].map(row => ({
+        type: 'unknown', stem: row.querySelector('.stem')?.textContent || '', reason: row.querySelector('.pending-reason')?.textContent || '' })) : [];
       nativeDetection = false;
       const requestId = ++detectionRequest;
       stopWatching();
@@ -1418,23 +1426,37 @@
           syncConfig(cfg);
           throw new Error('请先在「设置 → 应用设置」配置 API Key，或切换豆包桥接后重新检测');
         }
-        await HW.FontDecoder?.prepare(document);
+        await HW.FontDecoder?.prepare(autoDocument || document);
         if (requestId !== detectionRequest) return;
-        detectionSnapshot = HW.AIDetection.collect();
+        detectionSnapshot = HW.AIDetection.collect(autoDocument || document);
         watchPage(detectionSnapshot);
         if (!autoRun) log('开始 AI 识题（' + engineName() + '，共 ' + detectionSnapshot.batches.length + ' 批）');
         const result = await send('HW_DETECT_QUESTIONS', { requestId, batches: detectionSnapshot.batches });
         if (requestId !== detectionRequest) return;
         if (!result?.ok) throw new Error(result?.error || 'AI 识题失败，请重新检测');
-        if (Array.isArray(result.questions) && !result.questions.length) {
+        if (Array.isArray(result.questions) && !result.questions.length && !nativeQuestions.length) {
           stopWatching();
           detectionSnapshot = null;
           renderDetected([], []);
           return true;
         }
-        const bound = HW.AIDetection.bind(detectionSnapshot, result.questions);
+        // 刷课只让 AI 补漏，保留已经可靠绑定的原生题目，避免空识别结果抹掉整卷。
+        const nativeItems = nativeQuestions.map(q => {
+          const elements = q.el.labels.length ? q.el.labels.map(label => label.input || label.clickEl)
+            : q.el.fields.length ? q.el.fields : q.el.iframe ? [q.el.iframe] : q.el.inputs;
+          const targets = elements.map(el => detectionSnapshot.ids.get(el));
+          const first = detectionSnapshot.refs.get(targets[0])?.el;
+          return { ...q.meta, containerId: detectionSnapshot.ids.get(HW.AIDetection.questionRoot(first)),
+            inputIds: q.el.labels.length ? [] : targets,
+            options: q.el.labels.map((label, index) => ({ key: label.key, targetId: targets[index] })) };
+        });
+        const nativeIds = new Set(nativeItems.flatMap(q => [...q.inputIds, ...q.options.map(o => o.targetId)]));
+        const nativeRoots = new Set(nativeItems.map(q => q.containerId));
+        const additions = (result.questions || []).filter(q => !nativeRoots.has(q.containerId) &&
+          ![...(q.inputIds || []), ...(q.options || []).map(o => o.targetId)].some(id => nativeIds.has(id)));
+        const bound = HW.AIDetection.bind(detectionSnapshot, [...nativeItems, ...additions]);
         renderDetected(bound.questions, bound.pending);
-        if (bound.pending.length) reportIssue('识题待确认', bound.pending.map(q => q.reason).join('；'), { question: bound.pending.map(q => q.stem).join('；') });
+        if (bound.pending.length && !autoRun) reportIssue('识题待确认', bound.pending.map(q => q.reason).join('；'), { question: bound.pending.map(q => q.stem).join('；') });
       } catch (e) {
         if (requestId !== detectionRequest) return;
         stopWatching();
@@ -1444,6 +1466,10 @@
         setSummary('未检测出题目：' + message, true);
         log('检测未完成：' + message);
         if (message !== CONTEXT_NOTICE) reportIssue('识题失败', message);
+        if (autoRun && nativeQuestions.length) {
+          detectionSnapshot = nativeSnapshot;
+          renderDetected(nativeQuestions, nativePending, '页面读取');
+        }
       } finally {
         if (requestId === detectionRequest) {
           detecting = false;
@@ -1593,7 +1619,8 @@
             '；只填写不提交）',
         );
         if (!requireCurrentPage()) return false;
-        const res = await send('HW_START', { questions });
+        answerPauseReason = '';
+        const res = await send('HW_START', { questions, auto });
         if (!res?.ok) {
           log('启动失败：' + (res?.error || '未知错误'));
           setBusy(false);
@@ -1620,44 +1647,45 @@
       log('已请求停止（后台正在获取的回答会被丢弃）…');
     });
 
-    /* 刷课在测验页先读取原生题目，再开始填写；漏检时暂停，等待手动 AI 检测。
+    /* 刷课先读取原生题目，漏检时调用一次 AI 补漏，再填写并继续原生提交。
        无人值守时简答策略按「保留跳过」处理。
        挂在 HW.Panel 上（每次 init 覆盖，面板只在顶层框架加载，实例唯一）。 */
     async function runHomework() {
       autoRun = true; // 无人值守：自己点选项导致的签名变化不算「页面已变化」
+      autoDocument = HW.Watch?.quizDocument?.() || document;
       try {
-        await HW.FontDecoder?.prepare(document);
+        await HW.FontDecoder?.prepare(autoDocument);
         const okDetect = readPageQuestions();
         if (!okDetect) throw new Error('没识别成功，不提交测验' + (lastDetectError ? '：' + lastDetectError : ''));
+        let aiDetected = false;
         if (!HW.questions?.length) {
-          /* 全部题目都被降级成待确认（字形无法还原/图片/AI 读不出）时，原来直接放弃整份测验。
-             用户 2026-10-22 明确「先刷完，不强求正确率」：先走一次 AI 识题，
-             仍读不出就留空提交——留空交卷不判错，整卷作废则这一节永远完不成。
-             不再按 tip 文案放行：AI 识题后 pending 的 reason 会变成各种措辞，按文案过滤必然漏。 */
+          /* 原生题目全部待确认时只补漏一次；仍无法定位的题随卷交给原生提交，
+             不因单题不可读而放弃整份测验，也不提前把提交记成成功。 */
           const pendings = [...els.list.querySelectorAll('.item.pending')];
           if (!pendings.length) throw new Error('这一页没有可处理的题目，不提交测验');
           log(`刷课：${pendings.length} 题读不出，先试 AI 识题，读不出就留空提交`);
           const done = await detectQuestions();
+          aiDetected = true;
           if (!done) throw new Error('AI 识题没成功，不提交测验');
           if (!HW.questions?.length) {
-            reportIssue('识题待确认', `${pendings.length} 题全部无法读取，已留空提交`);
-            return `题目无法读取（${pendings.length} 题），已留空提交`;
+            reportIssue('识题待确认', `${pendings.length} 题全部无法读取，将继续原生提交流程`);
+            return `题目无法读取（${pendings.length} 题），继续原生提交`;
           }
         }
-        if (els.list.querySelector('.item.pending')) {
+        if (!aiDetected && els.list.querySelector('.item.pending')) {
           /* 无人值守不能停下来等用户点按钮：原生没读全的题（公式图选选项、多空填空等）
              直接自动走一次 AI 识题 —— 这就是「检测题目」按钮本身的能力，只是原来只由点击触发。
              实测 2026-10-21：抓阄先抽后抽那节 5 题可处理 / 1 题待确认，不自动补就叫停了整轮。 */
           setWatchLine('有题目原生没读全，正在调用 AI 识题');
           const done = await detectQuestions();
           if (!done) throw new Error('AI 识题没成功，不提交测验');
-          if (!HW.questions?.length) throw new Error('AI 识题后仍然没有可处理的题目，不提交测验');
+          if (!HW.questions?.length) return 'AI 仍未识别到可填写题目，继续原生提交';
           const still = [...els.list.querySelectorAll('.item.pending')];
           /* 用户 2026-10-22 明确「先刷完，不强求正确率」：AI 也没读全的题一律留空提交，
              不再按类型放行（原来只有图片题放行，字形乱码题会把整轮卡死）。 */
           if (still.length) {
             log(`刷课：${still.length} 题读不出（AI 也没读全），留空提交`);
-            reportIssue('识题待确认', `${still.length} 题读不出（AI 也没读全），留空提交`,
+            reportIssue('识题待确认', `${still.length} 题读不出（AI 也没读全），将随卷提交`,
               { question: still.map((el) => (el.querySelector('.stem')?.textContent || '').slice(0, 60)).join('；') });
           }
         }
@@ -1674,15 +1702,27 @@
         const filled = (HW.questions || []).filter((q) => ['filled', 'fixed', 'skipped'].includes(q._status)).length;
         const failed = (HW.questions || []).filter((q) => q._status === 'failed').length;
         if (els.detect.disabled || !els.stop.disabled) throw new Error('答题超时，不提交测验');
+        if (answerPauseReason) throw new Error(answerPauseReason + '，不提交测验');
         if (failed || filled !== HW.questions.length) {
           /* 用户 2026-10-22：先刷完。个别题填写失败（如「共用选项点击后回读不一致」）
              不再作废整卷：已填的保留，失败题留空，照常提交；分数不再卡 80%。 */
-          log(`刷课：${failed} 题填写失败，留空随卷提交`);
-          reportIssue('填写失败', `${failed} 题填写失败，留空随卷提交`);
+          const unprocessed = HW.questions.length - filled - failed;
+          const reason = [failed ? `${failed} 题填写失败` : '', unprocessed ? `${unprocessed} 题未处理` : ''].filter(Boolean).join('，');
+          log(`刷课：${reason}，留空随卷提交`);
+          reportIssue('填写未完成', `${reason}，留空随卷提交`, {
+            question: HW.questions.filter(q => !['filled', 'fixed', 'skipped'].includes(q._status)).map(q => q.meta.stem).join('；'),
+            details: JSON.stringify(HW.questions.filter(q => q._status === 'failed').map(q => ({ question: q.meta.stem, reason: q._error, answerPreview: q._answerPreview }))),
+          });
         }
         return `填了 ${filled} 题`;
       } finally {
+        if (!els.stop.disabled) {
+          stopRequested = true;
+          setBusy(false);
+          await send('HW_STOP');
+        }
         autoRun = false;
+        autoDocument = null;
         /* 填写期间关掉的守卫在这里恢复，但观察器必须一起拆掉：不拆的话，
            收工时 autoRun 刚置回 false，下一次 DOM 变动就会立刻把这一页判成
            「页面已变化」并清空题目列表（真实页面 2026-10-20 日志里就这样刷出来过）。 */
@@ -1708,6 +1748,8 @@
     function setRow(i, status, tip) {
       const q = HW.questions?.[i];
       if (q) q._status = status;
+      if (q) q._error = status === 'failed' ? tip : '';
+      if (q && status !== 'failed') q._answerPreview = '';
       const r = rows[i];
       if (!r) return;
       const st = r.querySelector('.st');
@@ -1733,6 +1775,7 @@
       } else if (type === 'HW_STATUS') {
         if (stopRequested) return;
         setRow(payload.index, payload.status, payload.error || payload.note || '');
+        if (payload.status === 'failed' && HW.questions?.[payload.index]) HW.questions[payload.index]._answerPreview = payload.answerPreview || '';
         if (payload.status === 'failed') log(`第 ${payload.index + 1} 题获取答案失败：${payload.error}`);
         if (payload.status === 'skipped' && !autoRun) log(`第 ${payload.index + 1} 题：${payload.note || '已作答，跳过'}`);
       } else if (type === 'HW_ANSWER') {
@@ -1747,7 +1790,7 @@
             if (answersMatch(q.meta.type, live, payload.answer)) {
               setRow(i, 'skipped', '答案：' + payload.answer + '（你原来的答案正确，保持不动）');
               if (!autoRun) log(`第 ${i + 1} 题已写且答案正确，无需改写${payload.fromCache ? '（缓存命中）' : ''}`);
-              chrome.runtime.sendMessage({ type: 'HW_FILLED', payload: { index: i, ok: true } });
+              chrome.runtime.sendMessage({ type: 'HW_FILLED', payload: { index: i, fillToken: payload.fillToken, ok: true } });
               return;
             }
             // 缓存命中只负责"快速拿到答案"，填写永远真实执行：
@@ -1760,19 +1803,18 @@
               verified = HW.Filler.verify(q, payload.answer);
             }
             setRow(i, verified === false ? 'failed' : payload.kind === 'rewrite' ? 'fixed' : 'filled', '答案：' + payload.answer);
-            if (verified === false) reportIssue('填写失败', '页面答案回读校验未通过', { question: q.meta.stem, answer: payload.answer });
             rows[i] && (rows[i].dataset.tip = '答案：' + payload.answer);
-            const vTip = verified === 'unknown' ? '｜（页面不暴露选中状态，按点击成功处理）' : verified === false ? '｜校验未通过，将自动重试' : '';
-            if (!autoRun || verified === false) log(`第 ${i + 1} 题已填写${payload.fromCache ? '（缓存命中）' : ''}${payload.note ? '｜' + payload.note : ''}${vTip}`);
+            const vTip = verified === 'unknown' ? '｜（页面不暴露选中状态，按点击成功处理）'
+              : verified === false ? autoRun ? '｜校验未通过，本题留空' : '｜校验未通过，已暂停' : '';
+            if (!autoRun || verified === false || payload.fallback) log(`第 ${i + 1} 题已填写${payload.fromCache ? '（缓存命中）' : ''}${payload.note ? '｜' + payload.note : ''}${vTip}`);
             chrome.runtime.sendMessage({
               type: 'HW_FILLED',
-              payload: { index: i, ok: verified !== false, error: verified === false ? '填写校验未通过' : undefined },
+              payload: { index: i, fillToken: payload.fillToken, ok: verified !== false, error: verified === false ? '填写校验未通过' : undefined },
             });
           } catch (e) {
             setRow(i, 'failed', String(e.message || e));
             log(`第 ${i + 1} 题填写失败：${e.message || e}`);
-            reportIssue('填写失败', String(e.message || e), { question: HW.questions?.[i]?.meta?.stem, answer: payload.answer });
-            chrome.runtime.sendMessage({ type: 'HW_FILLED', payload: { index: i, ok: false, error: String(e.message || e) } });
+            chrome.runtime.sendMessage({ type: 'HW_FILLED', payload: { index: i, fillToken: payload.fillToken, ok: false, error: String(e.message || e) } });
           }
         })();
       } else if (type === 'HW_DONE') {
@@ -1780,6 +1822,7 @@
         stopRequested = false;
         setBusy(false);
         if (payload.paused) {
+          answerPauseReason = payload.paused;
           setSummary(payload.paused, true);
           els.panel.classList.remove('hidden'); // 确保面板可见
           log('已暂停：' + payload.paused);
@@ -1787,9 +1830,10 @@
           const failed = payload.failed || 0;
           const skipped = payload.skipped || 0;
           if (failed > 0) {
-            setSummary(`完成：填写 ${payload.filled ?? '?'} / 失败 ${failed}（点「失败」行可重答）`, true);
+            setSummary(autoRun ? `本页填写 ${payload.filled ?? '?'} 题，${failed} 题留空；原因见异常记录`
+              : `完成：填写 ${payload.filled ?? '?'} / 失败 ${failed}（点「失败」行可重答）`, true);
             els.panel.classList.remove('hidden');
-            log(`全部处理完毕，但有 ${failed} 题未成功（修复 Key 后点「开始」可整页重跑，已成功的题会命中缓存秒填）`);
+            if (!autoRun) log(`全部处理完毕，但有 ${failed} 题未成功（修复 Key 后点「开始」可整页重跑，已成功的题会命中缓存秒填）`);
           } else {
             setSummary(`完成：填写 ${payload.filled ?? payload.total ?? '?'}${skipped ? ` / 保留 ${skipped}` : ''}，请检查后自行提交`, false);
             if (!autoRun) log(`全部处理完毕（共 ${payload.total} 题），提交请自行操作`);
@@ -1797,6 +1841,7 @@
         }
       } else if (type === 'HW_STOPPED') {
         if (detecting || stopRequested) return;
+        answerPauseReason = '答题队列已停止';
         stopRequested = false;
         setBusy(false);
         log('队列已停止');

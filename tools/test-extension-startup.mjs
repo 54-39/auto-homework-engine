@@ -41,11 +41,11 @@ for(const variant of ['baseline','fixed']) {
     fs.writeFileSync(file,source);
   }
   const child=spawn(edge,['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking',
-    '--disable-crash-reporter','--disable-breakpad','--enable-unsafe-extension-debugging','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore',windowsHide:true});
+    '--disable-crash-reporter','--disable-breakpad','--disable-features=CalculateNativeWinOcclusion','--enable-unsafe-extension-debugging','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore',windowsHide:true});
   let browser,page,worker;
   try {
     let port;
-    for(let i=0;i<150;i++){const file=path.join(profile,'DevToolsActivePort');if(fs.existsSync(file)){port=Number(fs.readFileSync(file,'utf8').split('\n')[0]);break;}if(child.exitCode!==null)throw Error('Edge exited');await pause(100);}
+    for(let i=0;i<150;i++){const file=path.join(profile,'DevToolsActivePort');if(fs.existsSync(file)){port=Number(fs.readFileSync(file,'utf8').split('\n')[0]);break;}await pause(100);}
     assert.ok(port,'Edge DevTools unavailable');
     const version=await(await fetch(`http://127.0.0.1:${port}/json/version`)).json();browser=await connect(version.webSocketDebuggerUrl);
     const tab=await(await fetch(`http://127.0.0.1:${port}/json/new?about:blank`,{method:'PUT'})).json();
@@ -82,7 +82,9 @@ for(const variant of ['baseline','fixed']) {
       results.push({variant,...state,duplicate});console.log('PASS real MV3 install: ball appears without refreshing, click opens, repeated injection stays usable');
     }
   } finally {
-    worker?.close();page?.close();browser?.close();child.kill();await pause(400);
+    worker?.close();page?.close();
+    try { await browser?.send('Browser.close'); } catch { /* 浏览器关闭时 CDP 会断开 */ }
+    browser?.close();child.kill();await pause(400);
     const relative=path.relative(output,folder);assert.ok(relative&&!relative.startsWith('..')&&!path.isAbsolute(relative));
     try{fs.rmSync(folder,{recursive:true,force:true,maxRetries:4,retryDelay:150});}catch{console.warn('Temporary Edge profile still locked:',folder);}
   }

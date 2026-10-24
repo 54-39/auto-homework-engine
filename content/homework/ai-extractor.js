@@ -61,17 +61,19 @@
     try { return !!el.contentDocument?.body?.isContentEditable; } catch { return false; }
   };
 
-  function collect() {
-    if (HW.FontDecoder && !HW.FontDecoder.ready(document)) throw new Error('页面字体尚未还原，请稍候或导出页面结构');
+  function collect(sourceDocument = document) {
+    if (HW.FontDecoder && !HW.FontDecoder.ready(sourceDocument)) throw new Error('页面字体尚未还原，请稍候或导出页面结构');
     const refs = new Map();
     const ids = new WeakMap();
-    const documents = new Set([document]);
-    const root = [...document.querySelectorAll('main,[role="main"]')].find(visible) || document.body;
+    const documents = new Set([sourceDocument]);
+    const root = [...sourceDocument.querySelectorAll('main,[role="main"]')].find(visible) || sourceDocument.body;
     let seq = 0;
     let total = 0;
     const walk = (el) => {
       // 超星题干 <h3 class="mark_name"> 自带 aria-hidden="true" 却视觉可见，不能按 aria-hidden 过滤。
       if (el.matches(OMIT) || el.closest('[hidden]')) return null;
+      if (el.matches('.question-lists') && el.closest('#answer_form') &&
+          /手动结束|已结束/.test(el.ownerDocument.querySelector('.tip')?.textContent || '')) return null;
       if (el.matches('.topicDetail_editContainer') && HW.CXAdapter?.discussion(el.ownerDocument)?.completed) return null;
       if (el.matches('form') && el.querySelector('input[type="password"]')) return null;
       const native = el.matches('input,textarea,select');
@@ -79,7 +81,7 @@
       if (native && ((el.tagName === 'INPUT' && !['radio', 'checkbox', 'text', 'number', 'file'].includes(el.type)) ||
           /password|token|secret|api.?key|username|account|email|phone|mobile/i.test(el.name + ' ' + el.id + ' ' + el.autocomplete))) return null;
       const hiddenChoice = el.matches('input[type="radio"],input[type="checkbox"]') &&
-        (visible(el.closest('label')) || [...(el.labels || [])].some(visible));
+        (visible(el.closest('label,[role="radio"],[role="checkbox"],.optionRadio')) || [...(el.labels || [])].some(visible));
       if (!visible(el) && !hiddenChoice) return null;
       // 超星填空框点击后才显示编辑器，且同一时间只展开一空；可见宿主对应的编辑器仍可填写。
       const lazyEditor = el.matches('.blankItemInp') ? el.querySelector('iframe') : null;
@@ -191,13 +193,14 @@
     }
     if (batch.trim()) batches.push(batch);
     if (batches.length > 40) throw new Error('页面题目过多，请分批展开后重新检测');
-    return { refs, ids, batches, documents, signature: tree.full, url: location.href };
+    return { refs, ids, batches, documents, sourceDocument, signature: tree.full, url: location.href };
   }
 
   function isCurrent(snapshot) {
     try {
       if (!snapshot || snapshot.url !== location.href) return false;
-      const current = collect();
+      if (snapshot.sourceDocument?.defaultView?.document !== snapshot.sourceDocument) return false;
+      const current = collect(snapshot.sourceDocument);
       const controls = (s) => [...s.refs.values()].filter(({ el, kind }) => ['text', 'editable', 'editor', 'select', 'unsupported'].includes(kind) ||
         el.matches('input[type="radio"],input[type="checkbox"],[role="radio"],[role="checkbox"],.answerBg')).map(({ el }) => el);
       const before = controls(snapshot);
@@ -324,7 +327,7 @@
         }
         if (new Set(targetIds).size !== targetIds.length) throw new Error('答题位置重复');
         const targetEls = targetIds.map((id) => snapshot.refs.get(id)?.el);
-        const groups = targetEls.map((el) => el.closest('.questionLi,.TiMu,.mark_item') || el.closest('fieldset,[role="group"],[role="radiogroup"],section,article'));
+        const groups = targetEls.map((el) => el.closest('.questionLi,.TiMu,.mark_item,.q-item,.question-item,.question,.exam-question,.topic-item') || el.closest('fieldset,[role="group"],[role="radiogroup"],section,article'));
         if (groups.some(Boolean) && new Set(groups).size > 1) throw new Error('答题位置属于不同的题目区域');
         const radios = labels.map((l) => l.input).filter((el) => el?.type === 'radio');
         if (radios.length && (new Set(radios.map((el) => el.name)).size > 1 || new Set(radios.map((el) => el.form)).size > 1)) throw new Error('选项属于不同的单选组');
@@ -365,6 +368,7 @@
       } catch (e) { addPending(item, e.message); }
     }
     // AI 可能遗漏题目：真实答题控件仍未归属时，明确保留为待确认区域。
+    const assignedOptions = new Set([...ready.values()].flatMap(q => q.el.labels.flatMap(l => [l.input, l.clickEl]).filter(Boolean)));
     for (const [id, { el, kind }] of snapshot.refs) {
       // 通知勾选框、搜索和筛选控件不属于题目，不能据此报“待确认”。
       if (!questionRoot(el) && !questionRoots.some(root => root.contains(el))) continue;
@@ -373,8 +377,8 @@
         continue;
       }
       if (!['text', 'editable', 'editor', 'select'].includes(kind) && !el.matches('input[type="radio"],input[type="checkbox"],[role="radio"],[role="checkbox"]')) continue;
-      if (occupied.has(id) || blocked.has(id) || pendingRoots.some((r) => r.contains(el))) continue;
-      const container = el.closest('.questionLi,fieldset,section,article,[role="group"]') || el.parentElement;
+      if (occupied.has(id) || assignedOptions.has(el) || blocked.has(id) || pendingRoots.some((r) => r.contains(el))) continue;
+      const container = questionRoot(el) || el.closest('section,article,[role="group"]') || el.parentElement;
       addPending({ containerId: snapshot.ids.get(container), stem: '尚未识别的答题区域' }, 'AI 未能识别此答题区域，请重新检测或导出页面结构');
     }
     const questions = [...ready.values()];

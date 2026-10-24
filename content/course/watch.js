@@ -1311,14 +1311,25 @@
 
   /* 当前页签里是什么任务点。ended 的视频也算视频页：findVideo() 把它挪开是为了
      接着守第二个，但分类上它仍是视频任务点，交回 watchVideo 用 everEnded 收尾。 */
-  function classify() {
-    if (findVideo() || allVideos().some((v) => v.ended)) return 'video';
+  function quizDocument() {
+    let root = document;
+    try { root = document.querySelector('#iframe')?.contentDocument || document; } catch { /* 卡片尚未加载 */ }
     const QUIZ = '.questionLi,.TiMu,.Zy_TItle,.exam-question,.mark_item,input[name^="answer"]';
-    for (const d of docs()) {
+    for (const d of docs(root)) {
       try {
-        if (d.querySelector(QUIZ)) return 'quiz';
+        if (/\/page\/questionnaire\//.test(d.URL || '') || d.querySelector('#answer_form .question-lists')) continue;
+        let frame = d.defaultView?.frameElement;
+        while (frame && visible(frame)) frame = frame.ownerDocument.defaultView?.frameElement;
+        if (frame) continue;
+        if ([...d.querySelectorAll(QUIZ)].some(visible)) return d;
       } catch { /* 跨域文档跳过 */ }
     }
+    return null;
+  }
+
+  function classify() {
+    if (findVideo() || allVideos().some((v) => v.ended)) return 'video';
+    if (quizDocument()) return 'quiz';
     return 'text';
   }
 
@@ -1617,6 +1628,8 @@
 
   async function runQuiz() {
     if (quizDone()) {
+      const grade = quizGrade();
+      if (grade) lastQuizGrade = { chapter: activeChapterId(), score: grade.score, total: grade.total };
       live('测验页：任务已完成，跳过答题');
       return true;
     }
@@ -1786,6 +1799,7 @@
         }
       } catch { /* 跨域文档跳过 */ }
     }
+    if (!out.length) out.push('当前页签未发现未完成角标，目录仍有剩余；需核对其他页签或平台计数');
     return out;
   }
 
@@ -2214,6 +2228,7 @@
   }
 
   HW.Watch = {
+    quizDocument,
     start,
     stop,
     resumeQueued,

@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, '.tmp-settings-tests');
+fs.mkdirSync(output, { recursive: true });
 const profile = fs.mkdtempSync(path.join(output, 'chrome-'));
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 function fixture() {
@@ -49,6 +50,7 @@ async function checks() {
     }
     const trigger = $('engine-trigger');
     trigger.focus();
+    ok(getComputedStyle(trigger).outlineStyle === 'none', '键盘焦点仍有外圈');
     for(const key of ['ArrowDown','ArrowDown','Enter']) trigger.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true}));
     ok($('engine').value==='bridge' && !$('bridgeFields').hidden && $('apiFields').hidden);
     select('engine','api');
@@ -69,6 +71,30 @@ async function checks() {
     input.value='fixture';input.blur();await wait(220);
     ok(label.getBoundingClientRect().bottom<=input.getBoundingClientRect().top+1);
     input.value='';
+  });
+  await check('手动接口和豆包间隔输入框统一圆角标签，聚焦无外圈', async () => {
+    $('apiDetails').open = true;
+    for (const id of ['apiKey', 'model', 'baseURL', 'delayMin', 'delayMax']) {
+      select('engine', id.startsWith('delay') ? 'bridge' : 'api');
+      const input = $(id), label = document.querySelector(`label[for="${id}"]`);
+      input.focus(); await wait(220);
+      const style = getComputedStyle(input);
+      ok(style.outlineStyle === 'none' && style.boxShadow === 'none', id + ' 聚焦仍有外圈');
+      ok(parseFloat(style.borderTopLeftRadius) >= input.clientHeight / 2, id + ' 圆角不一致');
+      ok(label.getBoundingClientRect().bottom <= input.getBoundingClientRect().top + 1, id + ' 标签未浮起');
+    }
+    select('engine', 'api'); $('apiDetails').open = false; document.activeElement.blur();
+  });
+  await check('设置复选框使用一致的中性色，禁用下拉保持禁用外观', async () => {
+    for (const input of document.querySelectorAll('input[type="checkbox"]')) {
+      const rgb = getComputedStyle(input).accentColor.match(/\d+/g)?.map(Number);
+      ok(rgb?.length === 3 && Math.max(...rgb) - Math.min(...rgb) < 40, input.id + ' 仍是蓝色勾选态');
+    }
+    select('engine', 'bridge');
+    try {
+      await until(() => $('provider-trigger').disabled);
+      ok(!$('engine-trigger').disabled);
+    } finally { select('engine', 'api'); }
   });
   await check('默认进入应用设置，所有已保存Key仅显示尾号', () => {
     ok(location.hash === '#app' && !$('sec-app').hidden && $('sec-mem').hidden);
@@ -155,7 +181,7 @@ const server = http.createServer((req, res) => {
   res.setHeader('Content-Type', /\.m?js$/.test(full) ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8'); res.end(text);
 });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
-const child = spawn('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-crash-reporter', '--disable-breakpad', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore', windowsHide: true });
+const child = spawn(process.env.EDGE_BIN || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-crash-reporter', '--disable-breakpad', '--disable-features=CalculateNativeWinOcclusion', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore', windowsHide: true });
 let socket;
 try {
   let port;
@@ -172,7 +198,72 @@ try {
     await call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});await pause(100);
     const shot=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});fs.writeFileSync(path.join(output,`settings-default-${width}.png`),Buffer.from(shot.data,'base64'));
   }
+  const interactionResults = [];
+  for (const width of [1280, 420]) {
+    await call('Emulation.setDeviceMetricsOverride', { width, height:900, deviceScaleFactor:1, mobile:false });
+    await evaluate(`testConfig.watchSections=0;document.querySelector('[data-sec="watch"]').click();document.getElementById('watchSections').value='0';document.getElementById('watchSections-trigger').scrollIntoView({block:'center'})`);
+    await pause(100);
+    const triggerPoint = await evaluate(`(()=>{const r=document.getElementById('watchSections-trigger').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+    await call('Input.dispatchMouseEvent', { type:'mousePressed', ...triggerPoint, button:'left', clickCount:1 });
+    await call('Input.dispatchMouseEvent', { type:'mouseReleased', ...triggerPoint, button:'left', clickCount:1 }); await pause(100);
+    const listPoint = await evaluate(`(()=>{const l=document.querySelector('body>.ddlist:not(.hidden)'),r=l.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2,scrollTop:l.scrollTop};})()`);
+    await call('Input.dispatchMouseEvent', { type:'mouseMoved', x:listPoint.x, y:listPoint.y });
+    await call('Input.dispatchMouseEvent', { type:'mouseWheel', x:listPoint.x, y:listPoint.y, deltaX:0, deltaY:180 }); await pause(200);
+    const scrolled = await evaluate(`(()=>{const l=document.querySelector('body>.ddlist:not(.hidden)');return l && {top:l.scrollTop,expanded:document.getElementById('watchSections-trigger').getAttribute('aria-expanded')};})()`);
+    assert.ok(scrolled && scrolled.expanded === 'true' && scrolled.top > listPoint.scrollTop, width + 'px 菜单内部滚轮导致关闭或无法滚动：' + JSON.stringify({listPoint,scrolled}));
+    await call('Input.dispatchMouseEvent', { type:'mouseWheel', x:listPoint.x, y:listPoint.y, deltaX:0, deltaY:600 }); await pause(100);
+    assert.ok(await evaluate(`!!document.querySelector('body>.ddlist:not(.hidden)')`), '滚到菜单底部后继续滚动导致关闭');
+    const scrolledShot = await call('Page.captureScreenshot', {format:'png'});
+    fs.writeFileSync(path.join(output, `settings-watch-scrolled-${width}.png`), Buffer.from(scrolledShot.data, 'base64'));
+    const tenth = await evaluate(`(()=>{const r=document.querySelector('body>.ddlist:not(.hidden) [data-id="10"]').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+    await call('Input.dispatchMouseEvent', { type:'mouseMoved', ...tenth }); await pause(100);
+    assert.ok(await evaluate(`!!document.querySelector('body>.ddlist:not(.hidden)')`), '移到滚动后的选项时菜单提前关闭');
+    await call('Input.dispatchMouseEvent', { type:'mousePressed', ...tenth, button:'left', clickCount:1 });
+    await call('Input.dispatchMouseEvent', { type:'mouseReleased', ...tenth, button:'left', clickCount:1 }); await pause(100);
+    assert.ok(await evaluate(`document.getElementById('watchSections').value==='10' && testConfig.watchSections===10 && document.getElementById('watchMsg').textContent.includes('10') && !document.querySelector('body>.ddlist:not(.hidden)')`), width + 'px 点击前10节未保存或未正常收起');
+    await evaluate(`document.getElementById('watchSections-trigger').click()`); await pause(100);
+    assert.ok(await evaluate(`(()=>{const l=document.querySelector('body>.ddlist:not(.hidden)'),o=l?.querySelector('[aria-selected="true"]');if(!o)return false;const r=o.getBoundingClientRect(),b=l.getBoundingClientRect();return o.dataset.id==='10' && r.top>=b.top && r.bottom<=b.bottom;})()`), '重新展开时选中的末项不可见或菜单误关闭');
+    await call('Input.dispatchKeyEvent', {type:'keyDown', key:'ArrowUp', code:'ArrowUp'});
+    await call('Input.dispatchKeyEvent', {type:'keyUp', key:'ArrowUp', code:'ArrowUp'});
+    await call('Input.dispatchKeyEvent', {type:'keyDown', key:'Enter', code:'Enter'});
+    await call('Input.dispatchKeyEvent', {type:'keyUp', key:'Enter', code:'Enter'}); await pause(100);
+    assert.ok(await evaluate(`document.getElementById('watchSections').value==='9' && testConfig.watchSections===9`), '滚动后重新展开的键盘选择未保存');
+    await call('Input.dispatchMouseEvent', {type:'mouseMoved', ...triggerPoint});
+    await evaluate(`document.getElementById('watchSections-trigger').click()`); await pause(100);
+    for (let step=0;step<9;step++) {
+      await call('Input.dispatchKeyEvent', {type:'keyDown', key:'ArrowUp', code:'ArrowUp'});
+      await call('Input.dispatchKeyEvent', {type:'keyUp', key:'ArrowUp', code:'ArrowUp'});
+    }
+    await pause(100);
+    assert.ok(await evaluate(`(()=>{const l=document.querySelector('body>.ddlist:not(.hidden)');return l && l.scrollTop===0 && l.querySelector('.hot')?.dataset.id==='0';})()`), '键盘移动至菜单顶部时提前关闭或未滚动');
+    await call('Input.dispatchKeyEvent', {type:'keyDown', key:'Enter', code:'Enter'});
+    await call('Input.dispatchKeyEvent', {type:'keyUp', key:'Enter', code:'Enter'}); await pause(100);
+    assert.ok(await evaluate(`document.getElementById('watchSections').value==='0' && testConfig.watchSections===0`), '键盘选择整门课程未保存');
+    interactionResults.push({name:width + 'px 刷课下拉滚轮、末项点击保存、重新展开与键盘选择',ok:true});
+  }
+  await call('Emulation.setDeviceMetricsOverride', { width:420, height:900, deviceScaleFactor:1, mobile:false });
+  for (const id of ['engine', 'subjMode', 'provider', 'watchSections']) {
+    await evaluate(`(()=>{document.querySelector('[data-sec="${id === 'watchSections' ? 'watch' : 'app'}"]').click();document.getElementById('apiDetails').open=${id === 'provider'};document.getElementById('${id}-trigger').scrollIntoView({block:'center'});})()`);
+    const point = await evaluate(`(()=>{const r=document.getElementById('${id}-trigger').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+    await call('Input.dispatchMouseEvent', { type:'mouseMoved', ...point }); await pause(180);
+    const hover = await evaluate(`(()=>{const s=getComputedStyle(document.getElementById('${id}-trigger'));return{background:s.backgroundColor,color:s.color};})()`);
+    assert.equal(hover.background, 'rgb(255, 255, 255)', id + ' 悬停继承了普通按钮背景');
+    await call('Input.dispatchMouseEvent', { type:'mousePressed', ...point, button:'left', clickCount:1 });
+    await call('Input.dispatchMouseEvent', { type:'mouseReleased', ...point, button:'left', clickCount:1 }); await pause(180);
+    const selected = await evaluate(`(()=>{const t=document.getElementById('${id}-trigger'),o=document.querySelector('body>.ddlist:not(.hidden) [aria-selected="true"]'),r=o.getBoundingClientRect();return{background:getComputedStyle(o).backgroundColor,outline:getComputedStyle(t).outlineStyle,x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+    assert.equal(selected.outline, 'none', id + ' 点击仍有外圈');
+    const rgb = selected.background.match(/\d+/g).map(Number);
+    assert.ok(Math.max(...rgb) - Math.min(...rgb) < 15, id + ' 选中项仍是蓝色');
+    await call('Input.dispatchMouseEvent', { type:'mouseMoved', x:selected.x, y:selected.y }); await pause(100);
+    assert.equal(await evaluate(`getComputedStyle(document.querySelector('body>.ddlist:not(.hidden) [aria-selected="true"]')).backgroundColor`), selected.background, id + ' 已选项悬停不应变色');
+    const selectedShot = await call('Page.captureScreenshot', { format:'png' });
+    fs.writeFileSync(path.join(output, `settings-${id}-selected-420.png`), Buffer.from(selectedShot.data, 'base64'));
+    await evaluate(`document.getElementById('${id}-trigger').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+    interactionResults.push({ name:id + ' 实际鼠标悬停、展开、选中态一致且无外圈', ok:true });
+  }
+  await evaluate(`document.querySelector('[data-sec="app"]').click();document.getElementById('apiDetails').open=false;window.scrollTo(0,0)`);
   const results=await evaluate('runSettingsChecks()');
+  results.push(...interactionResults);
   for(const r of results)console.log(r.ok?'PASS':'FAIL',r.name,r.error||'');
   for(const width of [1280,420,320]) {
     await call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
@@ -187,6 +278,11 @@ try {
       const geometry=await evaluate(`(()=>{const s=document.getElementById('sec-app'),r=s.getBoundingClientRect();return {width:innerWidth,scroll:document.documentElement.scrollWidth,left:r.left,right:r.right,cardScroll:s.scrollWidth,cardWidth:s.clientWidth};})()`);
       assert.ok(geometry.scroll<=width && geometry.left>=0 && geometry.right<=width && geometry.cardScroll<=geometry.cardWidth,JSON.stringify({mode,geometry}));
       const shot=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});fs.writeFileSync(path.join(output,`settings-${mode}-${width}.png`),Buffer.from(shot.data,'base64'));
+      if (mode === 'advanced') {
+        await evaluate(`document.getElementById('baseURL').focus();document.getElementById('baseURL').scrollIntoView({block:'center'})`); await pause(220);
+        const focused = await call('Page.captureScreenshot', {format:'png'});
+        fs.writeFileSync(path.join(output, `settings-manual-focus-${width}.png`), Buffer.from(focused.data, 'base64'));
+      }
     }
     results.push({name:`设置页${width}px API/手动接口/豆包无横向溢出`,ok:true});
   }

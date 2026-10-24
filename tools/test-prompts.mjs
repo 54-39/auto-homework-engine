@@ -50,6 +50,8 @@ check('单空要求只输出一个值', b1[1].content.includes('answers 数组�
 const b2 = buildMessages({ type: 'blank', stem: 'P(A∩B)=___，P(A∪B)=___', blanks: 2 });
 check('双空下发空数并要求数组逐空输出', b2[1].content.includes('共 2 个空') && b2[1].content.includes('2 个值，一个空一个元素'));
 const b0 = buildMessages({ type: 'blank', stem: '1+1=____' });
+const automatic = buildMessages({ type:'choice', stem:'信息不足的题目', options:[{key:'B',text:'乙'}] }, {bestEffort:true});
+check('仅刷课提示词要求尽力给出最可能答案，保留选项范围', automatic[1].content.includes('尽力给出最可能的答案') && automatic[1].content.includes('B. 乙') && !automatic[1].content.includes('无法确定答案时输出'));
 check('空数未知时不下发、不误报单空', !b0[1].content.includes('共 0 个空') && !b0[1].content.includes('只有 1 个空') && b0[1].content.includes('一个空一个元素'));
 check('填空题仍禁止解释', b1[0].content.includes('不输出任何解释'));
 const blank = parseAnswer({ type: 'blank' }, '  答案A\n\n答案B  ');

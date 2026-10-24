@@ -22,9 +22,24 @@
       return { title, box, completed, body: title.closest('.topicDetail_detail')?.querySelector('.richText') };
     },
     match(doc = document) {
-      return !!doc.querySelector('.questionLi[typename]') || !!CX.discussion(doc);
+      return !!doc.querySelector('.questionLi[typename],#answer_form .question-item') || !!CX.discussion(doc);
     },
     extract(doc = document) {
+      if (doc.querySelector('#answer_form .question-item')) {
+        if (/手动结束|已结束/.test(doc.querySelector('.tip')?.textContent || '')) return [];
+        return [...doc.querySelectorAll('#answer_form .question-item')].map((q, index) => {
+          const stem = textOf(q.querySelector('.topic-txt'));
+          const inputs = [...q.querySelectorAll('textarea,input[type="text"]')].filter(el => !el.disabled && !el.readOnly);
+          const labels = [...q.querySelectorAll('.optionRadio,.optionCheckbox')].map((row, i) => ({
+            key: 'ABCDEFGH'[i], text: textOf(row.querySelector('.optionContent') || row),
+            input: row.querySelector('input[type="radio"],input[type="checkbox"]'), clickEl: row,
+          })).filter(label => label.input && !label.input.disabled);
+          const type = labels.length ? labels[0].input.type === 'checkbox' ? 'multi' : 'choice' : 'subjective';
+          return stem && (labels.length || inputs.length) ? {
+            meta: { index, type, stem, options: labels.map(({ key, text }) => ({ key, text })) }, el: { inputs, labels },
+          } : null;
+        }).filter(Boolean);
+      }
       const topic = CX.discussion(doc);
       if (topic) {
         if (topic.completed || !topic.box.getClientRects().length || topic.box.disabled || topic.box.readOnly) return [];

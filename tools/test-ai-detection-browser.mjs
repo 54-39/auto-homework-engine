@@ -55,6 +55,7 @@ function fixtureBoot() {
       },
     },
   };
+  window.emitHWMessage = message => listeners.forEach(listener => listener(message));
   document.querySelectorAll('[role="checkbox"]').forEach((el) => el.addEventListener('click', () => el.setAttribute('aria-checked', String(el.getAttribute('aria-checked') !== 'true'))));
   /* 每门课刷几节已改到设置页（config.watchSections），面板不再有勾选框：测试直接改配置并触发 onChanged */
   window.setWatchSections = n => setExternalConfig({ watchSections: n });
@@ -361,6 +362,60 @@ async function browserChecks() {
     } finally { extra.remove(); }
   });
 
+  const surveyFrame = document.createElement('iframe');
+  surveyFrame.src = '/page/questionnaire/answerQuestionChapter';
+  document.body.append(surveyFrame);
+  await new Promise(resolve => surveyFrame.addEventListener('load', resolve, { once: true }));
+  const surveyDoc = surveyFrame.contentDocument;
+  await check('问卷隐藏原生选项按题读取，不把选项内层当作另一题', () => {
+    const questions = HW.Extractor.extract(surveyDoc);
+    ok(questions.length === 3, JSON.stringify(questions.map(q => q.meta)));
+    ok(questions[0].meta.stem === '您的性别？' && questions[0].meta.options[0].text === '男');
+    ok(questions[1].meta.type === 'multi' && questions[2].meta.type === 'subjective');
+  });
+  await check('问卷选项绑定、填写和回读一致，内外层控件不重复报待确认', async () => {
+    const snapshot = HW.AIDetection.collect(surveyDoc);
+    const id = el => snapshot.ids.get(el);
+    const items = [...surveyDoc.querySelectorAll('.question-item')].map((el, i) => ({
+      type: ['choice', 'multi', 'subjective'][i], containerId: id(el), stem: el.querySelector('.topic-txt').textContent,
+      options: [...el.querySelectorAll('.optionRadio,.optionCheckbox')].map((o, j) => ({ key: 'AB'[j], targetId: id(o) })),
+      inputIds: [...el.querySelectorAll('textarea')].map(id),
+    }));
+    const boundSurvey = HW.AIDetection.bind(snapshot, items);
+    ok(boundSurvey.questions.length === 3 && boundSurvey.pending.length === 0, JSON.stringify(boundSurvey.pending));
+    for (const [i, answer] of ['B', 'AB', '问卷文字'].entries()) {
+      await HW.Filler.fill(boundSurvey.questions[i], answer);
+      for (let n = 0; n < 20 && HW.Filler.verify(boundSurvey.questions[i], answer) === false; n++) await wait(50);
+      ok(HW.Filler.verify(boundSurvey.questions[i], answer) === true, '第 ' + i + ' 题回读失败');
+    }
+    ok(HW.AIDetection.isCurrent(snapshot), '填写使问卷题目失效');
+    ok(surveyDoc.querySelectorAll('input:checked').length === 3);
+  });
+  await check('限定测验文档采集时不混入外层页面与残留问卷', () => {
+    const quizDoc = document.querySelector('#nested').contentDocument;
+    const snapshot = HW.AIDetection.collect(quizDoc);
+    ok(snapshot.documents.size === 1 && snapshot.documents.has(quizDoc));
+    ok(!snapshot.batches.join('').includes('您的性别') && !snapshot.batches.join('').includes('选一个正确选项'));
+  });
+  await check('同一份问卷跨题选项不能绑定，未识别区域按题去重', () => {
+    const snapshot = HW.AIDetection.collect(surveyDoc);
+    const items = [...surveyDoc.querySelectorAll('.question-item')];
+    const result = HW.AIDetection.bind(snapshot, [{ type: 'choice', stem: '混题', containerId: snapshot.ids.get(surveyDoc.querySelector('#answer_form')),
+      options: items.slice(0, 2).map((el, i) => ({ key: 'AB'[i], targetId: snapshot.ids.get(el.querySelector('.optionRadio,.optionCheckbox')) })), inputIds: [] }]);
+    ok(!result.questions.length && result.pending.length <= 4, JSON.stringify(result.pending));
+  });
+  await check('已手动结束的问卷不作为待答题，也不触发章节测验分类', () => {
+    surveyDoc.querySelector('.tip').textContent = '手动结束';
+    ok(HW.Extractor.extract(surveyDoc).length === 0);
+    const snapshot = HW.AIDetection.collect(surveyDoc);
+    ok(!snapshot.batches.join('').includes('您的性别'));
+    ok(!HW.AIDetection.bind(snapshot, []).pending.length);
+    const original = document.querySelector('main');
+    original.hidden = true;
+    try { ok(!HW.Watch.quizDocument(), '问卷被当作章节测验'); }
+    finally { original.hidden = false; }
+  });
+  surveyFrame.remove();
   const nativeFixture = document.createElement('div');
   nativeFixture.innerHTML = `<section class="questionLi" typename="单选题" id="question901"><h3 class="mark_name">原生单选无需检测</h3><label class="answerBg"><span class="num_option">A</span><span class="answer_p">甲</span></label><label class="answerBg"><span class="num_option">B</span><span class="answer_p">乙</span></label></section>
     <section class="questionLi" typename="多选题" id="question902"><h3 class="mark_name">原生多选无需检测</h3><label class="answerBg"><span class="num_option">A</span><span class="answer_p">甲</span></label><label class="answerBg"><span class="num_option">B</span><span class="answer_p">乙</span></label></section>
@@ -381,6 +436,28 @@ async function browserChecks() {
     for (let i = 0; i < 100; i++) { if (fn()) return; await wait(20); }
     throw new Error('UI wait timed out');
   };
+  await check('面板与刷课复用中性灰选中态，输入聚焦不增加外圈', async () => {
+    await until(() => ui.querySelector('.apisec').getBoundingClientRect().height > 0);
+    const input = ui.querySelector('.keyinput');
+    input.focus(); await wait(200);
+    ok(getComputedStyle(input).outlineStyle === 'none' && getComputedStyle(input).boxShadow === 'none');
+    input.blur();
+    for (const selector of ['.modeslot .ddtrig', '.rateslot .ddtrig']) {
+      setExternalConfig({ engine: 'api', panelMode: selector.includes('rateslot') ? 'watch' : 'homework' });
+      const trigger = ui.querySelector(selector);
+      await until(() => trigger.getBoundingClientRect().height > 0);
+      trigger.click();
+      const option = ui.querySelector('.ddlist:not(.hidden) [aria-selected="true"]');
+      ok(option, '没有显示下拉选项');
+      const color = getComputedStyle(option).backgroundColor.match(/\d+/g).map(Number);
+      ok(Math.max(...color) - Math.min(...color) < 15, '下拉选中项仍是蓝色');
+      ok(getComputedStyle(trigger).outlineStyle === 'none', '下拉框仍有外圈');
+      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    }
+    const color = getComputedStyle(ui.querySelector('.watchmute')).accentColor.match(/\d+/g).map(Number);
+    ok(Math.max(...color) - Math.min(...color) < 40, '刷课勾选态仍是蓝色');
+    setExternalConfig({ engine: 'api', panelMode: 'homework' });
+  });
   await check('主面板保留 Key 和二次判断，低频项移入设置且首次保存仍提示风险', async () => {
     ok(!ui.querySelector('.engineslot, .keylist, .issuebtn'), '引擎、已保存 Key 列表或异常记录仍占据主面板');
     await until(() => ui.querySelector('.apisec').getBoundingClientRect().height > 0);
@@ -466,12 +543,47 @@ async function browserChecks() {
     ok(!HW.questions.some(q => q.meta.stem === '内嵌原生题目'));
     ok(!testCalls.includes('HW_DETECT_QUESTIONS'));
   });
-  await check('刷课遇到待确认题目自动尝试一次 AI 识题，仍无可处理题目时不提交', async () => {
-    window.testMode = 'empty';
-    let error;
-    try { await HW.Panel.runHomework(); } catch (e) { error = e.message; }
-    ok(/AI 识题后仍然没有可处理的题目/.test(error || ''), error);
-    ok(!testCalls.includes('HW_START'));
+  await check('刷课 AI 补漏空答或失败不抹掉原生题目，仍填写并放行提交', async () => {
+    const originalSend = chrome.runtime.sendMessage, originalKey = testApiKey;
+    window.testApiKey = 'fixture-only';
+    chrome.runtime.sendMessage = async message => {
+      if (message.type !== 'HW_START') return originalSend(message);
+      setTimeout(() => {
+        HW.questions.forEach((q,index) => emitHWMessage({type:'HW_STATUS',payload:{index,status:'skipped'}}));
+        emitHWMessage({type:'HW_DONE',payload:{total:HW.questions.length,filled:0,skipped:HW.questions.length,failed:0}});
+      },20);
+      testCalls.push(message.type);
+      return {ok:true};
+    };
+    try {
+      for (const mode of ['empty','error','mixed']) {
+        window.testMode = mode;
+        const before = testCalls.length;
+        const result = await HW.Panel.runHomework();
+        ok(result.includes('填了') && HW.questions.some(q => q.meta.stem.includes('原生单选')), '原生题目丢失');
+        const targets=HW.questions.flatMap(q=>q.el.labels.length ? q.el.labels.map(label=>label.input||label.clickEl)
+          : q.el.fields.length ? q.el.fields : q.el.iframe ? [q.el.iframe] : q.el.inputs);
+        ok(new Set(targets).size===targets.length,'AI 补漏重复占用了原生答题位置：'+mode);
+        ok(testCalls.slice(before).filter(type => type==='HW_DETECT_QUESTIONS').length===1, 'AI 补漏重复调用');
+        ok(testCalls.slice(before).filter(type => type==='HW_START').length===1, '没有继续填写原生题');
+      }
+    } finally {chrome.runtime.sendMessage=originalSend;window.testApiKey=originalKey;}
+  });
+  await check('刷课所有题均无法识别时只补漏一次，继续原生提交且不虚报已提交', async () => {
+    const frame=document.createElement('iframe'), originalWatch=HW.Watch, originalKey=testApiKey;
+    window.testApiKey='fixture-only';
+    frame.srcdoc='<section class="questionLi" typename="上传题"><h3 class="mark_name">无法自动上传的题目</h3><input type="file"></section>';
+    document.body.append(frame);
+    await new Promise(resolve=>frame.addEventListener('load',resolve,{once:true}));
+    HW.Watch={...originalWatch,quizDocument:()=>frame.contentDocument};
+    window.testMode='empty';
+    try {
+      const before=testCalls.length;
+      const result=await HW.Panel.runHomework();
+      ok(result.includes('继续原生提交') && !result.includes('已留空提交'),result);
+      ok(testCalls.slice(before).filter(type=>type==='HW_DETECT_QUESTIONS').length===1);
+      ok(!testCalls.slice(before).includes('HW_START'));
+    } finally {HW.Watch=originalWatch;window.testApiKey=originalKey;frame.remove();}
   });
   nativeFixture.remove();
   window.testApiKey = 'fixture-only';
@@ -500,9 +612,10 @@ async function browserChecks() {
     ok(HW.questions.length === 0 && ui.querySelector('.start').disabled);
   });
   await check('可处理与待确认分列，检测完成不会自动开始作答', async () => {
+    const starts = testCalls.filter(type => type === 'HW_START').length;
     const state = await setDetectionUI('mixed');
     ok(state.ready === 8 && state.pending === 1, JSON.stringify(state));
-    ok(!testCalls.includes('HW_START'));
+    ok(testCalls.filter(type => type === 'HW_START').length === starts);
     ok(ui.querySelector('.summary').getAttribute('aria-live') === 'polite');
     ui.querySelector('.pending').focus();
     ok(ui.activeElement === ui.querySelector('.pending'), 'pending item cannot be reached by keyboard');
@@ -714,6 +827,30 @@ async function browserChecks() {
       ok(ui.querySelector('.watchline') !== ui.querySelector('.watchmeta'));
     } finally { HW.Watch = original; await setPanelMode('homework'); }
   });
+  await check('刷课单题失败后保留后续题、失败回执和真实留空提示', async () => {
+    const originalSend = chrome.runtime.sendMessage;
+    window.testMode = 'mixed';
+    let automatic = false;
+    chrome.runtime.sendMessage = async message => {
+      if (message.type !== 'HW_START') return originalSend(message);
+      automatic = message.payload.auto === true;
+      setTimeout(() => {
+        HW.questions.forEach((q, index) => emitHWMessage({ type: 'HW_STATUS', payload: { index,
+          status: index ? 'skipped' : 'failed', error: index ? '' : '复核不一致', answerPreview: index ? '' : '初答 AB，复核 A' } }));
+        emitHWMessage({ type: 'HW_DONE', payload: { total: HW.questions.length, filled: 0, skipped: HW.questions.length - 1, failed: 1 } });
+      }, 20);
+      return { ok: true };
+    };
+    try {
+      await HW.Panel.runHomework();
+      ok(automatic, '刷课未将自动模式标记传给后台');
+      ok(ui.querySelector('.smsg').textContent.includes('1 题留空'), ui.querySelector('.smsg').textContent);
+      const issue = testMessages.filter(m => m.type === 'HW_ISSUE_ADD' && m.payload.stage === '填写未完成').at(-1);
+      ok(issue?.payload.details.includes('初答 AB，复核 A') && issue.payload.question, '未保存失败题及复核原文');
+      window.failureUIReady = true;
+      await new Promise(resolve => { window.resumeFailureUI = resolve; });
+    } finally { chrome.runtime.sendMessage = originalSend; }
+  });
   await check('异常记录保存失败显示持续提醒并停止答题和刷课', async () => {
     const original = HW.Watch;
     let stopped = false;
@@ -753,7 +890,12 @@ const sources = ['adapters/chaoxing.js', 'dropdown.js', 'diagnostics.js', 'extra
   .map((p) => fs.readFileSync(path.join(root, 'content/homework', p), 'utf8')).join('\n;\n');
 const html = fixture + `<script>${sources}</script><script>window.runDetectionChecks=${browserChecks.toString()};</script>`;
 const inbox = `<!doctype html><meta charset="utf-8"><title>学习通知</title><style>body{font:14px system-ui;margin:32px}main{max-width:650px}li{padding:18px}label{display:block}</style><nav>消息导航</nav><main><h2>学习通知</h2><ul><li><label><input type="checkbox">我发出的</label></li><li><label><input type="checkbox">未完成</label></li><li><label><input type="checkbox">已完成作业</label></li></ul><input type="text" placeholder="搜索通知"><select><option>全部课程</option><option>未读通知</option></select><textarea placeholder="快捷回复"></textarea><p>课程名称：计算机组成原理；作业通知，请点击进入查看。</p></main><script>(${fixtureBoot.toString()})();</script><script>${sources};HW.Panel.init();</script>`;
-const server = http.createServer((req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(req.url === '/visit/interaction' ? '<!doctype html><title>内嵌课程列表样例</title>' : req.url === '/no-questions' ? inbox : html); });
+const questionnaire = `<!doctype html><meta charset="utf-8"><style>.optionRadio,.optionCheckbox{padding:8px}.optionRadio input,.optionCheckbox input{display:none}textarea{width:160px;height:45px}</style>
+<div class="tip">进行中</div><form id="answer_form"><div class="question-lists">${['您的性别？', '您是通过什么途径了解马克思主义的？', '你对马克思主义的印象'].map((stem, i) =>
+  `<div class="question-item"><input type="hidden" name="questionId"><div class="question-list"><span class="topic-txt">${stem}</span>${i === 2 ? '<textarea></textarea>' :
+    ['男', '女'].map((word, j) => `<div class="${i ? 'optionCheckbox' : 'optionRadio'}" role="${i ? 'checkbox' : 'radio'}" aria-checked="false"><span class="ipt-radio"><input type="${i ? 'checkbox' : 'radio'}" name="answer${i}" value="${j}"></span><span class="optionName">${'AB'[j]}.</span><div class="optionContent">${word}</div></div>`).join('')}</div></div>`).join('')}</div></form>
+<script>document.addEventListener('click', e => {if(!e.target.matches('input'))return;setTimeout(()=>document.querySelectorAll('.optionRadio,.optionCheckbox').forEach(el=>el.setAttribute('aria-checked',String(el.querySelector('input').checked))),100);});</script>`;
+const server = http.createServer((req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(req.url.startsWith('/page/questionnaire/') ? questionnaire : req.url === '/visit/interaction' ? '<!doctype html><title>内嵌课程列表样例</title>' : req.url === '/no-questions' ? inbox : html); });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const child = spawn(edge, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
   '--disable-crash-reporter', '--disable-breakpad', '--remote-debugging-port=0', '--disable-features=CalculateNativeWinOcclusion', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore', windowsHide: true });
@@ -806,6 +948,17 @@ try {
     }
     await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
   } finally { await evaluate('window.resumeNativeUI?.()'); }
+  try {
+    for (let i = 0; i < 1500 && !(await evaluate('!!window.failureUIReady || !!window.testResults')); i++) await pause(20);
+    if (await evaluate('!!window.failureUIReady')) {
+      for (const width of [1280, 420]) {
+        await call('Emulation.setDeviceMetricsOverride', { width, height: 800, deviceScaleFactor: 1, mobile: false });
+        const shot = await call('Page.captureScreenshot', { format: 'png' });
+        fs.writeFileSync(path.join(output, `ui-watch-partial-${width}.png`), Buffer.from(shot.data, 'base64'));
+      }
+      await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    }
+  } finally { await evaluate('window.resumeFailureUI?.()'); }
   const results = await checking;
   for (const r of results) console.log(r.ok ? 'PASS' : 'FAIL', r.name, r.error || '');
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify(results, null, 2));

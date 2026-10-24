@@ -87,7 +87,7 @@
     const hiddenLabel = input && !isVisible(input) && input.closest('label') && isVisible(input.closest('label'))
       ? input.closest('label')
       : null;
-    const clickEl = l.clickEl || hiddenLabel || input;
+    const clickEl = input && l.clickEl?.matches('.optionRadio,.optionCheckbox') ? input : l.clickEl || hiddenLabel || input;
     const isSel = stateOf(l);
     clickEl.scrollIntoView({ block: 'center' });
     if (wantChecked !== isSel) {

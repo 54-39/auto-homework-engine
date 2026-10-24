@@ -14,22 +14,23 @@
     .dd{position:relative;flex:1;min-width:0;width:100%}
     .ddtrig{display:flex;align-items:center;gap:6px;width:100%;height:var(--dd-h,30px);padding:0 10px;border:1px solid var(--dd-line,#E3E8EF);
       border-radius:var(--dd-radius,6px);background:#fff;color:#111827;font:inherit;font-size:var(--dd-font,12px);font-weight:500;cursor:pointer;text-align:left}
-    .ddtrig:hover{border-color:#C7D0DB}
-    .ddtrig[aria-expanded="true"]{border-color:#2563EB}
+    .ddtrig:hover{border-color:#C7D0DB;background:#fff;color:#111827}
+    .ddtrig:active{background:#F3F4F6;color:#111827}
+    .ddtrig:focus-visible,.ddtrig[aria-expanded="true"]{border-color:#64748B;outline:none;box-shadow:none}
+    .ddtrig:disabled,.ddtrig:disabled:hover{background:#EEF1F5;color:#6B7480;border-color:var(--dd-line,#E3E8EF);cursor:not-allowed}
     .ddname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     /* 箭头用边框画三角：Unicode 字形（▾）在不同字体下大小和基线都不受控 */
     .ddcaret{flex:none;width:0;height:0;border:4px solid transparent;border-top-color:#6B7280;transition:transform .15s ease}
-    .ddtrig[aria-expanded="true"] .ddcaret{border-top-color:#2563EB;transform:rotate(180deg)}
-    .ddlist{position:fixed;z-index:2147483647;min-width:180px;max-width:320px;max-height:264px;overflow-y:auto;padding:4px;background:#fff;
+    .ddtrig[aria-expanded="true"] .ddcaret{border-top-color:#4B5563;transform:rotate(180deg)}
+    .ddlist{position:fixed;z-index:2147483647;min-width:180px;max-width:320px;max-height:264px;overflow-y:auto;overscroll-behavior:contain;padding:4px;background:#fff;
       border:1px solid #E3E8EF;border-radius:calc(var(--dd-radius,6px) + 4px);
       box-shadow:0 6px 16px -8px rgba(15,23,42,.20),0 1px 3px -1px rgba(15,23,42,.08)}
     .ddlist.hidden{display:none}
-    /* 单行选项：两种态一眼分得开即可——悬停/键盘高亮=中性灰、选中=淡蓝底+加粗（不用侧色条与内描边，那是装饰） */
+    /* 悬停/键盘高亮用浅灰，选中项用较深灰底与加粗，悬停已选项时保持原样。 */
     .ddopt{padding:6px 8px;border-radius:var(--dd-radius,6px);cursor:pointer;font-size:var(--dd-font,12px);font-weight:500;color:#111827;
       overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .ddopt.hot{background:#F3F4F6}
-    .ddopt[aria-selected="true"]{background:#E8EFFD;font-weight:600}
-    .ddopt.hot[aria-selected="true"]{background:#DCE7FD}
+    .ddopt[aria-selected="true"]{background:#E5E7EB;font-weight:600}
     @media (prefers-reduced-motion:reduce){.ddcaret{transition:none}}
   `;
 
@@ -87,12 +88,12 @@
     };
 
     // 用 aria-activedescendant 而不是移动真实焦点：焦点始终留在触发器上，关闭时机只需管触发器
-    function setHot(o) {
+    function setHot(o, scrollIntoView = false) {
       if (!o) return;
       opts.forEach((x) => x.classList.toggle('hot', x === o));
       hot = o;
       trig.setAttribute('aria-activedescendant', o.id);
-      if (o.offsetTop < list.scrollTop || o.offsetTop + o.offsetHeight > list.scrollTop + list.clientHeight) {
+      if (scrollIntoView && (o.offsetTop < list.scrollTop || o.offsetTop + o.offsetHeight > list.scrollTop + list.clientHeight)) {
         list.scrollTop = o.offsetTop - list.clientHeight / 2 + o.offsetHeight / 2;
       }
     }
@@ -107,6 +108,11 @@
       list.style.top = (flip ? Math.max(8, r.top - lr.height - 6) : r.bottom + 6) + 'px';
     }
 
+    function onScroll(event) {
+      const path = event.composedPath ? event.composedPath() : [event.target];
+      if (!path.includes(list)) close(); // 菜单内部滚动不关闭；页面或外层容器滚动时仍收起。
+    }
+
     function close() {
       if (list.classList.contains('hidden')) return;
       list.classList.add('hidden');
@@ -115,7 +121,7 @@
       hot = null;
       opts.forEach((o) => o.classList.remove('hot'));
       window.removeEventListener('resize', close);
-      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('scroll', onScroll, true);
       if (byRoot.get(root) === close) byRoot.delete(root);
     }
 
@@ -126,11 +132,11 @@
       list.classList.remove('hidden');
       trig.setAttribute('aria-expanded', 'true');
       render();
-      setHot(optFor(cur));
+      setHot(optFor(cur), true);
       place();
       byRoot.set(root, close);
       window.addEventListener('resize', close);
-      window.addEventListener('scroll', close, true);
+      window.addEventListener('scroll', onScroll, true);
     }
 
     function pick(id) {
@@ -149,7 +155,7 @@
         e.preventDefault();
         if (!opened) return open();
         const step = e.key === 'ArrowDown' ? 1 : -1;
-        setHot(opts[(opts.indexOf(hot) + step + opts.length) % opts.length]);
+        setHot(opts[(opts.indexOf(hot) + step + opts.length) % opts.length], true);
       } else if (opened && (e.key === 'Enter' || e.key === ' ')) {
         e.preventDefault();
         pick(hot ? hot.dataset.id : cur);

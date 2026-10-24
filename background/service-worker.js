@@ -196,7 +196,12 @@ async function detectPage(payload, sender) {
       : (messages) => requestWithAPI(messages, cfg.api);
     const questions = await detectQuestions(payload.batches, async (messages) => {
       if (operation.cancelled) throw new Error('已取消识别，请重新检测');
-      const result = await request(messages);
+      let result;
+      try { result = await request(messages); }
+      catch (error) {
+        if (cfg.engine === 'bridge' && !operation.cancelled) notify('豆包识题已暂停：' + String(error.message || error).slice(0, 90), true);
+        throw error;
+      }
       if (operation.cancelled) throw new Error('已取消识别，请重新检测');
       return result;
     }, (current, total) => {
@@ -218,7 +223,7 @@ function pauseRun(tabId, reason) {
       sendTab(tabId, { type: 'HW_ISSUE_WRITE_FAILED', payload: { error: String(e.message || e) } });
       notify('异常记录写入失败，已停止答题：' + String(e.message || e).slice(0, 100));
     });
-  notify('已暂停：' + reason.slice(0, 90));
+  notify('已暂停：' + reason.slice(0, 90), run?.engine === 'bridge');
   return sendTab(tabId, { type: 'HW_DONE', payload: { paused: reason } });
 }
 
@@ -243,12 +248,13 @@ function sendTab(tabId, msg) {
 const RISKY_RE = /风控|验证|未就绪|登录墙|未发出/;
 const AUTH_RE = /HTTP 40[13]|authentication|invalid[_ ]?api[_ ]?key|认证|鉴权/i;
 let lastNotifyAt = 0;
-function notify(message) {
+function notify(message, openDoubao = false) {
   const now = Date.now();
-  if (now - lastNotifyAt < 5000) return; // 5 秒内不重复轰炸
+  if (now - lastNotifyAt < 5000 && !openDoubao) return; // 需要处理登录/验证的通知不被普通状态通知挡住。
   lastNotifyAt = now;
   try {
     chrome.notifications.create(
+      openDoubao ? 'hw-doubao-attention' : 'hw-status',
       { type: 'basic', iconUrl: 'icons/icon128.png', title: '作业助手', message },
       () => void chrome.runtime.lastError,
     );
@@ -256,12 +262,13 @@ function notify(message) {
     /* 通知权限异常时静默 */
   }
 }
-chrome.notifications?.onClicked.addListener(async () => {
+chrome.notifications?.onClicked.addListener(async id => {
+  if (id !== 'hw-doubao-attention') return;
   const tabs = await chrome.tabs.query({ url: '*://*.doubao.com/*' });
-  if (!tabs.length) return;
-  await chrome.tabs.update(tabs[0].id, { active: true });
+  const tab = tabs.length ? await chrome.tabs.update(tabs[0].id, { active: true })
+    : await chrome.tabs.create({ url: 'https://www.doubao.com/chat/', active: true });
   try {
-    await chrome.windows.update(tabs[0].windowId, { focused: true });
+    await chrome.windows.update(tab.windowId, { focused: true });
   } catch {
     /* 窗口可能已关闭 */
   }
@@ -309,9 +316,9 @@ async function checkUpdate(force, cacheOnly) {
   return updResult(current, latest, false);
 }
 
-async function askEngine(cfg, q) {
+async function askEngine(cfg, q, auto = false) {
   if (cfg.engine === 'bridge') return answerWithBridge(q, cfg.bridge);
-  return answerWithAPI(q, cfg.api, { verify2: cfg.verify2 !== false });
+  return answerWithAPI(q, cfg.api, { verify2: cfg.verify2 !== false, auto });
 }
 
 const UPDATE_HOST = `com.homeworkhelper.autoupdate.${chrome.runtime.id}`;
@@ -453,10 +460,30 @@ function cacheSet(key, val) {
   return chrome.storage.local.set({ ['c:' + key]: val });
 }
 
-async function startRun(questions, tabId, sourceUrl) {
+async function fillAnswer(activeRun, index, payload) {
+  const item = activeRun.items[index];
+  item.fillToken = crypto.randomUUID();
+  item.status = 'answered';
+  sendTab(activeRun.tabId, { type: 'HW_ANSWER', payload: { ...payload, index, fillToken: item.fillToken } });
+  const deadline = Date.now() + 30000;
+  while (item.status === 'answered' && !activeRun.cancelled && run === activeRun && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  if (activeRun.cancelled || run !== activeRun) return false;
+  if (item.status === 'answered') {
+    item.status = 'failed';
+    item.error = '页面填写回执超时，已停止；请刷新页面（F5）后核对';
+    sendTab(activeRun.tabId, { type: 'HW_STATUS', payload: { index, status: 'failed', error: item.error } });
+    await pauseRun(activeRun.tabId, item.error);
+  }
+  return item.status === 'filled' || (activeRun.auto && item.status === 'failed' && !activeRun.cancelled);
+}
+
+async function startRun(questions, tabId, sourceUrl, auto = false) {
   const cfg = await getConfig();
   if (run) run.cancelled = true;
-  const activeRun = { tabId, sourceUrl, cancelled: false, items: questions.map((q) => ({ q, status: 'queued', answer: null, error: null })) };
+  const activeRun = { tabId, sourceUrl, engine: cfg.engine, auto: auto && cfg.engine === 'api', cancelled: false,
+    items: questions.map((q) => ({ q, status: 'queued', answer: null, error: null })) };
   run = activeRun;
   (async () => {
     for (let i = 0; i < activeRun.items.length; i++) {
@@ -470,9 +497,8 @@ async function startRun(questions, tabId, sourceUrl) {
         continue;
       }
       if (item.q._decision === 'rewrite') {
-        item.status = 'answered';
         item.answer = { answer: item.q._refAnswer, note: '改写' };
-        sendTab(tabId, { type: 'HW_ANSWER', payload: { index: i, answer: item.q._refAnswer, kind: 'rewrite', note: `写错了已改写（页面原答案: ${item.q._pageAnswer || '空'}）` } });
+        if (!(await fillAnswer(activeRun, i, { answer: item.q._refAnswer, kind: 'rewrite', note: `写错了已改写（页面原答案: ${item.q._pageAnswer || '空'}）` }))) return;
         continue;
       }
       item.status = 'asking';
@@ -480,46 +506,47 @@ async function startRun(questions, tabId, sourceUrl) {
       try {
         const key = await cacheKeyOf(item.q);
         let ans = await cached(key);
+        if (ans && /采用初答|先刷完|复核不一致|复核失败/.test(ans.note || '')) ans = null;
         if (activeRun.cancelled || run !== activeRun) return;
         const fromCache = !!ans;
         if (!ans) {
-          const r = await askEngine(cfg, item.q);
+          const r = await askEngine(cfg, item.q, activeRun.auto);
           if (activeRun.cancelled || run !== activeRun) return;
           ans = { answer: r.answer, note: r.note || null };
           await cacheSet(key, ans);
         }
         if (activeRun.cancelled || run !== activeRun) return;
-        item.status = 'answered';
         item.answer = ans;
-        sendTab(tabId, { type: 'HW_ANSWER', payload: { index: i, answer: ans.answer, fromCache, note: ans.note } });
+        if (!(await fillAnswer(activeRun, i, { answer: ans.answer, fromCache, note: ans.note }))) return;
       } catch (e) {
         if (activeRun.cancelled || run !== activeRun) return;
-        /* 题干/选项里含还原不了的字形（font-decoder 现在返回 U+FFFD 占位）时，
-           AI 读到的就是乱码，答案必然对不上（2026-10-22 传统文化/大学英语实测）。
-           用户明确「先刷完，不强求正确率」：客观题不再失败/暂停整轮，
-           直接选第一个选项走正常填写链路；填空/主观题仍如实失败留人工。 */
-        const objective = ['choice', 'multi', 'judge'].includes(item.q?.type);
-        if (objective) {
-          const first = (item.q.options || [])[0];
-          const fallback = item.q.type === 'judge' ? 'T' : (first?.key || 'A');
-          item.status = 'answered';
-          item.answer = { answer: fallback, note: 'AI 未给出可用答案，按「先刷完」约定选第一项' };
-          if (typeof key === 'string') await cacheSet(key, item.answer);
-          sendTab(tabId, { type: 'HW_ANSWER', payload: { index: i, answer: fallback, fromCache: false, note: item.answer.note } });
-          await new Promise((r) => setTimeout(r, 300));
-          continue;
-        }
         item.status = 'failed';
         item.error = String(e.message || e);
         item.raw = e.answerPreview;
-        sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error } });
+        sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error, answerPreview: item.raw } });
         // 风控/验证类错误：第一次就暂停队列，不去撞验证码
-        if (RISKY_RE.test(item.error)) {
+        if (cfg.engine === 'bridge' && RISKY_RE.test(item.error)) {
           return pauseRun(tabId, '豆包需要人工确认，队列已暂停：' + item.error);
         }
         // 鉴权失败：Key 无效/不匹配，继续跑只会全部失败，立即暂停
         if (AUTH_RE.test(item.error)) {
           return pauseRun(tabId, 'API 鉴权失败（Key 无效或与接口地址不匹配）。包月套餐（如火山 Coding Plan）必须选对应供应商预设、用 /api/coding 专用地址：' + item.error.slice(0, 110));
+        }
+        if (activeRun.auto && e.code === 'HW_ANSWER_UNAVAILABLE') {
+          const options = (item.q.options || []).map(option => option.key).filter(key => /^[A-H]$/.test(key));
+          const slots = item.q.slotOptions || [];
+          const pick = values => values[Math.floor(Math.random() * values.length)];
+          const guess = e.candidateAnswer || (item.q.type === 'judge' ? (Math.random() < .5 ? '对' : '错')
+            : ['choice', 'multi'].includes(item.q.type) && options.length ? pick(options)
+            : item.q.type === 'blank' && slots.length === item.q.blanks && slots.length && slots.every(values => values.length)
+              ? JSON.stringify(slots.map(pick)) : '');
+          if (guess) {
+            const note = e.candidateAnswer ? '复核未确认，采用初答继续' : 'AI 无法作答，随机选项兜底（未确认）';
+            item.answer = { answer: guess, note };
+            // 仅在刷课中使用一次，不把未确认答案写入答题缓存。
+            if (!(await fillAnswer(activeRun, i, { answer: guess, note, fallback: true, answerPreview: item.raw }))) return;
+          }
+          continue;
         }
         // 任何失败立即暂停（用户要求：不重试不硬扛）
         return pauseRun(tabId, item.error.slice(0, 140));
@@ -554,14 +581,15 @@ async function rerunOne(index, tabId) {
   try {
     const r = await askEngine(cfg, item.q);
     if (activeRun.cancelled || run !== activeRun) return { ok: false, error: '页面题目已失效，请重新检测' };
-    item.status = 'answered';
     item.answer = r.answer;
     // 手动重答视为最新权威答案：覆盖旧缓存（包括之前的错误答案）
     if (r.answer) {
       const key = await cacheKeyOf(item.q);
       await cacheSet(key, { answer: r.answer, note: r.note || null });
     }
-    sendTab(tabId, { type: 'HW_ANSWER', payload: { index, answer: r.answer, kind: 'rewrite', note: r.note } });
+    item.fillToken = crypto.randomUUID();
+    item.status = 'answered';
+    sendTab(tabId, { type: 'HW_ANSWER', payload: { index, fillToken: item.fillToken, answer: r.answer, kind: 'rewrite', note: r.note } });
     return { ok: true };
   } catch (e) {
     item.status = 'failed';
@@ -632,10 +660,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') + '#' + section });
         sendResponse({ ok: true });
       } else if (type === 'HW_START') {
-        sendResponse(await startRun(payload.questions || [], tabId, sender.url || sender.tab?.url));
+        sendResponse(await startRun(payload.questions || [], tabId, sender.url || sender.tab?.url, payload.auto === true));
       } else if (type === 'HW_FILLED') {
         const it = run?.items[payload.index];
-        if (!it) return sendResponse({ ok: true });
+        if (!it || it.status !== 'answered' || run.tabId !== tabId || (it.fillToken && payload.fillToken !== it.fillToken) || run.cancelled) return sendResponse({ ok: true });
         if (payload.ok) {
           it.status = 'filled';
           return sendResponse({ ok: true });
@@ -645,7 +673,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         it.error = '填写失败：' + (payload.error || '页面未接受答案');
         if (run && !run.cancelled) {
           sendTab(run.tabId, { type: 'HW_STATUS', payload: { index: payload.index, status: 'failed', error: it.error } });
-          pauseRun(run.tabId, '填写失败，队列已暂停：' + it.error);
+          if (!run.auto) pauseRun(run.tabId, '填写失败，队列已暂停：' + it.error);
         }
         sendResponse({ ok: true });
       } else if (type === 'HW_WATCH_COURSES') {
@@ -888,21 +916,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 /* 新装／更新时，已打开的页面不会自动重放声明式内容脚本，补上悬浮入口。 */
-async function injectOpenHomeworkTabs() {
+const pendingPanelTabs = new Set();
+const panelInjections = new Map();
+async function injectOpenHomeworkTabs(loadedTab) {
   const script = chrome.runtime.getManifest().content_scripts?.find(s => s.matches.includes('*://*.chaoxing.com/*'));
   if (!script) return;
-  const tabs = await chrome.tabs.query({ url: script.matches });
+  const tabs = loadedTab ? [loadedTab] : await chrome.tabs.query({ url: script.matches });
   for (const tab of tabs) {
-    if (tab.id == null) continue;
-    try {
-      const [{ result: ready } = {}] = await chrome.scripting.executeScript({ target: { tabId: tab.id },
-        func: () => !!globalThis.HW?.Panel && !!document.getElementById('hw-panel-host') });
-      if (!ready) await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: script.js });
-    } catch (e) {
-      await recordIssue({ stage: '加载面板', message: String(e.message || e), url: tab.url }).catch(() => {});
+    if (tab.id == null || !/^https?:\/\/(?:[a-z0-9-]+\.)*chaoxing\.com\//i.test(tab.url || '')) continue;
+    if (tab.status === 'loading') { pendingPanelTabs.add(tab.id); continue; }
+    if (!panelInjections.has(tab.id)) {
+      const task = (async () => {
+        try {
+          if (!(await chrome.permissions.contains({ origins: [new URL(tab.url).origin + '/*'] }))) throw new Error(WATCH_HOST_ACCESS_ERROR);
+          const [{ result: ready } = {}] = await chrome.scripting.executeScript({ target: { tabId: tab.id },
+            func: () => !!globalThis.HW?.Panel && !!document.getElementById('hw-panel-host') });
+          if (!ready) await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: script.js });
+        } catch (e) {
+          const raw = String(e.message || e);
+          const message = /Cannot access|permission to access/i.test(raw)
+            ? '面板加载被浏览器拒绝：请检查扩展的超星站点访问权限，允许访问后刷新页面（F5）' : raw;
+          await recordIssue({ stage: '加载面板', message, details: raw, url: tab.url }).catch(() => {});
+        }
+      })();
+      panelInjections.set(tab.id, task);
     }
+    try { await panelInjections.get(tab.id); }
+    finally { panelInjections.delete(tab.id); }
   }
 }
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && pendingPanelTabs.delete(tabId)) return injectOpenHomeworkTabs({ ...tab, id: tabId }).catch(() => {});
+});
 chrome.runtime.onInstalled?.addListener(() => injectOpenHomeworkTabs().catch(() => {}));
 chrome.runtime.onStartup?.addListener(() => injectOpenHomeworkTabs().catch(() => {}));
 

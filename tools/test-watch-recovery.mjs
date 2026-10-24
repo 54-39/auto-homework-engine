@@ -70,7 +70,12 @@ for (const type of ['task', 'entry', 'incomplete', 'progress']) {
   assert.ok(f.calls.includes('2:0'), '出错后必须继续后续章节');
   if (type === 'task') assert.ok(f.calls.includes('1:1'), '单个任务异常不能吞掉同章后续任务');
   const item = f.messages.find(message => message.type === 'HW_ISSUE_ADD')?.payload;
-  if (type === 'task') assert.equal(item.scene.documents[0].html, '错误章节-1', '必须在跳过到后续章节前保存现场');
+  if (type === 'task') {
+    assert.equal(item, undefined, '同章后续任务已完成时，过程性失败只留日志');
+    assert.ok(f.notes.some(text => text.includes('模型失败')));
+    console.log('PASS 过程性跳过只留日志，同章和后续章节仍继续');
+    continue;
+  }
   assert.ok(item?.course && item.chapter && item.stack && item.details && item.action.includes('未计为完成'));
   if (type === 'incomplete') assert.equal(f.reports[0].details.status, 'incomplete', '推进队列不能假报完成');
   console.log('PASS 跳过并记录完整诊断，后续任务继续：' + type);
