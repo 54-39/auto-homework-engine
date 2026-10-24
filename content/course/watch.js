@@ -1331,6 +1331,7 @@
   let courseTiming = null;
   let videoFailure = null;
   let lastQuizGrade = null; // 本节最近一次交卷的测验成绩，收尾解释「剩 1 个任务点」用
+  let chapterSkipTrail = []; // 本节过程性跳过的原因清单（quiet 时收集，收尾汇总进未完成记录）
   let videoAttempt = 0;
   const failedChapters = new Set();
   let autoRate = false; // 倍速跟播放器菜单里最高档走，不看用户选的数字
@@ -1767,7 +1768,10 @@
        记录——用户 2026-10-24 拍板：异常记录只收「低分」和「未完成」，别让过程噪声淹没
        真正要看的。收尾的「仍有 N 个任务点未完成」会如实兜住这些节的结果。 */
     note('已跳过：' + message + (quiet ? '' : '（详情见诊断）'));
-    if (quiet) return;
+    if (quiet) {
+      chapterSkipTrail.push(((context.task || '') ? context.task + '：' : '') + message);
+      return;
+    }
     const course = currentCourse();
     const chapter = nodes().find(n => n.id === activeChapterId());
     const details = {
@@ -1824,6 +1828,7 @@
       checkVerification();
       await dismissUnfinishedDialog(); // 挡在切节前的「还有任务点未完成」提示，选「去学习」
       const cur = list[i];
+      chapterSkipTrail = []; // 本节的过程性跳过轨迹：收尾随「仍未完成」一起进异常记录
       if (unfinishedOf(cur.id) === 0) {
         skipped++;
         i++;
@@ -2017,9 +2022,11 @@
       }
       if (left > 0) {
         /* 测验低分是「剩 1 个任务点」的主因（2026-10-24 异常记录 41 组）：交卷了但站点
-           不认低分卷为完成。刚交过卷就把分数写进跳过原因，别让用户以为插件卡住。 */
+           不认低分卷为完成。分数与本节的过程性跳过轨迹都写进原因，导出记录即可看到
+           「为什么没完成」的完整链条。 */
         const g = lastQuizGrade && lastQuizGrade.chapter === cur.id ? lastQuizGrade : null;
-        await recordWatchSkip(new Error(g ? `仍有 ${left} 个任务点未完成；本节测验 ${g.score}/${g.total} 分，站点不认低分卷为完成` : `仍有 ${left} 个任务点未完成`), { chapter: cur.name, remainingJobs: left });
+        const trail = chapterSkipTrail.length ? '；过程：' + chapterSkipTrail.join('；') : '';
+        await recordWatchSkip(new Error(((g ? `仍有 ${left} 个任务点未完成；本节测验 ${g.score}/${g.total} 分，站点不认低分卷为完成` : `仍有 ${left} 个任务点未完成`) + trail).slice(0, 300)), { chapter: cur.name, remainingJobs: left, process: chapterSkipTrail.slice() });
       }
       const completed = list.filter(n => unfinishedOf(n.id) === 0).length;
       live(`${scopeChapters ? '本次' : ''}已完成 ${completed}/${list.length} 节 · ${leftText()}`);
