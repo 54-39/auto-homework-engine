@@ -1761,6 +1761,34 @@
     note('讨论页：这一节没有可发的讨论（可能只许老师发帖），跳过');
   }
 
+  /* 收尾诊断：列出本节还挂着哪些未完成任务点（角标类型 + 所在框架），讨论卡单独说明。 */
+  function unfinishedJobSummary() {
+    const out = [];
+    for (const d of docs()) {
+      try {
+        for (const ic of d.querySelectorAll('.ans-job-icon')) {
+          if (ic.parentElement && ic.parentElement.classList.contains('ans-job-finished')) continue;
+          const kind = ic.classList.contains('ans-job-video') ? '视频' : ic.classList.contains('ans-job-work') ? '测验/作业' : '阅读/其他';
+          const frame = d === document ? '主文档' : String(d.URL || '').replace(/^https?:\/\/[^/]+\//, '/').slice(0, 50);
+          out.push(kind + '（' + frame + '）');
+        }
+      } catch { /* 跨域文档跳过 */ }
+    }
+    if (bbsCard()) { out.push('讨论卡待处理'); return out; }
+    for (const d of docs()) {
+      try {
+        for (const h of d.querySelectorAll('.ans-attach-ct')) {
+          const src = h.querySelector('iframe')?.src || '';
+          if (src.includes('/ananas/modules/insertbbs/') && !h.classList.contains('ans-job-finished') && bbsTried.has(bbsKeyOf(h))) {
+            out.push('讨论卡已回帖、站点未计入完成');
+            return out;
+          }
+        }
+      } catch { /* 跨域文档跳过 */ }
+    }
+    return out;
+  }
+
   async function recordWatchSkip(error, context = {}, quiet = false) {
     failedChapters.add(activeChapterId());
     const message = String(error?.message || error);
@@ -2020,13 +2048,28 @@
         courseTiming = timing;
         await chrome.storage.local.set({ [timingKey]: timing }).catch(() => {});
       }
-      if (left > 0) {
+      let leftNow = left;
+      if (leftNow > 0 && on && activeChapterId() === cur.id) {
+        /* 融思政等页签的讨论卡（insertbbs）是懒加载的：页签刚切过去时 bbsCard() 常常
+           为空，整节被当纯阅读走完、process 里无痕（2026-10-24 异常记录 6 节）。收尾
+           发现没做完时卡片多半已经冒出来——此刻补做再复查；第一次根本没做，不算重做。 */
+        while (on && unfinishedOf(cur.id) > 0 && activeChapterId() === cur.id && bbsCard()) {
+          live(`收尾补做讨论卡：${shortName(cur.name)}`);
+          if (!(await openBbsCard())) break;
+          await step(1500);
+        }
+        leftNow = unfinishedOf(cur.id);
+      }
+      if (leftNow > 0) {
         /* 测验低分是「剩 1 个任务点」的主因（2026-10-24 异常记录 41 组）：交卷了但站点
-           不认低分卷为完成。分数与本节的过程性跳过轨迹都写进原因，导出记录即可看到
-           「为什么没完成」的完整链条。 */
+           不认低分卷为完成。分数、剩余任务点的类型与本节的过程性跳过轨迹都写进原因，
+           导出记录即可看到「为什么没完成」的完整链条。 */
         const g = lastQuizGrade && lastQuizGrade.chapter === cur.id ? lastQuizGrade : null;
+        const quizNote = !g ? '' : g.score >= g.total ? '本节测验已满分，剩余任务点与测验无关'
+          : `本节测验 ${g.score}/${g.total} 分，站点不认低分卷为完成`;
         const trail = chapterSkipTrail.length ? '；过程：' + chapterSkipTrail.join('；') : '';
-        await recordWatchSkip(new Error(((g ? `仍有 ${left} 个任务点未完成；本节测验 ${g.score}/${g.total} 分，站点不认低分卷为完成` : `仍有 ${left} 个任务点未完成`) + trail).slice(0, 300)), { chapter: cur.name, remainingJobs: left, process: chapterSkipTrail.slice() });
+        await recordWatchSkip(new Error((`仍有 ${leftNow} 个任务点未完成` + (quizNote ? '；' + quizNote : '') + trail).slice(0, 300)),
+          { chapter: cur.name, remainingJobs: leftNow, process: chapterSkipTrail.slice(), jobs: unfinishedJobSummary() });
       }
       const completed = list.filter(n => unfinishedOf(n.id) === 0).length;
       live(`${scopeChapters ? '本次' : ''}已完成 ${completed}/${list.length} 节 · ${leftText()}`);
