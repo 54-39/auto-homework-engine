@@ -806,7 +806,11 @@
         time.dataset.tip = seconds === null ? '课程页面尚未提供任务进度，暂时无法估算' :
           `按剩余任务点和${courseTimes[HW.Watch.courseTimeKey(c)]?.jobs ? '本课程实际耗时' : '默认每任务点 4 分钟（2 倍速）'}粗估；视频长度、倍速和 AI 响应时间会影响用时`;
         const prog = row.querySelector('.cprog');
-        const label = Number.isFinite(c.total) ? `${c.done}/${c.total}` : '';
+        /* 节数进度来自本机刷课记录（watchTime 里刷到这门课时记下的目录统计）；
+           没刷过的课列表页拿不到节数，先只显示任务点进度。 */
+        const tm = courseTimes[HW.Watch.courseTimeKey(c)];
+        const label = (Number.isFinite(c.total) ? `${c.done}/${c.total}` : '')
+          + (Number.isFinite(tm?.sectionsTotal) ? ` · ${tm.sectionsDone || 0}/${tm.sectionsTotal} 节` : '');
         if (prog.textContent !== label) prog.textContent = label;
         const done = courseComplete(c);
         const blocked = done || (limitedRun() && !eligibleLimited(c));
@@ -849,6 +853,9 @@
     document.addEventListener('load', e => {
       if (e.target?.tagName === 'IFRAME') refreshEmbeddedCourses();
     }, true);
+    /* 面板重建后立即对一次后台队列：跳页重建的头几秒里按钮别显示「开始刷课」误导
+       用户重复点击（2026-10-24 反馈），3 秒轮询只做后续刷新。 */
+    refreshQueueInfo(true);
     setInterval(() => {
       if (HW.Watch?.running) updateWatchContext();
       /* 队列状态每 3 秒对一次：脚本跳页后按钮文字、队列信息、剩余时间都跟着走，

@@ -698,7 +698,7 @@
   function courseProgress() {
     const list = nodes();
     const counts = list.map(n => unfinishedOf(n.id));
-    return list.length && counts.every(n => n !== null) ? { remainingJobs: counts.reduce((sum, n) => sum + n, 0) } : null;
+    return list.length && counts.every(n => n !== null) ? { remainingJobs: counts.reduce((sum, n) => sum + n, 0), sectionsDone: counts.filter(n => n === 0).length, sectionsTotal: list.length } : null;
   }
   async function rememberCourseProgress() {
     const course = currentCourse(), progress = courseProgress();
@@ -1330,6 +1330,7 @@
   let rate = 2;
   let courseTiming = null;
   let videoFailure = null;
+  let lastQuizGrade = null; // 本节最近一次交卷的测验成绩，收尾解释「剩 1 个任务点」用
   let videoAttempt = 0;
   const failedChapters = new Set();
   let autoRate = false; // 倍速跟播放器菜单里最高档走，不看用户选的数字
@@ -1380,6 +1381,13 @@
       while (on && !findVideo(endedEls)) {
         if (everEnded || videoJobsDone()) return true;
         if (Date.now() > deadline) {
+          /* 页签里没有未完成的视频角标就不算失败：拓展练习这类页签只有站点模板的
+             空壳 video（无 src），上一节播完的 ended 让 classify 误进视频分支，
+             空等 12 秒后原来按失败跳过整页（2026-10-24 异常记录 3 组）。 */
+          if (!videoJobs().some((ic) => ic.parentElement && !ic.parentElement.classList.contains('ans-job-finished'))) {
+            live('这一页没有待播的视频任务点');
+            return true;
+          }
           note('这一节没出现视频，跳过视频页');
           return false;
         }
@@ -1453,6 +1461,10 @@
              everEnded 已由 ended 事件置位，不受轮询窗口漏检影响。 */
           if (everEnded || videoJobsDone()) return true;
           if (Date.now() > deadline) {
+            if (!videoJobs().some((ic) => ic.parentElement && !ic.parentElement.classList.contains('ans-job-finished'))) {
+              live('这一页没有待播的视频任务点');
+              return true;
+            }
             note('这一节没出现视频，跳过视频页');
             return false;
           }
@@ -1570,6 +1582,7 @@
         for (let check = 0; check < 10 && on && !grade; check++) { await step(250); grade = quizGrade(); }
         if (grade) {
           live(`测验成绩：${grade.score}/${grade.total}`);
+          lastQuizGrade = { chapter: activeChapterId(), score: grade.score, total: grade.total };
           // 内层作业iframe的load事件不跨文档冒泡，不能只靠顶层load监听记录丢分。
           HW.Panel?.reportGrade?.();
           /* 用户 2026-10-22 明确「先刷完，不强求正确率」：低分只记日志，不再暂停整轮
@@ -1999,7 +2012,10 @@
         await chrome.storage.local.set({ [timingKey]: timing }).catch(() => {});
       }
       if (left > 0) {
-        await recordWatchSkip(new Error(`仍有 ${left} 个任务点未完成`), { chapter: cur.name, remainingJobs: left });
+        /* 测验低分是「剩 1 个任务点」的主因（2026-10-24 异常记录 41 组）：交卷了但站点
+           不认低分卷为完成。刚交过卷就把分数写进跳过原因，别让用户以为插件卡住。 */
+        const g = lastQuizGrade && lastQuizGrade.chapter === cur.id ? lastQuizGrade : null;
+        await recordWatchSkip(new Error(g ? `仍有 ${left} 个任务点未完成；本节测验 ${g.score}/${g.total} 分，站点不认低分卷为完成` : `仍有 ${left} 个任务点未完成`), { chapter: cur.name, remainingJobs: left });
       }
       const completed = list.filter(n => unfinishedOf(n.id) === 0).length;
       live(`${scopeChapters ? '本次' : ''}已完成 ${completed}/${list.length} 节 · ${leftText()}`);
