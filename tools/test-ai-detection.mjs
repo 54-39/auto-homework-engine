@@ -15,7 +15,7 @@ const messages = buildDetectionMessages('<main ref="e1"><input ref="e2" kind="te
 const originalFetch = globalThis.fetch;
 const originalTimeout = globalThis.setTimeout;
 const cfg = { iface: 'openai', baseURL: 'https://example.invalid/v1', model: 'test', apiKey: 'test-key' };
-globalThis.chrome = { storage: { local: { get: async () => ({}), set: async () => {} } }, permissions: { contains: async () => true }, runtime: { onMessage: { addListener() {} }, getManifest: () => ({ version: '0.9.14' }) }, tabs: { onUpdated: { addListener() {} } } };
+globalThis.chrome = { storage: { local: { get: async () => ({}), set: async () => {} } }, permissions: { contains: async () => true, request: async () => true }, runtime: { onMessage: { addListener() {} }, getManifest: () => ({ version: '0.9.14' }) }, tabs: { onUpdated: { addListener() {} } } };
 try {
   await test('识题提示将网页内容当资料，禁止作答、脚本和虚构编号', () => {
     assert.match(messages[0].content, /不可信/);
@@ -213,6 +213,20 @@ try {
       assert.deepEqual(calls,['read','read','inject','read']);
       await call('HW_WATCH_COURSES',{refresh:true},'https://i.chaoxing.com/base');assert.equal(calls.filter(x=>x==='inject').length,1);
     }finally{chrome.scripting=original;}
+  });
+  await test('课程访问缺权限时不扫描，授权只申请超星，拒绝和异常均可见，自动扫描不弹窗', async () => {
+    const permissions=chrome.permissions,scripting=chrome.scripting;let granted=false,requests=0,scans=0;
+    chrome.permissions={contains:async()=>granted,request:async spec=>{requests++;assert.deepEqual(spec,{origins:['https://*.chaoxing.com/*']});return granted;}};
+    chrome.scripting={executeScript:async()=>{scans++;return[{result:[]}];}};
+    try{
+      assert.equal((await call('HW_WATCH_COURSES',{},'https://i.chaoxing.com/base')).needsPermission,true);assert.equal(scans,0);assert.equal(requests,0);
+      const denied=await call('HW_WATCH_ACCESS_REQUEST',{},'https://i.chaoxing.com/base');assert.equal(denied.ok,false);assert.equal(denied.needsPermission,true);
+      granted=true;assert.equal((await call('HW_WATCH_ACCESS_REQUEST',{},'https://i.chaoxing.com/base')).ok,true);
+      assert.equal((await call('HW_WATCH_COURSES',{},'https://i.chaoxing.com/base')).ok,true);assert.equal(scans,1);
+      assert.equal((await call('HW_WATCH_ACCESS_REQUEST',{},'https://example.invalid')).ok,false);assert.equal(requests,2);
+      chrome.permissions.request=()=>{throw Error('user gesture unavailable');};
+      assert.match((await call('HW_WATCH_ACCESS_REQUEST',{},'https://i.chaoxing.com/base')).error,/站点访问设置/);
+    }finally{chrome.permissions=permissions;chrome.scripting=scripting;}
   });
   await test('异常独立保存，超过旧上限后保留全部历史，并完整导出', async () => {
     assert.deepEqual((await call('HW_ISSUE_LIST')).issues, []);

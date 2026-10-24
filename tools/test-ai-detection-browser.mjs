@@ -42,6 +42,7 @@ function fixtureBoot() {
         if (msg.type === 'SET_CONFIG') return { ok: true, config: setExternalConfig(msg.payload) };
         if (msg.type === 'KEY_LIST') return { ok: true, list: [] };
         if (msg.type === 'CHECK_UPDATE') return { ok: false };
+        if (msg.type === 'HW_WATCH_ACCESS_REQUEST') return window.courseAccessResult || {ok:true};
         if (msg.type === 'HW_BRIDGE_SPLIT') return window.bridgeSplitResult || { ok: true };
         if (msg.type === 'HW_WATCH_COURSES') {
           window.lastCourseRefresh = msg.payload?.refresh === true;
@@ -892,6 +893,30 @@ async function browserChecks() {
       ok(ui.querySelector('.watchline').textContent.includes('读取失败'));
     }finally{chrome.runtime.sendMessage=original;window.frameCourseResults=saved;}
     button.click();await until(()=>!button.disabled);ok(ui.querySelectorAll('.crow[data-i]').length===3);
+    await setPanelMode('homework');
+  });
+  await check('点击刷新先申请超星授权，拒绝不扫描也不丢勾选，授权后继续同次刷新', async () => {
+    await setPanelMode('watch');const button=ui.querySelector('.courserefresh');
+    window.courseAccessResult={ok:false,needsPermission:true,error:'未获得超星站点访问权限'};
+    const scans=testCalls.filter(type=>type==='HW_WATCH_COURSES').length;
+    const selected=ui.querySelector('.crow[data-i="0"] input').checked;
+    button.click();await until(()=>!button.disabled);
+    ok(testCalls.filter(type=>type==='HW_WATCH_COURSES').length===scans);
+    ok(ui.querySelector('.watchline').textContent.includes('权限')&&ui.querySelector('.crow[data-i="0"] input').checked===selected);
+    delete window.courseAccessResult;
+    button.click();await until(()=>!button.disabled);
+    ok(testCalls.filter(type=>type==='HW_WATCH_COURSES').length>scans);
+    await setPanelMode('homework');
+  });
+  await check('授权期间旧读取返回缺权限时，继续重新读取，不把旧提示当作授权结果', async () => {
+    await setPanelMode('watch');const button=ui.querySelector('.courserefresh'),original=chrome.runtime.sendMessage;
+    const beforeIssues=testCalls.filter(type=>type==='HW_ISSUE_ADD').length;let release;
+    chrome.runtime.sendMessage=msg=>msg.type==='HW_WATCH_COURSES'?new Promise(resolve=>{release=resolve;}):original(msg);
+    document.getElementById('courseListFrame').dispatchEvent(new Event('load'));await until(()=>!!release);
+    button.click();await wait(0);chrome.runtime.sendMessage=original;
+    release({ok:false,needsPermission:true,error:'旧请求仍缺少超星站点权限'});await until(()=>!button.disabled);
+    ok(ui.querySelector('.watchline').textContent==='已读取 3 门课程','刚获得授权却保留了旧权限错误');
+    ok(testCalls.filter(type=>type==='HW_ISSUE_ADD').length===beforeIssues,'正常权限状态被当作异常重复记录');
     await setPanelMode('homework');
   });
   await check('开始刷课后标题下持续显示剩余时间，与任务状态行分别展示', async () => {

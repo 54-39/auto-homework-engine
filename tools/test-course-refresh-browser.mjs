@@ -51,7 +51,7 @@ try{
   const empty=await evaluate(worker,"(async()=>{const [tab]=await chrome.tabs.query({url:'https://i.chaoxing.com/*'});return(await chrome.scripting.executeScript({target:{tabId:tab.id,frameIds:[0]},func:()=>chrome.runtime.sendMessage({type:'HW_WATCH_COURSES',payload:{}})}))[0].result;})()");
   assert.equal(empty.ok,true);assert.equal(empty.courses.length,0);
   console.log('PASS 复现：课程卡片可见但内层读取器缺失，仅查已有对象返回空清单');
-  await evaluate(page,'document.querySelector("#hw-panel-host").shadowRoot.querySelector(".panel").classList.remove("hidden")');
+  await evaluate(page,'(()=>{const s=document.querySelector("#hw-panel-host").shadowRoot;s.querySelector(".panel").classList.remove("hidden");if(s.querySelector(".watchview").classList.contains("hidden")){s.querySelector(".modeslot .ddtrig").click();s.querySelector(".ddlist [data-id=watch]").click();}})()');
   await until(page,'!document.querySelector("#hw-panel-host").shadowRoot.querySelector(".watchview").classList.contains("hidden")');
   async function clickRefresh(){
     const point=await evaluate(page,'(()=>{const r=document.querySelector("#hw-panel-host").shadowRoot.querySelector(".courserefresh").getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()');

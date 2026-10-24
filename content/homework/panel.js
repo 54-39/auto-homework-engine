@@ -791,7 +791,7 @@
     }
     function refreshEmbeddedCourses(force = false) {
       if (courseFrameLoading) return force
-        ? courseFrameLoading.then(() => availableCourses().length ? undefined : refreshEmbeddedCourses(true))
+        ? courseFrameLoading.then(() => !courseFrameFailed && availableCourses().length ? undefined : refreshEmbeddedCourses(true))
         : courseFrameLoading;
       if (!hasCourseFrame() && !force) {
         embeddedCourses = [];
@@ -801,6 +801,11 @@
       courseFrameLoading = Promise.resolve().then(async () => {
         try {
           const result = await send('HW_WATCH_COURSES', { refresh: force });
+          if (result?.needsPermission) {
+            courseFrameFailed = true;
+            setWatchLine(result.error || '请点击「刷新课程」申请超星站点访问权限', true);
+            return;
+          }
           if (!result?.ok) throw new Error(result?.error || '未读到内嵌课程清单');
           courseFrameFailed = false;
           embeddedCourses = result.courses || [];
@@ -818,12 +823,21 @@
     els.courserefresh.addEventListener('click', async () => {
       const focused = root.activeElement === els.courserefresh;
       els.courserefresh.disabled = true;
-      els.courserefresh.textContent = '读取中…';
+      els.courserefresh.textContent = '检查权限…';
       els.courserefresh.setAttribute('aria-busy', 'true');
+      setWatchLine('正在检查权限；如浏览器提示授权，请允许访问超星站点后继续');
       try {
+        const access = await send('HW_WATCH_ACCESS_REQUEST');
+        if (!access?.ok) {
+          setWatchLine(access?.error || '未获得超星站点访问权限，请再次点击刷新申请授权', true);
+          return;
+        }
+        els.courserefresh.textContent = '读取中…';
         await refreshEmbeddedCourses(true);
         renderCourses();
         if (!courseFrameFailed) setWatchLine(availableCourses().length ? `已读取 ${availableCourses().length} 门课程` : '暂未读到课程，请确认课程列表已加载');
+      } catch (e) {
+        setWatchLine('授权或刷新失败，请重试：' + String(e.message || e), true);
       } finally {
         els.courserefresh.disabled = false;
         els.courserefresh.textContent = '刷新课程';

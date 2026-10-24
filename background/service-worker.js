@@ -93,7 +93,7 @@ async function loadQueue() {
   return watchQueue;
 }
 
-const WATCH_HOST_ACCESS_ERROR = '缺少超星持续站点访问权限：请在扩展管理中允许访问 https://*.chaoxing.com/*，刷新课程页后再开始；仅点击时允许访问无法自动换节。';
+const WATCH_HOST_ACCESS_ERROR = '缺少超星持续站点访问权限：请先点击「刷新课程」按提示授权超星站点，再开始刷课；仅在点击时的临时访问无法保证跨域读取和自动换节。';
 async function ensureWatchHostAccess() {
   if (await chrome.permissions.contains({ origins: ['https://*.chaoxing.com/*'] })) return true;
   const q = await loadQueue();
@@ -677,6 +677,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (!run.auto) pauseRun(run.tabId, '填写失败，队列已暂停：' + it.error);
         }
         sendResponse({ ok: true });
+      } else if (type === 'HW_WATCH_ACCESS_REQUEST') {
+        const here = new URL(sender.url || sender.tab?.url || 'about:blank');
+        if (tabId == null || !/(^|\.)chaoxing\.com$/.test(here.hostname)) throw new Error('请在超星页面申请课程访问权限');
+        try {
+          // 直接承接刷新按钮的用户操作；不先等待扫描或其他异步任务，以保留授权手势。
+          const granted = await chrome.permissions.request({ origins: ['https://*.chaoxing.com/*'] });
+          sendResponse(granted ? { ok: true } : { ok: false, needsPermission: true, error: '未获得超星站点访问权限，无法读取课程；可再次点击「刷新课程」申请授权。' });
+        } catch (e) {
+          sendResponse({ ok: false, needsPermission: true, error: '无法完成超星授权，请在扩展的站点访问设置中允许超星站点后重试：' + String(e.message || e) });
+        }
       } else if (type === 'HW_BRIDGE_SPLIT') {
         const here = new URL(sender.url || sender.tab?.url || 'about:blank');
         if (tabId == null || !/(^|\.)chaoxing\.com$/.test(here.hostname)) throw new Error('请在超星作业页面打开豆包分屏');
@@ -684,6 +694,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (type === 'HW_WATCH_COURSES') {
         const here = new URL(sender.url || sender.tab?.url || 'about:blank');
         if (tabId == null || !/(^|\.)chaoxing\.com$/.test(here.hostname)) throw new Error('只能读取当前超星页面的课程清单');
+        if (!(await chrome.permissions.contains({ origins: ['https://*.chaoxing.com/*'] })))
+          return sendResponse({ ok: false, needsPermission: true, error: '读取跨域课程框架需要超星站点访问权限，请点击「刷新课程」申请授权。' });
         // 个人中心把课程列表放在跨域 iframe 中；在各自隔离上下文读取 DOM，不请求站点接口。
         const readFrames = () => chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => globalThis.HW?.Watch?.courseLinks?.() || [] });
         let frames = await readFrames();
