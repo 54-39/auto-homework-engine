@@ -1760,11 +1760,16 @@
     note('讨论页：这一节没有可发的讨论（可能只许老师发帖），跳过');
   }
 
-  async function recordWatchSkip(error, context = {}) {
+  async function recordWatchSkip(error, context = {}, quiet = false) {
     failedChapters.add(activeChapterId());
+    const message = String(error?.message || error);
+    /* 节内的过程性跳过（页签没加载、空壳卡、空壳视频、回执没等到…）只进日志不进异常
+       记录——用户 2026-10-24 拍板：异常记录只收「低分」和「未完成」，别让过程噪声淹没
+       真正要看的。收尾的「仍有 N 个任务点未完成」会如实兜住这些节的结果。 */
+    note('已跳过：' + message + (quiet ? '' : '（详情见诊断）'));
+    if (quiet) return;
     const course = currentCourse();
     const chapter = nodes().find(n => n.id === activeChapterId());
-    const message = String(error?.message || error);
     const details = {
       chapterId: activeChapterId(), pageKind: pageKind(), rate,
       remainingJobs: chapter ? unfinishedOf(chapter.id) : null,
@@ -1778,7 +1783,6 @@
       chapter: context.chapter || chapter?.name || '', task: context.task || tabList().find(tabActive)?.textContent.trim() || '',
       url: location.href, action: '跳过出错任务，继续后续；未计为完成', stack: String(error?.stack || new Error(message).stack || ''),
       details: JSON.stringify(details, null, 2), scene: globalThis.HW?.Diagnostics?.capture() };
-    note('已跳过：' + message + '（详情见诊断）');
     try {
       const result = await chrome.runtime.sendMessage({ type: 'HW_ISSUE_ADD', payload });
       if (!result?.ok) note('异常记录保存失败：' + (result?.error || '后台无回执'));
@@ -1864,7 +1868,7 @@
       await until(() => (tabList().length ? true : null), 12000);
       const tabs = tabList().length;
       if (!tabs) {
-        await recordWatchSkip(new Error('章节页签未加载'), { chapter: cur.name });
+        await recordWatchSkip(new Error('章节页签未加载'), { chapter: cur.name }, true);
         i++;
         continue;
       }
@@ -1875,7 +1879,7 @@
         /* 页签数每轮重算：站点换卡会重建 .prev_ul，早先取的长度会过期（2026-10-22 审计）。
            单个页签超时不再直接 break 掉剩下的页签，最多容忍一个。 */
         if (!(await goto(t))) {
-          await recordWatchSkip(new Error('页签加载失败'), { chapter: cur.name, task: `第 ${t + 1} 页签` });
+          await recordWatchSkip(new Error('页签加载失败'), { chapter: cur.name, task: `第 ${t + 1} 页签` }, true);
           continue;
         }
         if (activeChapterId() !== cur.id) {
@@ -1893,7 +1897,7 @@
           break;
         }
         if (!rendered) {
-          await recordWatchSkip(new Error('页面刷新后仍为空壳卡片'), { chapter: cur.name, task: `第 ${t + 1} 页签` });
+          await recordWatchSkip(new Error('页面刷新后仍为空壳卡片'), { chapter: cur.name, task: `第 ${t + 1} 页签` }, true);
           continue;
         }
         const kind = classify();
@@ -1906,7 +1910,7 @@
             live(`这一节视频都已完成，不重看：${shortName(cur.name)}`);
           } else {
             const done = await watchVideo();
-            if (!done) await recordWatchSkip(new Error('视频未播放完成即离开'), { chapter: cur.name });
+            if (!done) await recordWatchSkip(new Error('视频未播放完成即离开'), { chapter: cur.name }, true);
             else live(`视频看完：${shortName(cur.name)}`);
             await step(1200);
           }
@@ -1926,7 +1930,7 @@
               if (!(await goto(t))) break;
               if (!(await until(() => bbsCard(), 8000))) break;
             }
-            if (!(await openBbsCard())) { await recordWatchSkip(new Error('讨论未收到完成回执'), { chapter: cur.name }); break; }
+            if (!(await openBbsCard())) { await recordWatchSkip(new Error('讨论未收到完成回执'), { chapter: cur.name }, true); break; }
             live(`讨论已回帖：${shortName(cur.name)}`);
           }
           await step(1200);
@@ -1939,7 +1943,7 @@
              页面读不到问卷内部，靠 survey.js 在问卷页自己那一帧填写提交，
              这里只等目录角标归零（平台回执）再算完成。 */
           if (await openSurveyCard()) live(`问卷已提交：${shortName(cur.name)}`);
-          else await recordWatchSkip(new Error('问卷60秒内未收到完成回执'), { chapter: cur.name });
+          else await recordWatchSkip(new Error('问卷60秒内未收到完成回执'), { chapter: cur.name }, true);
           await step(1200);
           if (activeChapterId() !== cur.id) {
             jumped = true;
@@ -1990,7 +1994,7 @@
         }
         } catch (e) {
           if (e === STOP || e.code === 'HW_VERIFICATION_REQUIRED') throw e;
-          await recordWatchSkip(e, { chapter: cur.name, task: `第 ${t + 1} 页签` });
+          await recordWatchSkip(e, { chapter: cur.name, task: `第 ${t + 1} 页签` }, true);
         }
       }
       if (jumped) live('页面自动换章，按目录继续；未完成任务会在收尾时补查');

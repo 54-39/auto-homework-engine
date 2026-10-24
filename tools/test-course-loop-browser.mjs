@@ -108,7 +108,7 @@ async function loopChecks() {
       ok(notes.some(t=>/已跳过：模拟AI失败/.test(t)), '未记录跳过');
       ok((window.chaptersVisited||[]).filter(id=>id==='102').length>before, '出错后未继续下一章');
       ok((window.__submitClicks||0)===submitted,'失败测验仍被提交');
-      ok(window.watchIssues.some(m=>m.payload.stack && m.payload.details && m.payload.action),'跳过缺少完整诊断');
+      ok(window.watchIssues.some(m=>m.payload.stack && m.payload.details && m.payload.action),'测验没做成属于未完成类，应有完整诊断');
     } finally { HW.Watch.stop(); HW.Panel.runHomework = original; }
   });
 
