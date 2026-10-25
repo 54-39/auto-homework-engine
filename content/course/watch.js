@@ -206,13 +206,16 @@
     const card = surveyCard();
     if (!card) return false;
     const chapter = activeChapterId();
+    const my = gen;
     /* 问卷提交成功后，站点自己会 parent.postMessage({"cmd":"callBackFinishJob"}) 上报任务点完成。
        这是站点脚本在服务端返回 result==1 之后发的，比“我点过提交了”硬得多。 */
     let receipt = false;
+    let frame = null, started = false, retried = false;
     const onMessage = (e) => {
       try {
         const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
-        if (data && data.cmd === 'callBackFinishJob') receipt = true;
+        if (frame && e.source === frame.contentWindow && e.origin === new URL(frame.src).origin &&
+            data && data.cmd === 'callBackFinishJob') receipt = true;
       } catch { /* 不是站点的完成任务通知 */ }
     };
     window.addEventListener('message', onMessage);
@@ -221,8 +224,25 @@
       try { card.click(); } catch { return false; }
       for (let i = 0; i < 90 && on; i++) {
         await step(1000);
+        frame = document.querySelector('#voteIframe');
         if (chapter && activeChapterId() !== chapter) return true;
         if (chapter && unfinishedOf(chapter) === 0) return true;
+        const state = frame && await chrome.runtime.sendMessage({ type: 'HW_WATCH_SURVEY', payload: { start: !started, url: frame.src } }).catch(() => null);
+        if (!on || my !== gen) throw STOP;
+        if (state?.ok && state.state !== 'idle') started = true;
+        if (state?.state === 'submitted') receipt = true;
+        if (state?.state === 'expired') throw new Error('问卷已被教师结束或已截止，平台不再接受作答；继续后续任务');
+        if (state?.state === 'blocked') throw new Error(state.reason);
+        // 仅重载问卷框架一次，不刷新课程、不清空队列；已确认提交的问卷不重复提交。
+        if (!receipt && !retried && i >= 30 && state?.state !== 'submitted' &&
+            (!state?.ok || ['failed', 'pending', 'idle'].includes(state.state))) {
+          if (frame && /\/page\/questionnaire\/answerQuestionChapter/.test(frame.src)) {
+            checkVerification();
+            frame.src = frame.src;
+            retried = true; started = false;
+            live('问卷未收到回执，重新加载问卷后恢复一次');
+          }
+        }
         if (!receipt) continue;
         receipt = false;
         live('问卷已提交（站点回执），核对目录计数');
@@ -237,10 +257,13 @@
           return true;
         }
       }
-      note('问卷卡片没等到平台回执，留给人工核对');
+      note('问卷自动恢复后仍未收到平台回执，记录未完成并继续后续任务');
       return false;
     } finally {
       window.removeEventListener('message', onMessage);
+      // 超星把跨域问卷留在顶层弹层，换章不会自动关闭；只收起界面，不改任务完成状态。
+      const overlay = document.querySelector('.voteContainer');
+      if (overlay && (!frame || overlay.contains(frame))) overlay.style.display = 'none';
     }
   }
 
@@ -563,6 +586,7 @@
   /* 只滚阅读正文，不碰课程外壳和目录。预览器由自己的框架负责，避免两处抢滚动。
      用户在正文中滚轮、拖动或用键盘阅读后，本张文档让出控制，换文档后恢复自动阅读。 */
   const scrollCache = new WeakMap();
+  const scrollObserved = new WeakSet();
   const readingControls = new WeakMap();
   function readingControl(d) {
     let control = readingControls.get(d);
@@ -596,6 +620,13 @@
   }
 
   function scrollTargets(d) {
+    if (!d.documentElement) return [];
+    if (!scrollObserved.has(d)) {
+      new MutationObserver(() => scrollCache.delete(d)).observe(d.documentElement, {
+        subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'],
+      });
+      scrollObserved.add(d);
+    }
     const cached = scrollCache.get(d);
     if (cached?.length && cached.every(el => el.isConnected)) return cached;
     const root = d.scrollingElement || d.documentElement;
@@ -1257,13 +1288,13 @@
     const btn = pick('.vjs-big-play-button', doc) || pick('.vjs-play-control', doc);
     if (btn) { try { btn.click(); } catch { /* 控件可能正好被重建，忽略 */ } }
     setTimeout(() => {
-      if (!on || attempt !== videoAttempt || !v.paused) { kickFails = 0; return; }
+      if (!on || attempt !== videoAttempt || v.ended || v.isConnected === false || !v.paused) { kickFails = 0; return; }
       /* 有的课把播放按钮画在 canvas 里、或者被遮罩挡住，点按钮没反应。
          再点一次画面本身——原生播放器点画面就是播放/暂停，仍然是模拟点击，
          不改任何播放器状态（2026-10-21 赌徒的困惑实测：按钮点了两轮还在 37 秒停着）。 */
       try { v.click(); } catch { /* 画面被别的层盖住时忽略 */ }
       setTimeout(() => {
-        if (!on || attempt !== videoAttempt || !v.paused) { kickFails = 0; return; }
+        if (!on || attempt !== videoAttempt || v.ended || v.isConnected === false || !v.paused) { kickFails = 0; return; }
         if (++kickFails >= MAX_KICK_FAIL) {
           videoFailure = new Error('视频无法启动：点击播放后仍保持暂停');
         }
@@ -1461,7 +1492,6 @@
   let autoRate = false; // 倍速跟播放器菜单里最高档走，不看用户选的数字
   let muted = true;
   let guard = 0; // 只在看视频时开着的守倍速定时器
-  let lastForegroundAsk = 0; // 上一次请求「把窗口提到前台」的时间，防重复打扰
   let stopGuard = 0; // 停止后守 5 秒，防止站点自己把播放接回去
   let live = () => {};
   let note = () => {};
@@ -1479,7 +1509,7 @@
   async function watchVideo() {
     videoFailure = null;
     videoAttempt++;
-    const deadline = Date.now() + VIDEO_WAIT;
+    let deadline = Date.now() + VIDEO_WAIT;
     const chapter = activeChapterId();
     /* findVideo() 会把 ended 的视频挪开，所以 ended 状态要从原始列表里看，
        否则播完那一刻起循环里就再也看不到 ended，只能干等超时（测试抓过）。
@@ -1534,6 +1564,23 @@
       let lastPosition = 0;
       let lastAdvance = 0;
       let hiddenSince = 0;
+      let hiddenTries = 0, hiddenTryAt = 0;
+      let reloaded = false;
+      const reloadPlayer = async v => {
+        if (reloaded) return false;
+        let frame;
+        try { frame = v.ownerDocument.defaultView.frameElement; } catch { return false; }
+        if (!frame?.isConnected || !/\/ananas\/modules\/(video|audio)\//.test(frame.src)) return false;
+        checkVerification();
+        reloaded = true;
+        videoAttempt++; kickFails = 0; videoFailure = null; lastKick = 0;
+        hiddenTries = 0; hiddenTryAt = 0;
+        deadline = Date.now() + VIDEO_WAIT;
+        frame.src = frame.src;
+        live('播放恢复失败，重新加载播放器后继续一次');
+        await step(750);
+        return true;
+      };
       while (on) {
         if (chapter && activeChapterId() !== chapter) return false;
         if (chapter && unfinishedOf(chapter) === 0) return true;
@@ -1543,6 +1590,8 @@
         if (v) {
           if (v !== current) {
             current = v;
+            videoAttempt++;
+            hiddenSince = 0; hiddenTries = 0; hiddenTryAt = 0;
             lastPosition = v.currentTime;
             lastAdvance = Date.now();
             kickFails = 0; lastKick = 0; lastRateTry = 0;
@@ -1552,35 +1601,42 @@
           if (v.currentTime > lastPosition + 0.2) {
             lastPosition = v.currentTime;
             lastAdvance = Date.now();
+            hiddenTries = 0; hiddenTryAt = 0;
           }
           if (document.hidden && v.paused) {
-            /* 窗口恢复不了前台（用户在别的窗口打字/系统拒绝拉起）会无限等——
-               10 分钟还回不来就停止并保留队列，交给自动接续，别把整轮挂死。 */
-            if (!hiddenSince) {
-              hiddenSince = Date.now();
-              note('播放暂时中断：课程窗口不可见，等待恢复前台续播');
+            if (v.error) {
+              if (await reloadPlayer(v)) continue;
+              throw new Error('播放器重新加载后仍报错：' + (v.error.message || v.error.code));
             }
-            if (Date.now() - hiddenSince > 600000) {
-              throw new Error('课程窗口超过 10 分钟无法恢复前台播放');
+            if (!hiddenSince) hiddenSince = Date.now();
+            /* 先在原播放器里恢复，最多两轮、间隔至少 5 秒；只有真实播放进展才重置次数。 */
+            if (hiddenTries < MAX_KICK_FAIL && (!hiddenTries || Date.now() - hiddenTryAt >= 5000)) {
+              checkVerification();
+              hiddenTries++; hiddenTryAt = Date.now();
+              kick(v);
+            }
+            if (hiddenTries >= MAX_KICK_FAIL && Date.now() - hiddenTryAt >= 2500) {
+              if (await reloadPlayer(v)) continue;
+              throw new Error('后台播放自动恢复仍失败，保留未完成并继续后续任务');
             }
             lastAdvance = Date.now();
-            live('课程窗口不可见，等待恢复后续播');
-            /* 页面被切到后台/窗口被最小化时，站点自己会暂停播放，内容脚本也点不动。
-               无人值守时没人来恢复窗口，整轮就卡死在这里（2026-10-21 实测两次）。
-               交给后台把队列标签页重新提到前台：只做一次，两分钟内不重复打扰。 */
-            if (Date.now() - lastForegroundAsk > 120000) {
-              lastForegroundAsk = Date.now();
-              chrome.runtime.sendMessage({ type: 'HW_WATCH_FOREGROUND' }).catch(() => {});
-              live('课程窗口被切到后台，已请求恢复到前台续播');
-            }
+            live(`正在后台恢复播放（${hiddenTries}/${MAX_KICK_FAIL}）`);
             await step(1000);
             continue;
           }
+          if (hiddenSince && !document.hidden) {
+            videoAttempt++; kickFails = 0; videoFailure = null; lastKick = 0;
+            hiddenTries = 0; hiddenTryAt = 0;
+          }
           hiddenSince = 0;
           if (v.error || Date.now() - lastAdvance >= 150000) {
+            if (await reloadPlayer(v)) continue;
             throw new Error(v.error ? '播放器错误：' + (v.error.message || v.error.code) : '播放停滞超过150秒');
           }
-          if (videoFailure) throw videoFailure;
+          if (videoFailure) {
+            if (await reloadPlayer(v)) continue;
+            throw videoFailure;
+          }
           const pct = v.duration ? Math.round((v.currentTime / v.duration) * 100) : 0;
           live(`${fmtRate(v.playbackRate)}x ${pct}%`);
           await applyRate(v);
@@ -2235,7 +2291,7 @@
              页面读不到问卷内部，靠 survey.js 在问卷页自己那一帧填写提交，
              这里只等目录角标归零（平台回执）再算完成。 */
           if (await openSurveyCard()) live(`问卷已提交：${shortName(cur.name)}`);
-          else await recordWatchSkip(new Error('问卷60秒内未收到完成回执'), { chapter: cur.name }, true);
+          else await recordWatchSkip(new Error('问卷自动恢复后90秒内仍未收到完成回执'), { chapter: cur.name }, true);
           await step(1200);
           if (activeChapterId() !== cur.id) {
             jumped = true;
@@ -2531,23 +2587,38 @@
      所以谁在那个框架里，谁就自己把内容过一遍：滚到底、没有滚动条就点下一页。
      只在「后台队列正在跑」时动手，用户自己点开文档看的时候不会被打扰。 */
   const DOC_FRAME = /pan-yz\.chaoxing\.com\/screen|ananas\/modules\/(pdf|ppt|doc|image|insertdoc)/;
+  function readPageState(reading) {
+    return JSON.stringify(reading.map(d => [...d.querySelectorAll('#pageNum,#pagenum,#pageNumber,.page-number,.current-page,.pageNum,[aria-current="page"],[data-page-number]')]
+      .map(el => el.value || el.getAttribute('data-page-number') || el.textContent.trim().slice(0, 40))));
+  }
+  function readNextButton(reading) {
+    const buttons = reading.flatMap(d => [...d.querySelectorAll('button,a,input[type="button"],[role="button"]')]);
+    const arrows = reading.flatMap(d => [...d.querySelectorAll('[class*="next"],[class*="arrow"]')]);
+    return [...buttons, ...arrows].find(el => {
+      if (el.querySelector('button,a,input[type="button"],[role="button"]')) return false;
+      if (!visible(el) || el.disabled || el.getAttribute('aria-disabled') === 'true' ||
+          el.closest('aside,#sidebarContainer,#thumbnailView,.disabled,.is-disabled,.swiper-button-disabled,[aria-disabled="true"]')) return false;
+      const text = (el.getAttribute('aria-label') || el.title || el.value || el.textContent || '').trim();
+      return /下一页|下一张|next/i.test(text) || /next|swiper-button-next|arrow-right/i.test(String(el.className)) || /^(next|nextPage|next-page)$/i.test(el.id);
+    });
+  }
   async function readDocFrame() {
     let q = null;
     try { q = (await chrome.runtime.sendMessage({ type: 'HW_WATCH_QUEUE_GET' }))?.queue; } catch { return; }
     if (!q || q.paused) return;
     const deadline = Date.now() + 240000;
-    let lastTop = -1;
-    let stuck = 0;
-    let tick = 0;
+    const courseKey = q.courses?.[q.index]?.key;
+    let checkedAt = Date.now(), idleSince = Date.now(), acted = false;
+    let pageState = '', lastButton = null, lastClick = 0, unconfirmed = 0;
     while (Date.now() < deadline) {
-      /* 队列被停掉/换课了就别再翻（每 4 拍问一次，别把后台消息刷成心跳） */
-      if (tick % 4 === 0) {
+      /* 检查频率独立于滚动节奏，暂停或换课后停止，不解除人工暂停。 */
+      if (Date.now() - checkedAt >= 1000) {
         try {
           const now = (await chrome.runtime.sendMessage({ type: 'HW_WATCH_QUEUE_GET' }))?.queue;
-          if (!now || now.paused) return;
+          if (!now || now.paused || now.courses?.[now.index]?.key !== courseKey) return;
         } catch { return; }
+        checkedAt = Date.now();
       }
-      tick++;
       let moved = false;
       const reading = readingDocuments(document, true);
       for (const d of reading) {
@@ -2555,21 +2626,24 @@
         if (progress.manual) return;
         if (progress.moved) moved = true;
       }
-      if (!moved) {
-        /* 没有可滚的地方：找「下一页 / 下一张」这类原生按钮点一下 */
-        const btn = [...document.querySelectorAll('button,a,[role="button"],[class*="next"],[class*="arrow"]')].find((el) => {
-          if (!visible(el) || el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
-          const t = (el.getAttribute('aria-label') || el.title || el.textContent || '').trim();
-          const cls = (el.className || '').toString();
-          return /下一页|下一张|next/i.test(t) || /next|swiper-button-next|arrow-right/i.test(cls);
-        });
-        if (btn) { try { btn.click(); } catch { /* 按钮被重建 */ } }
+      const state = readPageState(reading);
+      const changed = pageState !== state;
+      if (moved || changed) {
+        idleSince = Date.now();
+        unconfirmed = 0;
+        if (moved) acted = true;
       }
-      const top = reading.flatMap(d => scrollTargets(d)).reduce((sum, el) => sum + el.scrollTop, 0);
-      stuck = Math.abs(top - lastTop) < 4 ? stuck + 1 : 0;
-      lastTop = top;
-      if (stuck >= 40) return; // 一分钟都没动：到底了或翻不动，收手
-      await new Promise((r) => setTimeout(r, 1500));
+      pageState = state;
+      if (!moved) {
+        const btn = readNextButton(reading);
+        /* 有真实页码变化就快速推进；按钮无响应时最多补点一次，不反复空点。 */
+        if (btn && unconfirmed < 2 && (btn !== lastButton || changed || Date.now() - lastClick >= 1000)) {
+          try { btn.click(); acted = true; } catch { /* 按钮被重建 */ }
+          lastButton = btn; lastClick = Date.now(); unconfirmed++;
+        }
+      }
+      if (Date.now() - idleSince >= (acted ? 3000 : 8000)) return;
+      await new Promise((r) => setTimeout(r, 350));
     }
   }
   if (DOC_FRAME.test(location.href)) {

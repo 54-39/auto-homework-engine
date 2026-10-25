@@ -13,7 +13,6 @@
   const HW = (window.HW = window.HW || {});
   if (HW.Survey) return;
 
-  const KEY = 'hwSurveySubmitted'; // 同一份问卷只交一次，F5 后也不重交
   const isSurvey = () => /\/page\/questionnaire\/answerQuestionChapter/.test(location.href) &&
     !/[?&]readOnly=1/.test(location.href);
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -45,19 +44,22 @@
     return bestOption;
   }
 
+  let courseKey;
   async function queueRunning() {
     try {
       const r = await chrome.runtime.sendMessage({ type: 'HW_WATCH_QUEUE_GET' });
-      return !!(r && r.ok && r.queue && !r.queue.paused);
+      const q = r?.ok && r.queue;
+      if (!q || q.paused) return false;
+      const key = q.courses?.[q.index]?.key;
+      if (courseKey && courseKey !== key) return false;
+      courseKey = key;
+      return true;
     } catch { return false; }
   }
 
-  const submitted = () => {
-    try { return sessionStorage.getItem(KEY) === location.search; } catch { return false; }
-  };
-  const markSubmitted = () => {
-    try { sessionStorage.setItem(KEY, location.search); } catch { /* 存不了就只靠本次运行 */ }
-  };
+  const expired = () => /手动结束|已结束|已截止/.test(text(document.querySelector('.tip')));
+  const accepted = () => [...document.querySelectorAll('.tip,.maskDiv,.submit-con')]
+    .some(el => visible(el) && /提交成功|已提交|作答内容已自动提交/.test(text(el)));
 
   /* 点原生 input 才稳：站点把选项包在 .optionRadio 里，整块连点时常只认一次。
      点完核对 checked；不认再退回点外层区块。 */
@@ -95,7 +97,8 @@
   async function confirmPopups() {
     let confirmed = 0;
     for (let i = 0; i < 20; i++) {
-      const btn = [...document.querySelectorAll('.popBottom a,.popBottom div,.popBottom span,a,button,span,div')]
+      if (!(await queueRunning())) return;
+      const btn = [...document.querySelectorAll('.maskDiv .popBottom a,.maskDiv .popBottom button,[role="dialog"] button')]
         .find((el) => visible(el) && /^(提交|确定|确认|知道了|好的)$/.test(text(el)) && el.getBoundingClientRect().width < 200);
       if (!btn) { await wait(300); continue; }
       try { btn.click(); } catch { /* 浮层刚被换掉 */ }
@@ -107,35 +110,56 @@
   }
 
   async function run() {
-    if (!isSurvey() || submitted()) return;
-    if (/手动结束|已结束/.test(document.querySelector('.tip')?.textContent || '')) return;
-    if (!(await queueRunning())) return;
+    if (!isSurvey() || !(await queueRunning())) return;
+    if (expired()) { HW.Survey.last = { state: 'expired' }; return; }
+    if (accepted()) { HW.Survey.last = { state: 'submitted' }; return; }
+    HW.Survey.last = { state: 'running' };
     let items = [];
     for (let i = 0; i < 60; i++) {
       items = [...document.querySelectorAll('.question-item')];
       if (items.length) break;
+      if (!(await queueRunning())) { HW.Survey.last = { state: 'idle' }; return; }
       await wait(500);
     }
-    if (!items.length) return;
+    if (!items.length) { HW.Survey.last = { state: 'failed', reason: '问卷题目未加载' }; return; }
     const answered = [];
     const blocked = [];
     for (const item of items) {
+      if (!(await queueRunning())) { HW.Survey.last = { state: 'idle' }; return; }
+      if (expired()) { HW.Survey.last = { state: 'expired' }; return; }
       const r = answerOne(item);
       if (!r) continue;
       if (r.blocked) blocked.push(r.blocked);
       else answered.push(`${r.stem}→${r.value}`);
       await wait(180 + Math.random() * 220);
     }
-    if (!answered.length) return;
+    if (blocked.length) { HW.Survey.last = { state: 'blocked', reason: '问卷含无法自动填写的题型' }; return; }
+    // 已有保存答案也要正常提交，不能因为本次没有新勾选就直接退出。
     const submit = await findSubmit();
-    if (!submit) return;
+    if (!submit) { HW.Survey.last = { state: 'failed', reason: '未找到问卷提交按钮' }; return; }
     await wait(600 + Math.random() * 600);
-    try { submit.click(); } catch { return; }
+    if (!(await queueRunning())) { HW.Survey.last = { state: 'idle' }; return; }
+    if (expired()) { HW.Survey.last = { state: 'expired' }; return; }
+    HW.Survey.last = { state: 'submitting' };
+    try { submit.click(); } catch { HW.Survey.last = { state: 'failed', reason: '问卷提交按钮失效' }; return; }
     await confirmPopups();
-    markSubmitted();
-    HW.Survey.last = { at: Date.now(), answered: answered.length, blocked };
+    HW.Survey.last = { state: accepted() ? 'submitted' : 'pending', at: Date.now(), answered: answered.length };
   }
 
-  HW.Survey = { run, last: null };
-  run().catch(() => { /* 问卷结构不认识就什么都不做，由刷课日志如实记为未完成 */ });
+  let running = null;
+  function start() {
+    if (!running) running = run().catch(() => { HW.Survey.last = { state: 'failed', reason: '问卷页面处理失败' }; })
+      .finally(() => { running = null; });
+    return running;
+  }
+  HW.Survey = { run: start, last: { state: 'idle' } };
+  if (isSurvey()) {
+    chrome.runtime.onMessage.addListener((message, sender, respond) => {
+      if (message.type !== 'HW_WATCH_SURVEY') return;
+      if (message.payload?.url && message.payload.url !== location.href) return;
+      if (message.payload?.start) start();
+      respond({ ok: true, ...HW.Survey.last });
+    });
+    start();
+  }
 })();

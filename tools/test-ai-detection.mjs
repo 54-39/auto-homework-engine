@@ -370,6 +370,20 @@ try {
       }finally{chrome.permissions.contains=originalContains;}
     }finally{await call('HW_WATCH_STOP');chrome.tabs.update=original;}
   });
+  await test('旧页面发起唤起请求也不能激活标签、恢复最小化或抢窗口焦点',async()=>{
+    const update=chrome.tabs.update,get=chrome.tabs.get,windows=chrome.windows,actions=[];
+    chrome.tabs.get=async()=>({id:31,windowId:9});
+    chrome.tabs.update=async(id,options)=>{actions.push({id,...options});return{id,windowId:9};};
+    chrome.windows={get:async()=>({state:'minimized'}),update:async(id,options)=>actions.push({id,...options})};
+    try{
+      await call('HW_WATCH_START',{courses:[{key:'1|2',scUrl:'https://mooc1.chaoxing.com/visit/stucoursemiddle?courseid=1&clazzid=2'}]},'https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=1&clazzid=2');
+      actions.length=0;
+      assert.equal((await call('HW_WATCH_FOREGROUND')).ok,false);assert.deepEqual(actions,[]);
+      await call('HW_WATCH_PAUSE',{reason:'已手动停止'});
+      assert.equal((await call('HW_WATCH_FOREGROUND')).ok,false);assert.deepEqual(actions,[]);
+      assert.equal((await call('HW_WATCH_QUEUE_GET')).queue.paused,'已手动停止');
+    }finally{await call('HW_WATCH_STOP');chrome.tabs.update=update;chrome.tabs.get=get;chrome.windows=windows;}
+  });
   await test('文档阅读接续只通知属主队列，暂停或其他标签页不能启动', async () => {
     const original=chrome.tabs.sendMessage,sent=[];
     chrome.tabs.sendMessage=async(id,message)=>{sent.push({id,type:message.type});return{ok:true};};
@@ -385,6 +399,20 @@ try {
       assert.equal((await call('HW_WATCH_READ_DOC')).ok,false);assert.equal(sent.length,1);
       assert.equal((await call('HW_WATCH_QUEUE_GET')).queue.paused,'需要人脸验证');
     } finally {await call('HW_WATCH_STOP');chrome.tabs.sendMessage=original;}
+  });
+  await test('问卷接续只允许运行中队列的顶层属主，不解除暂停',async()=>{
+    const original=chrome.tabs.sendMessage,sent=[];
+    const ask=(tabId=31,frameId=0)=>new Promise(resolve=>handler({type:'HW_WATCH_SURVEY',payload:{start:true}},{url:'https://mooc1.chaoxing.com/mycourse/studentstudy',tab:{id:tabId},frameId},resolve));
+    chrome.tabs.sendMessage=async(id,message)=>{sent.push({id,...message});return{ok:true,state:'expired'};};
+    try{
+      assert.equal((await ask()).ok,false);
+      await call('HW_WATCH_START',{courses:[{key:'1|2',scUrl:'https://mooc1.chaoxing.com/visit/stucoursemiddle?courseid=1&clazzid=2'}]});sent.length=0;
+      assert.equal((await ask()).state,'expired');assert.equal(sent.length,1);
+      assert.equal(sent[0].type,'HW_WATCH_SURVEY');assert.equal(sent[0].payload.start,true);
+      assert.equal((await ask(32)).ok,false);assert.equal((await ask(31,5)).ok,false);assert.equal(sent.length,1);
+      await call('HW_WATCH_PAUSE',{reason:'需要验证码'});
+      assert.equal((await ask()).ok,false);assert.equal(sent.length,1);assert.equal((await call('HW_WATCH_QUEUE_GET')).queue.paused,'需要验证码');
+    }finally{await call('HW_WATCH_STOP');chrome.tabs.sendMessage=original;}
   });
   await test('静音选项保存配置，并只切换发起操作的标签页声音', async () => {
     const updates = [];

@@ -21,7 +21,7 @@ const course = '<!doctype html><meta charset="utf-8"><style>body{height:4000px}i
 const server = http.createServer((req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(req.url.startsWith('/knowledge/cards') ? card : req.url.includes('/ananas/modules/pdf/') ? viewer : course); });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const child = spawn(edge, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore', windowsHide: true });
-let ws;
+let ws, closeBrowser, browserClosed = false;
 try {
   let port;
   for (let i = 0; i < 150; i++) { const file = path.join(profile, 'DevToolsActivePort'); if (fs.existsSync(file)) { port = Number(fs.readFileSync(file, 'utf8').split('\n')[0]); break; } await pause(100); }
@@ -33,6 +33,7 @@ try {
   const pending = new Map();
   ws.onmessage = ({ data }) => { const m = JSON.parse(data), p = pending.get(m.id); if (p) { pending.delete(m.id); clearTimeout(p.timer); m.error ? p.reject(Error(m.error.message)) : p.resolve(m.result); } };
   const call = (method, params = {}) => new Promise((resolve, reject) => { const id = ++seq, timer = setTimeout(() => reject(Error(method + ' timeout')), 45000); pending.set(id, { resolve, reject, timer }); ws.send(JSON.stringify({ id, method, params })); });
+  closeBrowser = async () => { await call('Browser.close'); browserClosed = true; };
   const evaluate = async expression => { const result = await call('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }); if (result.exceptionDetails) throw Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text); return result.result.value; };
   await call('Emulation.setDeviceMetricsOverride', { width: 1200, height: 800, deviceScaleFactor: 1, mobile: false });
   const rows = [];
@@ -111,11 +112,36 @@ try {
     await evaluate(`for(let i=0;i<10;i++)readerListeners.forEach(fn=>fn({type:'HW_WATCH_READ_DOC'},{},()=>{}))`);await pause(100);
     assert.equal(await evaluate('queueChecks'),before,'重复通知启动了多个阅读循环');
   });
+  await check('新加载的内部滚动区域及时识别，不被旧缓存遗漏',async()=>{
+    await setup(true);await evaluate('window.readDone=reader.readDocFrame();void 0');await pause(100);
+    await evaluate(`window.lateBox=document.createElement('div');lateBox.style.cssText='height:160px;overflow:auto';lateBox.innerHTML='<div style="height:12000px">新加载正文</div>';document.body.append(lateBox)`);
+    await pause(600);assert.equal(await evaluate('lateBox.scrollTop'),await evaluate('lateBox.scrollHeight-lateBox.clientHeight'));
+  });
+  await check('内层预览器的下一页按真实页码快速推进，最后一页停止',async()=>{
+    await setup(true);
+    await evaluate(`(async()=>{doc.querySelectorAll('button').forEach(el=>el.remove());window.pagerFrame=doc.createElement('iframe');pagerFrame.style.cssText='width:600px;height:100px';doc.body.append(pagerFrame);await new Promise(r=>{pagerFrame.onload=r;pagerFrame.srcdoc='<input id="pageNumber" value="1"><nav><div class="next-wrapper"><button id="next">下一页</button></div></nav>';});const d=pagerFrame.contentDocument;window.pageClicks=0;window.wrongClicks=0;window.firstPageClick=0;d.querySelector('.next-wrapper').onclick=e=>{if(e.target===e.currentTarget)wrongClicks++;};d.querySelector('button').onclick=()=>{pageClicks++;firstPageClick ||=performance.now();const input=d.querySelector('input');input.value=String(Number(input.value)+1);if(Number(input.value)===6)d.querySelector('button').disabled=true;};window.pageStarted=performance.now();window.readDone=reader.readDocFrame();})()`);
+    await pause(2400);
+    assert.equal(await evaluate('pagerFrame.contentDocument.querySelector("input").value'),'6');
+    assert.equal(await evaluate('pageClicks'),5);
+    assert.equal(await evaluate('wrongClicks'),0,'误点了翻页按钮外层容器');
+    assert.ok(await evaluate('firstPageClick-pageStarted')<700,'就绪后翻页仍有明显固定空等');
+    await pause(500);assert.equal(await evaluate('pageClicks'),5,'最后一页还在重复点击');
+  });
+  await check('CSS标记不可用的下一页不会被反复点击',async()=>{
+    await setup(true);await evaluate(`doc.getElementById('next').className='swiper-button-next swiper-button-disabled';window.readDone=reader.readDocFrame();void 0`);
+    await pause(1700);assert.equal(await evaluate('nextClicks'),0);
+  });
+  await check('到底且翻页无响应时有限重试，数秒内结束等待',async()=>{
+    await setup(true);await evaluate(`doc.getElementById('next').onclick=()=>{nextClicks++;};window.readDone=reader.readDocFrame();void 0`);
+    const ended=await evaluate(`Promise.race([readDone.then(()=>true),new Promise(r=>setTimeout(()=>r(false),4500))])`);
+    assert.equal(ended,true,'没有进展却仍长时间空等');assert.equal(await evaluate('nextClicks'),2,'无响应按钮未采用有限重试');
+  });
   fs.writeFileSync(path.join(output, process.env.WATCH_SOURCE ? 'baseline-results.json' : 'results.json'), JSON.stringify(rows, null, 2));
   assert.ok(rows.every(row => row.ok), '阅读滚动检查未全部通过');
   console.log(rows.length + ' reading browser groups passed (offline).');
-  await call('Browser.close').catch(() => {});
+  await closeBrowser().catch(() => {});
 } finally {
+  if (!browserClosed && closeBrowser && ws?.readyState === WebSocket.OPEN) await closeBrowser().catch(() => {});
   ws?.close(); child.kill(); server.closeAllConnections(); server.close(); await pause(200);
   const relative = path.relative(output, profile); assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative));
   try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 4, retryDelay: 100 }); } catch {}

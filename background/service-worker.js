@@ -767,6 +767,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           throw new Error('队列课程地址无效，未重新打开');
         await chrome.tabs.update(tabId, { url: url.href });
         sendResponse({ ok: true });
+      } else if (type === 'HW_WATCH_SURVEY') {
+        const q = await loadQueue();
+        if (!q || q.paused || q.tabId !== tabId || sender.frameId !== 0) return sendResponse({ ok: false });
+        const result = await chrome.tabs.sendMessage(tabId, { type, payload: { start: !!payload.start, url: payload.url } }).catch(() => null);
+        sendResponse(result || { ok: false });
       } else if (type === 'HW_WATCH_READ_DOC') {
         const q = await loadQueue();
         if (!q || q.paused || q.tabId !== tabId) return sendResponse({ ok: false });
@@ -852,17 +857,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         sendResponse({ ok: true });
       } else if (type === 'HW_WATCH_FOREGROUND') {
-        /* 窗口被最小化/切到后台时视频会被站点暂停，内容脚本无法自己恢复。
-           只恢复这个队列自己的窗口，不抢别的窗口焦点。 */
-        const q = await loadQueue();
-        if (!q || q.tabId !== tabId) return sendResponse({ ok: false, error: '不是队列属主页面' });
-        const tab = await chrome.tabs.get(tabId).catch(() => null);
-        if (!tab) return sendResponse({ ok: false, error: '队列标签页已关闭' });
-        await chrome.tabs.update(tabId, { active: true }).catch(() => {});
-        const win = await chrome.windows.get(tab.windowId).catch(() => null);
-        if (win?.state === 'minimized') await chrome.windows.update(tab.windowId, { state: 'normal' }).catch(() => {});
-        await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
-        sendResponse({ ok: true });
+        // 兼容未刷新页面的旧脚本：明确拒绝自动唤起，防止旧请求继续抢焦点。
+        sendResponse({ ok: false, error: '已关闭自动切换前台，请手动打开课程窗口' });
       } else if (type === 'HW_WATCH_OPEN_TOPIC') {
         /* 讨论卡的话题页在 groupweb 域，由内容脚本 bbs.js 在那个标签页里回帖；
            这里只负责开一个不抢焦点的标签页，两分钟后兜底关闭（bbs.js 正常会自己关）。 */
