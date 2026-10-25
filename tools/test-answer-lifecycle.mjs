@@ -11,9 +11,9 @@ const ack = source.slice(ackStart, source.indexOf('} else if (type ===', ackStar
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function fixture() {
-  const messages = [], issues = [];
+  const messages = [], issues = [], delays = [];
   const context = vm.createContext({
-    run: null, Date, crypto: { randomUUID }, setTimeout,
+    run: null, Date, crypto: { randomUUID }, setTimeout: (fn, ms) => { delays.push(ms); return setTimeout(fn, ms); },
     getConfig: async () => ({ engine: 'api' }), cacheKeyOf: async () => 'fixture',
     cached: async () => ({ answer: 'B' }), cacheSet: async () => {},
     askEngine: async () => { throw Error('fixture model failed'); },
@@ -22,11 +22,28 @@ function fixture() {
     pauseRun: (tabId, reason) => { context.run.cancelled = true; issues.push(reason); },
   });
   vm.runInContext(queue + '\nasync function acknowledge(payload, tabId) { const sendResponse = value => value; ' + ack + '\n}', context);
-  return { context, messages, issues,
+  return { context, messages, issues, delays,
     answer: () => messages.filter(m => m.type === 'HW_ANSWER'),
     done: () => messages.filter(m => m.type === 'HW_DONE'),
     ack: (message, ok = true, tabId = 7) => context.acknowledge({ index: message.payload.index, fillToken: message.payload.fillToken, ok }, tabId),
   };
+}
+for (const auto of [true, false]) {
+  const f = fixture();
+  await f.context.startRun([{ type: 'choice' }, { type: 'choice' }], 7, 'https://mooc1.chaoxing.com/test', auto);
+  await wait(30);
+  assert.equal(f.answer().length, 1);
+  assert.ok(!f.delays.includes(auto ? 100 : 300), '填写尚未回执就开始题间倒计时');
+  await f.ack(f.answer()[0]);
+  await wait(20);
+  assert.ok(f.delays.includes(auto ? 100 : 300), '题间停顿未采用对应模式的时长');
+  await wait(400);
+  assert.equal(f.answer().length, 2, '缩短等待后漏掉了下一题');
+  assert.equal(f.done().length, 0, '最后一题回执前提前完成');
+  await f.ack(f.answer()[1]);
+  await wait(400);
+  assert.equal(f.done().length, 1);
+  console.log('PASS 题间提速仍等待每题填写回执，人工模式保持原间隔：auto=' + auto);
 }
 for (const auto of [true, false]) {
   const f = fixture();let asks = 0;

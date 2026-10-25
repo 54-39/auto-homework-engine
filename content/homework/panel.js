@@ -962,10 +962,14 @@
         if (!q || q.paused) return;
         if (Date.now() < reviveAt) return;
         const ids = q.courses?.[q.index]?.chapterIds;
-        if (!Array.isArray(ids) || !ids.length) return;
-        const left = ids.reduce((sum, id) => sum + (HW.Watch.unfinishedOf?.(id) || 0), 0);
-        if (!left) return; // 限定范围真的刷完了，不该接
-        const mark = `${HW.Watch.activeChapterId?.() || ''}:${left}`;
+        if (Number(q.targetRun) >= 1 && (!Array.isArray(ids) || !ids.length)) return;
+        if (HW.Watch.currentCourse?.()?.key !== q.courses?.[q.index]?.key) return;
+        const scope = Array.isArray(ids) && ids.length ? ids : (HW.Watch.nodes?.() || []).map(n => n.id);
+        const counts = scope.map(id => HW.Watch.unfinishedOf?.(id));
+        const unknown = counts.some(count => count == null);
+        const left = counts.reduce((sum, count) => sum + (count || 0), 0);
+        if (!left && !unknown) return; // 当前范围确实完成时不重复启动；未知任务数仍需接续核验
+        const mark = `${q.courses[q.index].key}:${HW.Watch.activeChapterId?.() || ''}:${left}:${unknown}`;
         if (mark !== reviveMark) { reviveMark = mark; reviveCount = 0; }
         if (reviveCount >= 5) {
           setWatchLine('循环连续中断 5 次，已停止自动接续，请点「开始刷课」', true);
@@ -973,9 +977,8 @@
         }
         reviveCount += 1;
         reviveAt = Date.now() + 120000 * reviveCount; // 2 / 4 / 6 分钟，越往后越慢
-        log(`刷课：循环中断（还剩 ${left} 个任务点），第 ${reviveCount} 次自动接续`);
-        const resumed = await send('HW_WATCH_RESUME');
-        if (!resumed?.ok) return;
+        log(`刷课：循环中断（${unknown ? '任务数量待核对' : `还剩 ${left} 个任务点`}），第 ${reviveCount} 次自动接续`);
+        // 自动接续只读队列，不能清除此刻刚出现的验证码或手动暂停。
         await HW.Watch.resumeQueued({ onLive: setWatchLine, onNote: watchNote, onStop: watchStopped });
         await refreshQueueInfo(true);
       } catch {

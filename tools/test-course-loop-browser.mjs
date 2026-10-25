@@ -137,6 +137,33 @@ async function loopChecks() {
     document.querySelector('#dct4').textContent = '本章讨论';
   });
 
+  await check('视频与文档混合页在视频结束后继续滚动阅读，再推进下一章', async () => {
+    HW.Watch.stop();
+    const frame = document.querySelector('#iframe');
+    let completed = 0;
+    const attach = () => {
+      const doc = frame.contentDocument;
+      if (!doc?.querySelector('#vid')) return;
+      const card = doc.createElement('div');
+      card.className = 'ans-attach-ct';
+      card.innerHTML = '<div class="ans-job-icon"></div><div class="content" style="height:120px;overflow:auto"><div style="height:900px">同一页签的阅读任务</div></div>';
+      doc.body.append(card);
+      const box = card.querySelector('.content');
+      box.addEventListener('scroll', () => {
+        if (box.scrollTop + box.clientHeight >= box.scrollHeight - 5 && !card.classList.contains('ans-job-finished')) {
+          card.classList.add('ans-job-finished'); completed++;
+        }
+      });
+    };
+    frame.addEventListener('load', attach);
+    try {
+      HW.Watch.start({ rate: 2, onNote: t => notes.push(t) });
+      for (let i = 0; i < 100 && HW.Watch.running; i++) await wait(500);
+      ok(!HW.Watch.running, '混合页未走完');
+      ok(completed >= 2, '视频结束后未处理同页文档：' + completed);
+    } finally { HW.Watch.stop(); frame.removeEventListener('load', attach); }
+  });
+
   /* 站点在目录项里写 jobUnfinishCount=0 表示这一节已经做完。用户 2026-10-19 反馈
      「刷完的章节不要重复刷」，所以起一轮时必须跳过它们，而且不能再把内容点开一遍。 */
   await check('已刷完的章节（jobUnfinishCount=0）直接跳过不重刷', async () => {

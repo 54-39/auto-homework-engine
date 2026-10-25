@@ -558,7 +558,7 @@ async function startRun(questions, tabId, sourceUrl, auto = false) {
         const wait = delayMin + Math.random() * Math.max(0, delayMax - delayMin);
         await new Promise((r) => setTimeout(r, wait));
       } else {
-        await new Promise((r) => setTimeout(r, 300));
+        await new Promise((r) => setTimeout(r, activeRun.auto ? 100 : 300));
       }
     }
     if (activeRun.cancelled || run !== activeRun) return;

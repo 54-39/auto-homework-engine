@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-const source = fs.readFileSync(new URL('../content/course/watch.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(process.env.WATCH_SOURCE || new URL('../content/course/watch.js', import.meta.url), 'utf8');
 const estimate = source.slice(source.indexOf('  function estimateCourseSeconds('), source.indexOf('  function courseProgress('));
 const timing = vm.createContext({});
 vm.runInContext(estimate, timing);
@@ -39,7 +39,10 @@ function fixture(failure) {
     step: async () => {}, until: async predicate => predicate(),
     clickNode: id => { if (failure === 'entry' && id === '1') throw Error('目录点击异常'); active = id; return true; },
     goto: async index => { tab = index; calls.push(active + ':' + tab); return true; },
-    ensureCardRendered: async () => true, classify: () => 'quiz', bbsCard: () => false, surveyCard: () => false,
+    ensureCardRendered: async () => true, classify: () => failure === 'mixed' ? 'video' : 'quiz', bbsCard: () => false, surveyCard: () => false,
+    videoJobsDone: () => true,
+    textJobsDone: () => counts[active] === 0,
+    readThrough: async () => { calls.push(active + ':read'); counts[active] = 0; return true; },
     runQuiz: async () => {
       if (active === '1' && tab === 0 && failure !== 'success') {
         if (failure === 'stop') throw STOP;
@@ -63,6 +66,11 @@ function fixture(failure) {
 const success = fixture('success');
 await success.run();
 assert.equal(success.notes.length, 1, '正常遍历仅记录整门课程完成，不逐章刷日志');
+const mixed = fixture('mixed');
+await mixed.run();
+assert.ok(mixed.calls.includes('1:read') && mixed.calls.includes('2:read'), '视频已完成的混合页跳过了文档，后续章节也无法完成');
+assert.equal(mixed.messages.length, 0, '正常阅读完成不应记录任务缺口');
+console.log('PASS 视频已完成的混合页继续处理阅读，完成后推进下一章');
 assert.match(success.notes[0], /测试课程.*已走完一遍/);
 console.log('PASS 正常课程只记录一次课程完成，并带课程名');
 for (const type of ['task', 'entry', 'incomplete', 'progress']) {

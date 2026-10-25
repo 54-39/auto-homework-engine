@@ -18,15 +18,15 @@
 
   const MAX_DEPTH = 6; // iframe 嵌套深度上限，够覆盖超星这三层
   const TICK = 500; // 视频守倍速／补点击的节奏
-  const TAB_WAIT = 1800; // 点页签后等 iframe 重新加载
+  const TAB_WAIT = 300; // 点击后短暂让出执行，后续按章节和页签核验实际加载状态
   const NODE_WAIT = 3500; // 点目录项后等 AJAX 换页
   const VIDEO_WAIT = 12000; // 进视频页后等 <video> 出现
   const DWELL_TEXT = 4000; // 阅读／PPT 类停留时长
   const QUIZ_TIMEOUT = 240000; // 一道测验最多等多久（AI 识题＋逐题填写）
   const MAX_KICK_FAIL = 2; // 播放未能启动时停止，不反复点播放器
-  const CHAPTER_GAP = 20000; // 相邻两节切换的最小间隔，避免连续快速切页被平台风控
-  const TAB_GAP = 2000; // 同一节里切换页签前的额外停顿
-  const SUBMIT_GAP = 6000; // 填完答案到点提交之间的停顿，别让提交像脚本一样 instantaneous
+  const CHAPTER_GAP = 8000; // 相邻两节开始时间的基准间隔，章节处理耗时已超过时无需再等
+  const TAB_GAP = 600; // 同一节里切换页签前的短暂停顿
+  const SUBMIT_GAP = 1500; // 收到填写回执后，提交前的短暂停顿
   /* 所有间隔都加随机抖动：固定节律本身就是机器特征。 */
   const jitter = (ms, pct = 0.35) => Math.round(ms * (1 + (Math.random() * 2 - 1) * pct));
 
@@ -320,6 +320,7 @@
      num=3/5 的帧 readyState=complete 但 innerText 只有空格、.card=0）。
      这种页再怎么滚也不会记账，先让它自己重画一次；同一节同一页签只做一次。 */
   const cardReloaded = new Set();
+  const failedCardDocs = new WeakSet();
   function cardLooksEmpty(doc) {
     if (!doc?.body) return false;
     if ((doc.body.innerText || '').trim().length) return false;
@@ -338,6 +339,9 @@
         return !!doc?.body && doc.URL !== 'about:blank' && doc.readyState !== 'loading' && !cardLooksEmpty(doc);
       } catch { return false; }
     };
+    const key = (currentCourse()?.key || '') + ':' + (chapter || '') + ':' + tabIndex;
+    if (ready()) return true;
+    try { if (failedCardDocs.has(frame.contentDocument)) return false; } catch { /* 文档尚不可读 */ }
     /* complete 也可能只是空壳脚本刚启动：先等异步正文，别重载正在渲染的卡片。 */
     const waitRendered = async () => {
       const deadline = Date.now() + 12000;
@@ -349,7 +353,6 @@
     };
     if (await waitRendered()) return true;
     if (!sameCard()) return false;
-    const key = (currentCourse()?.key || '') + ':' + (chapter || '') + ':' + tabIndex;
     if (cardReloaded.has(key)) return false;
     cardReloaded.add(key);
     live('这一页是空壳卡，让站点重画一次');
@@ -363,6 +366,7 @@
     let state = '文档不可读';
     try {
       const doc = frame.contentDocument;
+      if (doc) failedCardDocs.add(doc);
       if (doc) state = `${doc.readyState}，正文 ${(doc.body?.innerText || '').trim().length} 字，子框架 ${doc.querySelectorAll('iframe').length} 个`;
     } catch { /* 跨域文档只报告不可读 */ }
     note(`重画后仍未渲染（${state}），跳过这一页，不计完成`);
@@ -1614,7 +1618,7 @@
       }
       const yes = findConfirm();
       if (yes) {
-        await step(jitter(1200)); // 确认框也停一下再点，别零延迟
+        await step(jitter(600)); // 确认框出现后短暂停顿
         try { yes.click(); } catch { /* 对话框可能刚被换掉 */ }
         await step(1500);
         if (unfinishedOf(activeChapterId()) === 0) live('测验页：已提交，任务点已完成');
@@ -1683,7 +1687,7 @@
         return false;
       }
       if (!on || my !== gen || activeChapterId() !== chapter) return false;
-      await step(600);
+      await step(300);
       if (activeChapterId() !== chapter) return false;
       await submitQuiz();
     }
@@ -1997,7 +2001,7 @@
       const nowId = activeChapterId();
       if (nowId !== cur.id) {
         live(`进入 ${shortName(cur.name)}`);
-        /* 章节之间留足间隔：用户 2026-10-21 反馈连续快速切页容易被平台风控。 */
+        /* 只补足短章节的切换间隔；视频、答题等处理时间也计入。 */
         const gap = CHAPTER_GAP - (Date.now() - lastEnterAt);
         if (lastEnterAt && gap > 0) {
           const waitMs = jitter(gap);
@@ -2063,8 +2067,10 @@
           continue;
         }
         const kind = classify();
+        let readCard = false;
         live(`${shortName(cur.name)}｜${tabList()[t]?.textContent.trim() || '任务'}`);
         if (kind === 'video') {
+          readCard = true;
           /* 视频早就看完、剩下的是「本章讨论」这类别的任务点的节，不重看视频——
              站点在任务点角标的父元素上挂 .ans-job-finished，照抄它的判定
              （5.3 节 2026-10-20 实测：每次路过都把 15 分钟的视频重看一遍）。 */
@@ -2120,6 +2126,7 @@
           await runDiscuss(cur);
           await step(600);
         } else {
+          readCard = true;
           /* 阅读卡里可能嵌着视频任务点（两幅画各带一个介绍短片，2026-10-20 实测），
              只停留 4 秒就走的话任务点永远不计。先滚动把懒加载的视频带出来，
              出现了就走视频流程播完；真没有才纯停留。 */
@@ -2142,16 +2149,16 @@
               await step(DWELL_TEXT);
             }
           }
+        }
+        if (readCard && activeChapterId() === cur.id && !textJobsDone()) {
           /* 剩下的非视频任务点（阅读/文档/PPT）常和视频同在一个页签里：只停几秒站点不计，
              必须把内容滚到底才算读过（2026-10-21 第一站实测：视频已完成，仍剩 1 个点）。
              这个检查放在视频分支之外，否则视频一播完就跳过去，永远走不到。 */
-          if (!textJobsDone()) {
-            if (await readThrough(45000)) live(`阅读任务点已完成：${shortName(cur.name)}`);
-            else {
-              const nudged = await nudgeCard();
-              if (textJobsDone()) live(`阅读任务点已完成：${shortName(cur.name)}`);
-              else note(`阅读任务点还没计上，留给收尾复查：${shortName(cur.name)}${nudged ? `（已试点 ${nudged} 个入口）` : ''}`);
-            }
+          if (await readThrough(45000)) live(`阅读任务点已完成：${shortName(cur.name)}`);
+          else {
+            const nudged = await nudgeCard();
+            if (textJobsDone()) live(`阅读任务点已完成：${shortName(cur.name)}`);
+            else note(`阅读任务点还没计上，留给收尾复查：${shortName(cur.name)}${nudged ? `（已试点 ${nudged} 个入口）` : ''}`);
           }
         }
         } catch (e) {

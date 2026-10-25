@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-const source = fs.readFileSync(new URL('../content/course/watch.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(process.env.WATCH_SOURCE || new URL('../content/course/watch.js', import.meta.url), 'utf8');
 const start = source.indexOf('  const cardReloaded = new Set();');
 const end = source.indexOf('  /* 讨论任务点：', start);
 assert.ok(start >= 0 && end > start);
@@ -24,7 +24,7 @@ function fixture(update = () => {}) {
   const context = vm.createContext({
     document: { querySelector: () => frame }, on: true,
     activeChapterId: () => chapter, currentCourse: () => ({ key: 'course|class' }),
-    note: (message) => notes.push(message),
+    note: (message) => notes.push(message), live() {},
     Date: { now: () => time },
     step: async (ms) => { time += ms; update({ time, reloads, setDoc: d => { doc = d; }, setChapter: c => { chapter = c; } }); if (!context.on) throw stop; },
   });
@@ -67,9 +67,29 @@ const checks = [
   }],
   ['持续空白不无限重载，并报告诊断', async () => {
     const f = fixture();
-    assert.equal(await f.run(), false); assert.equal(await f.run(), false);
+    assert.equal(await f.run(), false);
+    const elapsed = f.time;
+    assert.equal(await f.run(), false);
+    assert.equal(f.time, elapsed, '已经恢复失败的空壳又重新等待一轮');
     assert.deepEqual(f.writes, [f.frame.src]);
     assert.ok(f.notes.some(n => /complete/.test(n)));
+  }],
+  ['曾失败的卡片后来已就绪时仍正常处理', async () => {
+    const f = fixture();
+    assert.equal(await f.run(), false);
+    f.setDoc(card('迟到的正文'));
+    assert.equal(await f.run(), true);
+    assert.equal(f.writes.length, 1);
+  }],
+  ['重新加载的新文档仍等待正文，不沿用旧文档失败状态', async () => {
+    let readyAt = Infinity;
+    const f = fixture(({ time, setDoc }) => { if (time >= readyAt) setDoc(card('新文档正文')); });
+    assert.equal(await f.run(), false);
+    f.setDoc(card('加载中', 'loading'));
+    readyAt = f.time + 2000;
+    assert.equal(await f.run(), true);
+    assert.ok(f.time >= readyAt);
+    assert.equal(f.writes.length, 1);
   }],
   ['重载后停止不留下 about:blank，停止信号传出', async () => {
     const f = fixture(({ reloads }) => { if (reloads) f.context.on = false; });
