@@ -19,7 +19,9 @@
     /* 球心闪电：以前是 Unicode ⚡，Windows 上按彩色 emoji 渲染（偏黄、还带渐变），
        改成内联 SVG 用 currentColor 填纯白（用户 2026-10-23 要求白色闪电）。 */
     .fab .boltsvg{display:block;width:24px;height:24px;fill:currentColor;color:#fff;pointer-events:none;user-select:none;-webkit-user-select:none}
-    .panel{position:fixed;right:24px;bottom:96px;width:min(320px,calc(100vw - 32px));height:min(78vh,660px);max-height:calc(100vh - 108px);overflow:hidden;display:flex;flex-direction:column;gap:8px;padding:14px;
+    .panel{--hw-panel-width:320px;--hw-panel-ratio:2;--hw-panel-space-x:calc(100vw - 32px);--hw-panel-space-y:calc(100vh - 108px);
+      --hw-panel-fit:min(var(--hw-panel-width),var(--hw-panel-space-x),calc(var(--hw-panel-space-y) / var(--hw-panel-ratio)));
+      position:fixed;right:24px;bottom:96px;width:var(--hw-panel-fit);height:calc(var(--hw-panel-fit) * var(--hw-panel-ratio));min-height:0;overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:8px;padding:14px;
       border-radius:14px;z-index:2147483646;color:#111827;
       background:
         radial-gradient(circle 300px,rgba(37,99,235,.10),rgba(37,99,235,0) 70%) right -40px top -40px / 600px 600px no-repeat,
@@ -29,11 +31,11 @@
     .hidden{display:none!important}
     .tip{position:fixed;z-index:2147483647;max-width:230px;padding:6px 9px;border-radius:8px;background:#fff;border:1px solid #E3E8EF;color:#374151;font-size:11px;line-height:1.5;white-space:pre-wrap;
       box-shadow:0 10px 24px -8px rgba(15,23,42,.22),0 2px 6px -2px rgba(15,23,42,.08);pointer-events:none}
-    /* API 配置展开时沿用 0.6.15 比例；精简视图收窄并缩短，避免空撑高度。 */
-    .panel.apiopen,.panel.watchmode{width:min(360px,calc(100vw - 32px));height:min(calc(72vh + 190px),calc(100vh - 108px))}
+    /* 外框宽高共用同一尺寸：页面缩放或视口变化时保持比例，内容过多在内部滚动。 */
+    .panel.apiopen,.panel.watchmode{--hw-panel-width:360px}
     .panel.bridgemode .list{height:clamp(170px,29vh,240px)}
     .panel.watchmode .apitoggle,.panel.watchmode .apisec{display:none}
-    header{display:flex;align-items:center;gap:6px;cursor:move;user-select:none;touch-action:none;flex:none;min-height:22px}
+    header{display:flex;flex-wrap:wrap;align-items:center;gap:6px;cursor:move;user-select:none;touch-action:none;flex:none;min-height:22px}
     header b{font-size:15px;font-weight:700;color:#111827}
     .badge{font-size:11px;color:#2563EB;background:#E8EFFD;border-radius:4px;padding:2px 7px;font-weight:500}
     .spacer{flex:1}
@@ -119,7 +121,7 @@
     .bridgebar button.act{flex:none;width:100%}
     .bridgestatus{margin:0;color:#4B5563;font-size:11px;line-height:1.6}
     .panel.watchmode .homework-only{display:none}
-    .watchview{display:flex;flex-direction:column;gap:8px;flex:1.6 1 0;min-height:0}
+    .watchview{display:flex;flex-direction:column;gap:8px;flex:1.6 0 auto;min-height:min-content}
     .watchview>*{flex:none}
     .watchview .courselist{flex:1 1 140px;min-height:80px}
     .watchintro{padding:4px 0 6px;border-bottom:1px solid #DCE3ED}
@@ -129,7 +131,12 @@
     .watchheading{margin:0 0 4px;font-size:16px;font-weight:600;line-height:1.4;color:#111827}
     .watchcontext{margin:0;color:#4B5563;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
     .watchmeta{margin-top:6px;font-size:11px;color:#4B5563;font-variant-numeric:tabular-nums}
-    .watchrow{display:flex;gap:16px;align-items:center;justify-content:space-between;flex:none}
+    .watchprogress{margin-top:10px}
+    .wphead{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:6px;font-size:11px;line-height:1.5;color:#4B5563}
+    .wpvalue{font-weight:500;color:#374151;font-variant-numeric:tabular-nums;text-align:right}
+    .wptrack{height:7px;border-radius:4px;background:#E2E8F0;overflow:hidden}
+    .wpfill{height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#2563EB 0%,#3B82F6 55%,#75AEF2 100%)}
+    .watchrow{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between;flex:none}
     .watchrate{display:flex;align-items:center;gap:8px;color:#374151}
     .watchrow .rateslot{flex:none;width:116px}
     .muteopt{display:flex;align-items:center;gap:6px;flex:none;min-height:32px;font-size:12px;color:#374151;white-space:nowrap;cursor:pointer}
@@ -184,13 +191,13 @@
     .item .st.s-fixed{color:#7C3AED}
     .item .st.s-skipped{color:#059669}
     .item .st.s-failed{color:#DC2626}
-    .logwrap{display:flex;flex-direction:column;gap:2px;flex:1 1 0;min-height:96px}
+    .logwrap{display:flex;flex-direction:column;gap:2px;flex:1 0 96px;min-height:96px}
     .loghd{display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:500;color:#374151;flex:none}
     .issuewarn{flex:none;padding:8px;border-radius:6px;background:#FEF2F2;color:#B91C1C;font-size:11px;line-height:1.6;overflow-wrap:anywhere}
     .log{font-size:10.5px;color:#7C848C;flex:1 1 0;min-height:60px;overflow:auto;line-height:1.6;white-space:pre-wrap}
-    .panel.expanded{left:50%!important;top:3vh!important;transform:translateX(-50%);width:min(640px,94vw);height:92vh;max-height:92vh}
+    .panel.expanded{--hw-panel-width:640px;--hw-panel-ratio:1.25;--hw-panel-space-x:94vw;--hw-panel-space-y:92vh;left:50%!important;top:3vh!important;transform:translateX(-50%)}
     .panel.expanded .item{min-height:34px}
-    @media (max-height:600px){.panel{overflow-y:auto}.watchview{flex:none}.logwrap{flex:none}.log{max-height:96px}}
+    @media (max-height:600px){.panel{--hw-panel-space-y:calc(100vh - 32px)}.watchview{flex:none}.logwrap{flex:none}.log{max-height:96px}}
     .modal{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:2147483647;display:flex;align-items:center;justify-content:center}
     .mbox{background:#fff;border:1px solid #CCD2D9;border-radius:12px;padding:16px;width:300px;font-size:12px;line-height:1.7;color:#1f2328;box-shadow:0 16px 36px -8px rgba(15,23,42,.2)}
     .mbox b{font-size:13px;display:block;margin-bottom:6px}
@@ -327,7 +334,9 @@
           <button class="act ghost stop" disabled>停止</button>
         </div>
         <div class="watchview hidden">
-          <div class="watchintro"><div class="watchtitle"><h2 class="watchheading">课程学习</h2><button type="button" class="lbtn plain courserefresh">刷新课程</button></div><p class="watchcontext">打开课程或勾选清单，继续未完成的章节。</p><div class="watchmeta"></div></div>
+          <div class="watchintro"><div class="watchtitle"><h2 class="watchheading">课程学习</h2><button type="button" class="lbtn plain courserefresh">刷新课程</button></div><p class="watchcontext">打开课程或勾选清单，继续未完成的章节。</p><div class="watchmeta"></div>
+            <div class="watchprogress hidden"><div class="wphead"><span>本门课进度</span><span class="wpvalue"></span></div><div class="wptrack" role="progressbar" aria-label="本门课进度" aria-valuemin="0" aria-valuemax="100"><div class="wpfill"></div></div></div>
+          </div>
           <div class="watchrow">
             <div class="watchrate"><span>倍速</span><div class="dd rateslot"></div></div>
             <label class="muteopt" data-tip="当前课程页所有视频静音，后续章节沿用；取消后恢复声音"><input class="watchmute" type="checkbox" checked>全部静音</label>
@@ -362,6 +371,7 @@
       watch: $('.watchbtn'), watchmute: $('.watchmute'), watchline: $('.watchline'), courselist: $('.courselist'), courserefresh: $('.courserefresh'),
       watchqueue: $('.watchqueue'), wqnow: $('.wqnow'), wqrest: $('.wqrest'), wqtime: $('.wqtime'),
       moderow: $('.moderow'), watchview: $('.watchview'), watchheading: $('.watchheading'), watchcontext: $('.watchcontext'), watchmeta: $('.watchmeta'), watchempty: $('.watchempty'),
+      watchprogress: $('.watchprogress'), wpvalue: $('.wpvalue'), wptrack: $('.wptrack'), wpfill: $('.wpfill'),
       summary: $('.summary'), smsg: $('.smsg'), shint: $('.shint'), list: $('.list'), log: $('.log'),
       updline: $('.updline'),
     };
@@ -490,11 +500,42 @@
     }
     /* 3 秒一次的重绘只写真正变了的格子：textContent 反复赋值会让读屏和站点的观察器一直被打扰 */
     const setText = (el, text) => { if (el.textContent !== text) el.textContent = text; };
+    function renderCourseProgress(queued) {
+      const current = HW.Watch?.currentCourse?.();
+      const nodes = HW.Watch?.nodes?.() || [];
+      const course = !current || queued?.key === current.key ? queued : null;
+      els.watchprogress.classList.toggle('hidden', !current && !nodes.length && !course);
+      let done, total, unit = '任务点';
+      const native = current && /已完成任务点\s*[:：]?\s*(\d+)\s*\/\s*(\d+)/.exec(document.querySelector('.chapter_head')?.textContent || '');
+      const left = nodes.map(n => HW.Watch.unfinishedOf(n.id));
+      if (nodes.length && left.every(n => Number.isFinite(n) && n >= 0)) {
+        const remaining = left.reduce((a, b) => a + b, 0);
+        const taskTotal = native ? Number(native[2]) : course?.total;
+        if (Number.isFinite(taskTotal) && taskTotal > 0 && remaining <= taskTotal) {
+          total = taskTotal; done = total - remaining;
+        } else {
+          unit = '节'; total = nodes.length; done = left.filter(n => n === 0).length;
+        }
+      } else if (native) {
+        done = Number(native[1]); total = Number(native[2]);
+      } else if (!nodes.length && course) {
+        done = course.done; total = course.total;
+      }
+      const known = Number.isFinite(done) && Number.isFinite(total) && total > 0 && done >= 0 && done <= total;
+      const percent = known ? Math.floor(done / total * 100) : 0;
+      const text = known ? `${percent}% · ${done}/${total} ${unit}` : '进度读取中';
+      setText(els.wpvalue, text);
+      els.wpfill.style.width = `${percent}%`;
+      els.wptrack.setAttribute('aria-valuetext', text);
+      if (known) els.wptrack.setAttribute('aria-valuenow', String(percent));
+      else els.wptrack.removeAttribute('aria-valuenow');
+    }
     function renderQueue() {
       const q = queueInfo;
       const courses = q?.courses || [];
       const index = q?.index || 0;
       const cur = courses[index];
+      renderCourseProgress(cur);
       els.watchqueue.classList.toggle('hidden', !cur);
       if (!cur) return;
       const rest = courses.slice(index + 1);
@@ -612,23 +653,12 @@
       setBusy(false);
       log(notice.textContent);
     }
-    const reportedGrades = new Set();
-    function reportGrade() {
-      const grade = HW.Watch?.quizGrade?.();
-      if (!grade || grade.score >= grade.total) return;
-      const key = [HW.Watch?.activeChapterId?.(), grade.attempt, grade.score, grade.total].join('|');
-      if (reportedGrades.has(key)) return;
-      reportedGrades.add(key);
-      reportIssue('测验丢分', `测验得分 ${grade.score}/${grade.total}`, grade);
-    }
     HW.Panel.reportIssue = reportIssue;
-    HW.Panel.reportGrade = reportGrade;
     async function rememberProgress() {
       try { await HW.Watch?.rememberCourseProgress?.(); }
       catch (e) { reportIssue('课程用时', '目录进度保存失败：' + e.message); }
     }
-    document.addEventListener('load', e => { if (e.target?.tagName === 'IFRAME') { setTimeout(reportGrade, 1200); setTimeout(rememberProgress, 1500); } }, true);
-    setTimeout(reportGrade, 1200);
+    document.addEventListener('load', e => { if (e.target?.tagName === 'IFRAME') setTimeout(rememberProgress, 1500); }, true);
     setTimeout(rememberProgress, 1500);
     const extensionRoot = chrome.runtime.getURL?.('');
     window.addEventListener('error', e => {
@@ -701,9 +731,7 @@
     };
     const watchNote = (text) => {
       log('刷课：' + text); updateWatchContext();
-      /* 刷课日志不再批量转异常记录（2026-10-24 拍板：异常记录只收低分和未完成）。
-         需要留档的由 watch 侧直发（仍有 N 个任务点未完成、测验提交失败、课程级异常），
-         低分由 reportGrade 的「测验丢分」负责。 */
+      /* 低分与过程日志不单独转异常；节点最终未完成时由 watch 汇总原因和现场。 */
     };
     // 脚本自己停下（走完全课/跳不过去/出错）时把按钮和状态行也收回去，
     // 否则界面还显示「停止刷课」，用户点了才会知道早就停了。
@@ -853,7 +881,7 @@
       if (!(Number.isFinite(c.done) && Number.isFinite(c.total))) return !(Number.isFinite(t?.remainingJobs) && t.remainingJobs > 0);
       return HW.Watch.estimateCourseSeconds(c, 2, t) === 0;
     };
-    const pickedCourses = () => courseItems.filter((c) => c.checked && !courseComplete(c));
+    const pickedCourses = () => courseItems.filter((c) => c.checked);
     const eligibleLimited = c => Number.isFinite(c.done) && Number.isFinite(c.total) && c.total > 0 && c.done / c.total < .35;
     const selectedForWatch = () => limitedRun()
       ? (pickedCourses().length ? pickedCourses() : courseItems).filter(c => eligibleLimited(c) && !courseComplete(c))
@@ -882,7 +910,10 @@
           + (Number.isFinite(tm?.sectionsTotal) ? ` · ${tm.sectionsDone || 0}/${tm.sectionsTotal} 节` : '');
         if (prog.textContent !== label) prog.textContent = label;
         const done = courseComplete(c);
-        const blocked = done || (limitedRun() && !eligibleLimited(c));
+        /* 折叠进「已完成」区的课不禁用勾选：站点偶尔不渲染进度徽章（2026-10-25 实测
+           openGauss/C语言 done=null），这类课若禁勾，用户就永远刷不到它们剩下的任务点。
+           折叠位置保持（无进度课仍不占未完成区），手动展开勾选 = 明确要求刷它。 */
+        const blocked = limitedRun() && !eligibleLimited(c);
         row.querySelector('input').disabled = blocked;
         if (blocked) { c.checked = false; row.querySelector('input').checked = false; }
         if (done && row.parentElement !== completed) completed.append(row);
@@ -895,7 +926,8 @@
       const all = els.courselist.querySelector('.crow.all');
       all.classList.toggle('hidden', count === courseItems.length);
       all.querySelector('.cname').textContent = `全选未完成（${courseItems.length - count} 门）`;
-      const picked = pickedCourses().length;
+      /* 只统计未完成区里勾上的；用户手动勾的已折叠课不影响「全选未完成」的勾选态 */
+      const picked = courseItems.filter((c) => c.checked && !courseComplete(c)).length;
       all.querySelector('input').checked = picked > 0 && picked === courseItems.length - count;
       all.querySelector('input').indeterminate = picked > 0 && picked < courseItems.length - count;
       syncWatchTip();
@@ -1190,18 +1222,20 @@
        从宽屏缩到窄屏时面板会留在屏幕外，用户再也点不到（2026-10-23 回归用例暴露）。
        等下一帧再量尺寸：resize 事件里面板还没按新宽度重排，offsetHeight 是旧值，夹取会算错。 */
     let reclampQueued = false;
-    window.addEventListener('resize', () => {
+    const queueReclamp = () => {
       if (reclampQueued) return;
       reclampQueued = true;
       requestAnimationFrame(() => {
         reclampQueued = false;
         for (const target of [els.fab, els.panel]) {
-          if (target.classList.contains('expanded') || !target.style.left) continue;
+          if (target.classList.contains('hidden') || target.classList.contains('expanded') || !target.style.left) continue;
           const rect = target.getBoundingClientRect();
           clampApply(target, rect.left, rect.top);
         }
       });
-    });
+    };
+    window.addEventListener('resize', queueReclamp);
+    new ResizeObserver(queueReclamp).observe(els.panel);
     els.fab.addEventListener('click', (e) => {
       if (e.detail === 0 || !els.fab.dataset.hwDragged) {
         els.panel.classList.toggle('hidden');
@@ -1799,10 +1833,6 @@
           const unprocessed = HW.questions.length - filled - failed;
           const reason = [failed ? `${failed} 题填写失败` : '', unprocessed ? `${unprocessed} 题未处理` : ''].filter(Boolean).join('，');
           log(`刷课：${reason}，留空随卷提交`);
-          reportIssue('填写未完成', `${reason}，留空随卷提交`, {
-            question: HW.questions.filter(q => !['filled', 'fixed', 'skipped'].includes(q._status)).map(q => q.meta.stem).join('；'),
-            details: JSON.stringify(HW.questions.filter(q => q._status === 'failed').map(q => ({ question: q.meta.stem, reason: q._error, answerPreview: q._answerPreview }))),
-          });
         }
         return `填了 ${filled} 题`;
       } finally {

@@ -11,7 +11,7 @@ const edge=process.env.EDGE_BIN||'C:/Program Files (x86)/Microsoft/Edge/Applicat
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 let source=fs.readFileSync(process.env.WATCH_SOURCE||path.join(root,'content/course/watch.js'),'utf8');
 source=source.replace('await wait(ms);','await wait(Math.min(ms, 20));');
-source=source.replace('  HW.Watch = {',`  HW.Watch = { _quizTest:{quizDone,runQuiz,runQuizzes:typeof runQuizzes==='function'?runQuizzes:runQuiz,cardHasNoTasks:typeof cardHasNoTasks==='function'?cardHasNoTasks:()=>false,expandTaskCards:typeof expandTaskCards==='function'?expandTaskCards:async()=>{},openBbsCard,findConfirm,dismiss:typeof dismissQuizRetryNotice==='function'?dismissQuizRetryNotice:()=>false,setOn(v){on=v;}},`);
+source=source.replace('  HW.Watch = {',`  HW.Watch = { _quizTest:{quizDone,runQuiz,runQuizzes:typeof runQuizzes==='function'?runQuizzes:runQuiz,cardHasNoTasks:typeof cardHasNoTasks==='function'?cardHasNoTasks:()=>false,expandTaskCards:typeof expandTaskCards==='function'?expandTaskCards:async()=>{},openBbsCard,findConfirm,trail:()=>chapterSkipTrail.slice(),dismiss:typeof dismissQuizRetryNotice==='function'?dismissQuizRetryNotice:()=>false,setOn(v){on=v;}},`);
 let receipt='';
 const emptyPages=process.env.STALL_RECORD?JSON.parse(fs.readFileSync(process.env.STALL_RECORD,'utf8')).issues
   .filter(issue=>issue.stage==='刷课停滞').flatMap(issue=>(issue.scene?.documents||[]).filter(doc=>doc.path==='top/frame[0]'&&doc.html?.includes('class="nullpage"')).map(doc=>doc.html))
@@ -75,16 +75,16 @@ async function checks(source,receipt,emptyPages){
   await test('重做后沿用成绩页标题时，仍以新的提交入口识别答题页',async()=>{
     const f=await setup({required:true,keepGradeTitle:true});await HW.Watch._quizTest.runQuiz();ok(f.state.redos===1&&f.state.submits===1);
   });
-  await test('重做后仍失败时记录未完成，关闭提示，不无限重做或伪造完成',async()=>{
+  await test('重做后仍失败时保留原因待节点收尾，关闭提示，不无限重做或伪造完成',async()=>{
     const f=await setup({required:true,failAgain:true});await HW.Watch._quizTest.runQuiz();
-    ok(f.state.redos===1&&f.state.submits===1);ok(f.state.issues.some(x=>x.message.includes('本轮已重做一次')));
+    ok(f.state.redos===1&&f.state.submits===1);ok(f.state.issues.length===0&&HW.Watch._quizTest.trail().some(text=>text.includes('本轮已重做一次')));
     ok(document.querySelector('.jobUnfinishCount').value==='1');ok(f.pop.style.display==='none','提示遮罩仍挡住下一节');
   });
   await test('后台已登记本轮重做时，重新进入同一测验也不再重做',async()=>{
-    const f=await setup({required:true,claimed:true});await HW.Watch._quizTest.runQuiz();ok(f.state.redos===0&&f.state.issues.length>0);
+    const f=await setup({required:true,claimed:true});await HW.Watch._quizTest.runQuiz();ok(f.state.redos===0&&f.state.issues.length===0&&HW.Watch._quizTest.trail().some(text=>text.includes('已经重做过')));
   });
   await test('重做次数耗尽时记录缺口，继续后续而不乱点入口',async()=>{
-    const f=await setup({required:true,zero:true});await HW.Watch._quizTest.runQuiz();ok(f.state.redos===0&&f.state.claims===0&&f.state.issues.length>0);
+    const f=await setup({required:true,zero:true});await HW.Watch._quizTest.runQuiz();ok(f.state.redos===0&&f.state.claims===0&&f.state.issues.length===0&&HW.Watch._quizTest.trail().some(text=>text.includes('没有可用的原生重做入口')));
   });
   await test('隐藏的旧重做提示不触发自动重做',async()=>{
     const f=await setup({required:true,hidden:true});await HW.Watch._quizTest.runQuiz();ok(f.state.redos===0&&f.state.claims===0);

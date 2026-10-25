@@ -682,19 +682,14 @@ async function browserChecks() {
       ok(HW.AIDetection.isCurrent(snap), '逐空展开导致已识别位置失效');
     } finally { section.remove(); }
   });
-  await check('只记录丢分回执，满分测验不产生异常记录', async () => {
+  await check('低分不再单独上报，由收尾的未完成记录携带分数', async () => {
     const original = HW.Watch;
-    let score = 100;
-    HW.Watch = { ...original, quizGrade: () => ({ score, total: 100 }), nodes: () => [], activeChapterId: () => null };
+    HW.Watch = { ...original, quizGrade: () => ({ score: 66.7, total: 100 }), nodes: () => [], activeChapterId: () => null };
     const count = () => testMessages.filter(m => m.type === 'HW_ISSUE_ADD').length;
     const before = count();
     try {
-      HW.Panel.reportGrade(); await wait(30);
-      ok(count() === before, '满分被记成异常');
-      score = 66.7;
-      HW.Panel.reportGrade(); await wait(30);
-      ok(count() === before + 1);
-      ok(testMessages.filter(m => m.type === 'HW_ISSUE_ADD').at(-1).payload.score === 66.7);
+      ok(typeof HW.Panel.reportGrade !== 'function', '独立的低分上报入口应已移除（v0.9.35）');
+      ok(count() === before, '低分本身不应单独产生异常记录');
     } finally { HW.Watch = original; }
   });
   window.setPanelMode = async mode => {
@@ -793,7 +788,7 @@ async function browserChecks() {
     await until(() => row(0).querySelector('.ctime').textContent.includes('8 分钟'));
     const completed = ui.querySelector('.ccompleted');
     ok(!completed.open && completed.contains(row(1)) && completed.contains(row(2)) && completed.querySelector('summary').textContent === '已完成（2 门）');
-    ok(row(1).querySelector('.ctime').classList.contains('hidden') && row(1).querySelector('input').disabled);
+    ok(row(1).querySelector('.ctime').classList.contains('hidden') && !row(1).querySelector('input').disabled, '完成课程仍占勾选框（徽章渲染失败的课程要能手动勾上）；2026-10-25');
     ok(row(2).querySelector('.ctime').classList.contains('hidden'), '未知进度不应在列表显示虚假估算');
     const unknownKey = HW.Watch.courseTimeKey(HW.Watch.courseLinks()[2]);
     /* 卡片没给进度的课默认折叠进已完成区（青服团这类不开任务的课不再挂在未完成里）；
@@ -832,7 +827,7 @@ async function browserChecks() {
     await until(() => ui.querySelector('.watchbtn').textContent.includes('前 4 节'));
     ok(ui.querySelector('.watchbtn').textContent.includes('前 4 节'), '启动按钮未说明模式');
     ok(ui.querySelector('.crow[data-i="0"] input').checked, '33% 的课程被错误排除');
-    ok(ui.querySelector('.crow[data-i="2"] input').disabled, '已完成课程仍可选');
+    ok(ui.querySelector('.crow[data-i="2"] input').disabled, '限定节数模式下进度未知课程仍应禁选');
     setWatchSections(0);
     await until(() => !ui.querySelector('.watchbtn').textContent.includes('前 4 节'));
     await setPanelMode('homework');
@@ -952,6 +947,55 @@ async function browserChecks() {
       ok(ui.querySelector('.watchline') !== ui.querySelector('.watchmeta'));
     } finally { HW.Watch = original; await setPanelMode('homework'); }
   });
+  await check('本门课程进度跟随真实任务或章节，未知及异常数量不伪报完成', async () => {
+    const original = HW.Watch, head = document.createElement('div');
+    head.className = 'chapter_head'; document.body.append(head);
+    let state;
+    HW.Watch = { ...original, running: false, currentCourse: () => state.current === false ? null : {key:'progress|901'},
+      nodes: () => Object.keys(state.left || {}).map(id => ({id, name:'测试章节'})), unfinishedOf: id => state.left[id] };
+    try {
+      for (const next of [
+        {native:'17/24', expected:'70% · 17/24 任务点', percent:'70'},
+        {native:'24/24', expected:'100% · 24/24 任务点', percent:'100'},
+        {native:'0/24', expected:'0% · 0/24 任务点', percent:'0'},
+        {native:'25/24', expected:'进度读取中', percent:null},
+        {left:{a:0,b:2,c:0}, expected:'66% · 2/3 节', percent:'66'},
+        {left:{a:0,b:null}, expected:'进度读取中', percent:null},
+        {native:'0/10', left:{a:0,b:3}, expected:'70% · 7/10 任务点', percent:'70'},
+        {native:'199/200', expected:'99% · 199/200 任务点', percent:'99'},
+        {expected:'进度读取中', percent:null},
+        {current:false, expected:'进度读取中', percent:null, hidden:true},
+      ]) {
+        state = next; head.textContent = next.native ? '已完成任务点：' + next.native : '';
+        await setPanelMode('homework'); await setPanelMode('watch');
+        const progress = ui.querySelector('.watchprogress'), track = ui.querySelector('.wptrack');
+        ok(ui.querySelector('.wpvalue').textContent === next.expected, ui.querySelector('.wpvalue').textContent);
+        ok(track.getAttribute('aria-valuenow') === next.percent, '读屏数值与真实进度不一致');
+        ok(progress.classList.contains('hidden') === !!next.hidden, '没有本门课程时应隐藏进度条');
+        ok(ui.querySelector('.wpfill').style.width === (next.percent || '0') + '%');
+      }
+      const gradient = getComputedStyle(ui.querySelector('.wpfill')).backgroundImage;
+      ok(gradient.includes('linear-gradient') && (gradient.match(/rgb\(/g) || []).length === 3, '进度条没有深蓝到浅蓝的渐变');
+      ok([...gradient.matchAll(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/g)].every(rgb=>Number(rgb[3])>Number(rgb[2])), '进度条右端仍然偏绿');
+    } finally { HW.Watch = original; head.remove(); await setPanelMode('homework'); }
+  });
+  await check('单课进度使用本门队列总数和实时剩余数，换课不串用其他课程进度', async () => {
+    const original = HW.Watch, originalSend = chrome.runtime.sendMessage;
+    let queued = {key:'progress|901',name:'进度测试课',done:0,total:10};
+    chrome.runtime.sendMessage = message => message.type === 'HW_WATCH_QUEUE_GET'
+      ? Promise.resolve({ok:true,queue:{index:0,courses:[queued]}}) : originalSend(message);
+    HW.Watch = {...original,running:false,currentCourse:()=>({key:'progress|901'}),nodes:()=>[{id:'a'},{id:'b'}],unfinishedOf:id=>id==='a'?0:3};
+    try {
+      await setPanelMode('watch'); document.dispatchEvent(new Event('visibilitychange'));
+      await until(()=>ui.querySelector('.wpvalue').textContent==='70% · 7/10 任务点');
+      queued = {key:'another|902',name:'另一门课程',done:90,total:100};
+      document.dispatchEvent(new Event('visibilitychange'));
+      await until(()=>ui.querySelector('.wpvalue').textContent==='50% · 1/2 节');
+    } finally {
+      HW.Watch=original;chrome.runtime.sendMessage=originalSend;
+      document.dispatchEvent(new Event('visibilitychange'));await wait(30);await setPanelMode('homework');
+    }
+  });
   await check('刷课单题失败后保留后续题、失败回执和真实留空提示', async () => {
     const originalSend = chrome.runtime.sendMessage;
     window.testMode = 'mixed';
@@ -970,8 +1014,8 @@ async function browserChecks() {
       await HW.Panel.runHomework();
       ok(automatic, '刷课未将自动模式标记传给后台');
       ok(ui.querySelector('.smsg').textContent.includes('1 题留空'), ui.querySelector('.smsg').textContent);
-      const issue = testMessages.filter(m => m.type === 'HW_ISSUE_ADD' && m.payload.stage === '填写未完成').at(-1);
-      ok(issue?.payload.details.includes('初答 AB，复核 A') && issue.payload.question, '未保存失败题及复核原文');
+      ok(!testMessages.some(m => m.type === 'HW_ISSUE_ADD' && m.payload.stage === '填写未完成'),
+        '临时填写失败不应单独上报：等刷课收尾的未完成记录统一携带原因（v0.9.35）');
       window.failureUIReady = true;
       await new Promise(resolve => { window.resumeFailureUI = resolve; });
     } finally { chrome.runtime.sendMessage = originalSend; }
@@ -1216,6 +1260,22 @@ try {
     await evaluate('setWatchSections(0)');
     await evaluate('setPanelMode("homework")');
   }
+  await evaluate(`window.progressOriginalWatch=HW.Watch;window.progressRemaining=7;HW.Watch={...HW.Watch,running:true,currentCourse:()=>({key:'progress|901'}),courseLinks:()=>[],nodes:()=>[{id:'p1',name:'课程导学'},{id:'p2',name:'2.4 阅读与章节测验'},{id:'p3',name:'课程练习'}],activeChapterId:()=> 'p2',unfinishedOf:id=>progressRemaining===null?null:id==='p2'?progressRemaining:0,remainingSeconds:()=>progressRemaining>0?600:null};window.frameCourseResults=[];document.getElementById('localCourseFixture')?.remove();window.progressHead=document.createElement('div');progressHead.className='chapter_head';document.body.append(progressHead);document.querySelector('#hw-panel-host').shadowRoot.querySelector('.log').textContent='';setPanelMode('watch');`);
+  await evaluate(`document.querySelector('#hw-panel-host').shadowRoot.querySelector('.courserefresh').click()`);
+  await pause(300);
+  for (const width of [1280, 420]) {
+    await call('Emulation.setDeviceMetricsOverride', {width, height:800, deviceScaleFactor:1, mobile:false});
+    for (const [state, text] of [['partial','17/24'],['complete','24/24'],['empty','0/24'],['unknown','']]) {
+      await evaluate(`progressHead.textContent=${JSON.stringify(text ? '已完成任务点：' + text : '')};progressRemaining=${text ? 24-Number(text.split('/')[0]) : 'null'};setPanelMode('homework').then(()=>setPanelMode('watch'));`);
+      await pause(260);
+      const geometry = await evaluate(`(()=>{const s=document.querySelector('#hw-panel-host').shadowRoot,p=s.querySelector('.panel'),r=p.getBoundingClientRect(),track=s.querySelector('.wptrack').getBoundingClientRect(),button=s.querySelector('.watchbtn').getBoundingClientRect(),log=s.querySelector('.logwrap').getBoundingClientRect();return {inside:track.left>=r.left&&track.right<=r.right&&track.top>=r.top&&track.bottom<=button.top,overflow:p.scrollHeight>p.clientHeight,buttonBottom:button.bottom,logTop:log.top,logHeight:log.height};})()`);
+      assert.ok(geometry.inside && !geometry.overflow && geometry.buttonBottom <= geometry.logTop && geometry.logHeight >= 96, '课程进度条挤压操作或日志区：' + JSON.stringify(geometry));
+      const shot = await call('Page.captureScreenshot', {format:'png'});
+      fs.writeFileSync(path.join(output, `ui-course-progress-${state}-${width}.png`), Buffer.from(shot.data,'base64'));
+    }
+  }
+  results.push({name:'单课进度条在宽窄窗口及未开始、进行中、完成、未知状态布局完整',ok:true});
+  await evaluate('HW.Watch=progressOriginalWatch;progressHead.remove();setPanelMode("homework")');
   const aiEmpty = await evaluate('setDetectionUI("empty")');
   assert.equal(aiEmpty.summary, '未检测出题目');
   assert.equal(aiEmpty.ready, 0); assert.equal(aiEmpty.pending, 0); assert.equal(aiEmpty.startDisabled, true);

@@ -370,6 +370,22 @@ try {
       }finally{chrome.permissions.contains=originalContains;}
     }finally{await call('HW_WATCH_STOP');chrome.tabs.update=original;}
   });
+  await test('文档阅读接续只通知属主队列，暂停或其他标签页不能启动', async () => {
+    const original=chrome.tabs.sendMessage,sent=[];
+    chrome.tabs.sendMessage=async(id,message)=>{sent.push({id,type:message.type});return{ok:true};};
+    try {
+      assert.equal((await call('HW_WATCH_READ_DOC')).ok,false);
+      await call('HW_WATCH_START',{courses:[{key:'1|2',scUrl:'https://mooc1.chaoxing.com/visit/stucoursemiddle?courseid=1&clazzid=2'}]});
+      sent.length=0;
+      assert.equal((await call('HW_WATCH_READ_DOC')).ok,true);
+      assert.deepEqual(sent,[{id:31,type:'HW_WATCH_READ_DOC'}]);
+      const foreign=await new Promise(resolve=>handler({type:'HW_WATCH_READ_DOC'},{url:'https://mooc1.chaoxing.com/',tab:{id:32}},resolve));
+      assert.equal(foreign.ok,false);assert.equal(sent.length,1);
+      await call('HW_WATCH_PAUSE',{reason:'需要人脸验证'});
+      assert.equal((await call('HW_WATCH_READ_DOC')).ok,false);assert.equal(sent.length,1);
+      assert.equal((await call('HW_WATCH_QUEUE_GET')).queue.paused,'需要人脸验证');
+    } finally {await call('HW_WATCH_STOP');chrome.tabs.sendMessage=original;}
+  });
   await test('静音选项保存配置，并只切换发起操作的标签页声音', async () => {
     const updates = [];
     const originalUpdate = chrome.tabs.update;

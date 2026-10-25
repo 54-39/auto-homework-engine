@@ -31,11 +31,11 @@ function fixture(failure) {
     remainingJobs: () => counts[1] + counts[2], courseProgress: () => { if (failure === 'progress' && active === '1') throw Error('统计失败'); return { remainingJobs: counts[1] + counts[2] }; },
     estimateCourseSeconds: calc, fmtLeft: s => s === null ? '暂无法估算' : String(s),
     shortName: name => name, note: text => notes.push(text), live() {},
-    pendingVideos: () => [], pageKind: () => 'study',
+    pendingVideos: () => [], pageKind: () => 'study', unfinishedJobSummary: () => ['测验任务未完成'],
     tabList: () => [{ id: 'dct1', textContent: '测验一' }, { id: 'dct2', textContent: '测验二' }],
     tabActive: item => item.id === 'dct' + (tab + 1),
     dismissUnfinishedDialog: async () => false, jitter: n => n,
-    dismissQuizRetryNotice: () => false, quizGrades: new Map(),
+    dismissQuizRetryNotice: () => false, quizGrades: new Map(), quizRetrySignals: new Set(),
     step: async () => {}, until: async predicate => predicate(),
     clickNode: id => { if (failure === 'entry' && id === '1') throw Error('目录点击异常'); active = id; return true; },
     goto: async index => { tab = index; calls.push(active + ':' + tab); return true; },
@@ -106,15 +106,42 @@ for (const type of ['task', 'entry', 'incomplete', 'progress']) {
   assert.ok(f.calls.includes('2:0'), '出错后必须继续后续章节');
   if (type === 'task') assert.ok(f.calls.includes('1:1'), '单个任务异常不能吞掉同章后续任务');
   const item = f.messages.find(message => message.type === 'HW_ISSUE_ADD')?.payload;
-  if (type === 'task') {
+  if (type === 'task' || type === 'progress') {
     assert.equal(item, undefined, '同章后续任务已完成时，过程性失败只留日志');
-    assert.ok(f.notes.some(text => text.includes('模型失败')));
-    console.log('PASS 过程性跳过只留日志，同章和后续章节仍继续');
+    assert.ok(f.notes.some(text => text.includes(type === 'task' ? '模型失败' : '统计失败')));
+    console.log('PASS 节点已完成时过程失败不单独上报，后续章节仍继续：' + type);
     continue;
   }
   assert.ok(item?.course && item.chapter && item.stack && item.details && item.action.includes('未计为完成'));
   if (type === 'incomplete') assert.equal(f.reports[0].details.status, 'incomplete', '推进队列不能假报完成');
   console.log('PASS 跳过并记录完整诊断，后续任务继续：' + type);
+}
+{
+  const f = fixture('success');
+  f.context.quizGrades.set('quiz-one', { chapter: '1', score: 66.7, total: 100 });
+  await f.run();
+  assert.equal(f.messages.filter(message => message.type === 'HW_ISSUE_ADD').length, 0);
+  console.log('PASS 节点已完成时低分不生成独立异常');
+}
+{
+  const f = fixture('incomplete');
+  f.context.quizGrades.set('quiz-one', { chapter: '1', score: 66.7, total: 100 });
+  await f.run();
+  const item = f.messages.find(message => message.type === 'HW_ISSUE_ADD')?.payload;
+  assert.match(item?.message, /仍有 1 个任务点未完成.*66\.7\/100/);
+  assert.ok(JSON.parse(item.details).process.some(text => text.includes('模型失败')));
+  console.log('PASS 低分节点仍未完成时，收尾报告保留分数和失败原因');
+}
+{
+  const f = fixture('task'), original = f.context.unfinishedOf;
+  f.context.unfinishedOf = id => id === '1' ? null : original(id);
+  await f.run();
+  const items = f.messages.filter(message => message.type === 'HW_ISSUE_ADD');
+  assert.equal(items.length, 1);
+  assert.match(items[0].payload.message, /任务计数未知/);
+  assert.ok(JSON.parse(items[0].payload.details).process.some(text => text.includes('模型失败')));
+  assert.ok(f.calls.includes('2:0'));
+  console.log('PASS 计数未知且处理失败时保留收尾诊断，继续后续章节');
 }
 for (const type of ['stop', 'captcha']) {
   const f = fixture(type);

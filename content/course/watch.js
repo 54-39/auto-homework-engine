@@ -176,8 +176,10 @@
   }
 
   function textJobsDone() {
+    const chapter = activeChapterId();
+    if (chapter && unfinishedOf(chapter) === 0) return true;
     const jobs = textJobs();
-    if (!jobs.length) return true; // 没有这类角标就不用滚
+    if (!jobs.length) return !docs().some(d => [...d.querySelectorAll('.ans-attach-ct:not(.ans-job-finished) iframe')].some(frame => DOC_FRAME.test(frame.src)));
     return jobs.every((ic) => !!(ic.parentElement && ic.parentElement.classList.contains('ans-job-finished')));
   }
 
@@ -558,30 +560,67 @@
     return false;
   }
 
-  /* 站点的阅读类任务点要“真的读过”：长文档只停在顶部或中部不算完成，
-     必须把内容滚到底。这里按视口一屏一屏往下滚，并派发 wheel 事件，
-     直到站点把任务点标成已完成；滚不动了就再等一会儿让它记账。 */
-  /* 每个文档的可滚容器按文档缓存：只在第一次遇到时量一遍，避免每次滚动都全量扫元素
-     （全量扫会反复触发排版，把整页拖慢——早期 PDF 卡顿就是这么来的）。 */
-  const scrollCache = new Map();
+  /* 只滚阅读正文，不碰课程外壳和目录。预览器由自己的框架负责，避免两处抢滚动。
+     用户在正文中滚轮、拖动或用键盘阅读后，本张文档让出控制，换文档后恢复自动阅读。 */
+  const scrollCache = new WeakMap();
+  const readingControls = new WeakMap();
+  function readingControl(d) {
+    let control = readingControls.get(d);
+    if (control) return control;
+    control = { manual: false };
+    const takeOver = (event) => {
+      if (!event.isTrusted) return;
+      if (event.type === 'keydown' && !/^(ArrowUp|ArrowDown|PageUp|PageDown|Home|End| )$/.test(event.key)) return;
+      control.manual = true;
+    };
+    for (const type of ['wheel', 'pointerdown', 'touchstart', 'keydown']) {
+      d.addEventListener(type, takeOver, { capture: true, passive: true });
+    }
+    readingControls.set(d, control);
+    return control;
+  }
+
+  function readingDocuments(root = document, viewer = false) {
+    const out = [];
+    const walk = (d, depth, reading) => {
+      if (!d || depth > MAX_DEPTH) return;
+      reading = reading || /\/knowledge\/cards/.test(d.URL || '');
+      if (reading) out.push(d);
+      for (const frame of d.querySelectorAll('iframe')) {
+        if (!visible(frame) || DOC_FRAME.test(frame.src) || /\/ananas\/modules\/(video|audio|work|bbs|zt)\//.test(frame.src)) continue;
+        try { walk(frame.contentDocument, depth + 1, reading || (d === document && frame.id === 'iframe')); } catch { /* 跨域预览器自己处理 */ }
+      }
+    };
+    walk(root, 0, viewer);
+    return out;
+  }
+
   function scrollTargets(d) {
     const cached = scrollCache.get(d);
-    if (cached) return cached;
-    let deep = [];
-    try {
-      /* 实训／文档／PPT 模块不在 /knowledge/cards 下，原来的判断只给 cards 扫内部容器，
-         这些页签就永远只滚根节点，站点不给记账（2026-10-22 审计）。这里对非顶层文档
-         按常见容器类名有上限地找一遍，最多 6 个。 */
-      const pool = d === document ? null : [...d.querySelectorAll('[class*="scroll"],[class*="content"],#content,main,article,body>div')];
-      if (pool) {
-        deep = pool.filter((el) => el.clientHeight > 80 && el.scrollHeight > el.clientHeight + 40).slice(0, 6);
-      } else {
-        deep = [...d.querySelectorAll('*')].filter((el) =>
-          el.clientHeight > 80 && el.scrollHeight > el.clientHeight + 40).slice(0, 6);
-      }
-    } catch { deep = []; }
-    scrollCache.set(d, deep);
-    return deep;
+    if (cached?.length && cached.every(el => el.isConnected)) return cached;
+    const root = d.scrollingElement || d.documentElement;
+    const targets = [root, ...d.querySelectorAll('*')].filter((el) => {
+      if (!el || !visible(el) || el.clientHeight <= 80 || el.scrollHeight <= el.clientHeight + 40) return false;
+      if (el.closest('nav,aside,[role="navigation"],#coursetree,#sidebarContainer,#thumbnailView')) return false;
+      return el === root || /auto|scroll/.test(d.defaultView.getComputedStyle(el).overflowY);
+    });
+    const unique = [...new Set(targets)];
+    if (unique.length) scrollCache.set(d, unique);
+    return unique;
+  }
+
+  function scrollReading(d) {
+    if (readingControl(d).manual) return { moved: false, manual: true, scrollable: false };
+    const targets = scrollTargets(d);
+    let moved = false;
+    for (const el of targets) {
+      const bottom = el.scrollHeight - el.clientHeight;
+      const before = el.scrollTop;
+      if (before >= bottom - 4) continue;
+      el.scrollTo({ top: bottom, behavior: 'instant' });
+      if (el.scrollTop > before + 4) moved = true;
+    }
+    return { moved, manual: false, scrollable: targets.length > 0 };
   }
 
   async function readThrough(maxMs = 45000) {
@@ -590,29 +629,15 @@
     let stuck = 0;
     let scrollable = false; // 这一页有没有任何一个能滚的地方
     live('阅读任务点：翻页中…');
+    try { await chrome.runtime.sendMessage({ type: 'HW_WATCH_READ_DOC' }); } catch { /* 正文仍按可读取区域处理 */ }
     while (on && Date.now() < dl) {
       if (textJobsDone()) return true;
       let moved = false;
-      for (const d of docs()) {
+      for (const d of readingDocuments()) {
         try {
-          const view = d.documentElement.clientHeight || 600;
-          const stepPx = Math.max(240, Math.floor(view * 0.85));
-          const targets = [d.scrollingElement || d.documentElement];
-          // 课程正文、PDF 预览器、实训模块都可能有自己的滚动容器
-          if (/\/knowledge\/cards/.test(d.URL || '')) {
-            targets.push(...[...d.querySelectorAll('*')].filter(el =>
-              el.clientHeight > 80 && el.scrollHeight > el.clientHeight + 40));
-          } else {
-            targets.push(...scrollTargets(d));
-          }
-          if (targets.some((el) => el && el.scrollHeight > el.clientHeight + 40)) scrollable = true;
-          for (const el of targets) {
-            if (!el) continue;
-            const before = el.scrollTop;
-            el.scrollTop = before + stepPx;
-            if (el.scrollTop > before) moved = true;
-            el.dispatchEvent(new WheelEvent('wheel', { deltaY: stepPx, bubbles: true }));
-          }
+          const progress = scrollReading(d);
+          if (progress.scrollable) scrollable = true;
+          if (progress.moved) moved = true;
         } catch { /* 跨域文档跳过 */ }
       }
       /* 空壳卡（附件区只有 100px 高的空 iframe、正文一个字都没有）滚不动，
@@ -1480,6 +1505,7 @@
     hookEnded();
     try {
       while (on && !findVideo(endedEls)) {
+        if (chapter && unfinishedOf(chapter) === 0) return true;
         if (everEnded || videoJobsDone()) return true;
         if (Date.now() > deadline) {
           /* 页签里没有未完成的视频角标就不算失败：拓展练习这类页签只有站点模板的
@@ -1510,6 +1536,7 @@
       let hiddenSince = 0;
       while (on) {
         if (chapter && activeChapterId() !== chapter) return false;
+        if (chapter && unfinishedOf(chapter) === 0) return true;
         hookEnded();
         for (const v of pendingVideos()) if (v.ended) markEnded(v);
         const v = findVideo(endedEls);
@@ -1702,7 +1729,6 @@
       if (quizDone() && quizGrade()) {
         const grade = quizGrade();
         rememberQuizGrade(grade);
-        HW.Panel?.reportGrade?.();
         live(`测验已交卷：${grade.score}/${grade.total}，任务点以平台回执为准`);
         return true;
       }
@@ -1718,8 +1744,6 @@
         if (grade) {
           live(`测验成绩：${grade.score}/${grade.total}`);
           rememberQuizGrade(grade);
-          // 内层作业iframe的load事件不跨文档冒泡，不能只靠顶层load监听记录丢分。
-          HW.Panel?.reportGrade?.();
           /* 用户 2026-10-22 明确「先刷完，不强求正确率」：低分只记日志，不再暂停整轮
              （留空提交的卷子分数必然低，暂停只会让任务点永远计不上）。 */
           if (limitedRun(multi) && grade.total > 0 && grade.score / grade.total < .8) {
@@ -1773,7 +1797,7 @@
            而限定的这几节本来就有「补刷一轮、仍不行就记下继续」的兜底。
            真正需要人来的只有验证码，那条在 checkVerification 里会暂停。（2026-10-21） */
         if (e === STOP || e.code === 'HW_VERIFICATION_REQUIRED') throw e;
-        await recordWatchSkip(e, { task: '章节测验', submitted: false });
+        await recordWatchSkip(e, { task: '章节测验', submitted: false }, true);
         return false;
       }
       if (!on || my !== gen || activeChapterId() !== chapter) return false;
@@ -1785,7 +1809,7 @@
     const quiz = quizDocument();
     if (!quizRetrySignals.has(quizRetryKey()) && !QUIZ_RETRY_NOTICE.test(quiz?.body?.innerText || '')) return true;
     const failed = async message => {
-      await recordWatchSkip(new Error(message), { task: '章节测验重做', score: quizGrade() });
+      await recordWatchSkip(new Error(message), { task: '章节测验重做', score: quizGrade() }, true);
       if (on && my === gen) dismissQuizRetryNotice();
       return false;
     };
@@ -1968,8 +1992,7 @@
     failedChapters.add(activeChapterId());
     const message = String(error?.message || error);
     /* 节内的过程性跳过（页签没加载、空壳卡、空壳视频、回执没等到…）只进日志不进异常
-       记录——用户 2026-10-24 拍板：异常记录只收「低分」和「未完成」，别让过程噪声淹没
-       真正要看的。收尾的「仍有 N 个任务点未完成」会如实兜住这些节的结果。 */
+       记录；低分本身也不单独上报。收尾的「仍有 N 个任务点未完成」汇总这些节的结果。 */
     note('已跳过：' + message + (quiet ? '' : '（详情见诊断）'));
     if (quiet) {
       chapterSkipTrail.push(((context.task || '') ? context.task + '：' : '') + message);
@@ -1977,6 +2000,7 @@
     }
     const course = currentCourse();
     const chapter = nodes().find(n => n.id === activeChapterId());
+    if (chapter && unfinishedOf(chapter.id) === 0) return;
     const details = {
       chapterId: activeChapterId(), pageKind: pageKind(), rate,
       remainingJobs: chapter ? unfinishedOf(chapter.id) : null,
@@ -2311,6 +2335,11 @@
         const trail = chapterSkipTrail.length ? '；过程：' + chapterSkipTrail.join('；') : '';
         await recordWatchSkip(new Error((`仍有 ${leftNow} 个任务点未完成` + (quizNote ? '；' + quizNote : '') + trail).slice(0, 300)),
           { chapter: cur.name, remainingJobs: leftNow, process: chapterSkipTrail.slice(), jobs: unfinishedJobSummary() });
+      } else if (chapterSkipTrail.length) {
+        /* 角标缺失（任务计数未知）的节凑不出 leftNow>0，但 quiet 轨迹里已经发生
+           过真失败（测验没做成、页签没加载…）：不落一条，完整诊断就永远丢了。 */
+        await recordWatchSkip(new Error('本节任务计数未知（页面没有角标），处理中有未完成事项'),
+          { chapter: cur.name, remainingJobs: leftNow, process: chapterSkipTrail.slice(), jobs: unfinishedJobSummary() });
       }
       const completed = list.filter(n => unfinishedOf(n.id) === 0).length;
       live(`${scopeChapters ? '本次' : ''}已完成 ${completed}/${list.length} 节 · ${leftText()}`);
@@ -2509,7 +2538,6 @@
     const deadline = Date.now() + 240000;
     let lastTop = -1;
     let stuck = 0;
-    let boxes = [];
     let tick = 0;
     while (Date.now() < deadline) {
       /* 队列被停掉/换课了就别再翻（每 4 拍问一次，别把后台消息刷成心跳） */
@@ -2520,37 +2548,40 @@
         } catch { return; }
       }
       tick++;
-      /* 扫全文档一次挺贵，页面没换就复用上次找到的滚动容器 */
-      if (!boxes.length || tick % 6 === 0) {
-        boxes = [...document.querySelectorAll('*')].filter((el) => {
-          try { return el.scrollHeight > el.clientHeight + 40 && el.clientHeight > 80; } catch { return false; }
-        });
-      }
       let moved = false;
-      for (const el of boxes) {
-        const next = Math.min(el.scrollHeight, el.scrollTop + Math.max(120, el.clientHeight * 0.8));
-        if (next > el.scrollTop + 4) { el.scrollTop = next; moved = true; }
-      }
-      const doc = document.scrollingElement || document.documentElement;
-      if (!boxes.length && doc && doc.scrollHeight > doc.clientHeight + 40 && doc.scrollTop + doc.clientHeight < doc.scrollHeight - 4) {
-        doc.scrollTop += Math.max(120, doc.clientHeight * 0.8);
-        moved = true;
+      const reading = readingDocuments(document, true);
+      for (const d of reading) {
+        const progress = scrollReading(d);
+        if (progress.manual) return;
+        if (progress.moved) moved = true;
       }
       if (!moved) {
         /* 没有可滚的地方：找「下一页 / 下一张」这类原生按钮点一下 */
         const btn = [...document.querySelectorAll('button,a,[role="button"],[class*="next"],[class*="arrow"]')].find((el) => {
+          if (!visible(el) || el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
           const t = (el.getAttribute('aria-label') || el.title || el.textContent || '').trim();
           const cls = (el.className || '').toString();
           return /下一页|下一张|next/i.test(t) || /next|swiper-button-next|arrow-right/i.test(cls);
         });
         if (btn) { try { btn.click(); } catch { /* 按钮被重建 */ } }
       }
-      const top = boxes.length ? boxes[0].scrollTop : (doc ? doc.scrollTop : 0);
+      const top = reading.flatMap(d => scrollTargets(d)).reduce((sum, el) => sum + el.scrollTop, 0);
       stuck = Math.abs(top - lastTop) < 4 ? stuck + 1 : 0;
       lastTop = top;
       if (stuck >= 40) return; // 一分钟都没动：到底了或翻不动，收手
       await new Promise((r) => setTimeout(r, 1500));
     }
   }
-  if (DOC_FRAME.test(location.href)) readDocFrame().catch(() => { /* 文档框架异常不影响主流程 */ });
+  if (DOC_FRAME.test(location.href)) {
+    let reading = null;
+    const begin = () => {
+      if (!reading) reading = readDocFrame().catch(() => { /* 文档框架异常不影响主流程 */ }).finally(() => { reading = null; });
+    };
+    chrome.runtime.onMessage.addListener((message, sender, respond) => {
+      if (message.type !== 'HW_WATCH_READ_DOC') return;
+      begin();
+      respond({ ok: true });
+    });
+    begin();
+  }
 })();

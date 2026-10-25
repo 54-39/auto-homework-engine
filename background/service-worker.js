@@ -767,6 +767,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           throw new Error('队列课程地址无效，未重新打开');
         await chrome.tabs.update(tabId, { url: url.href });
         sendResponse({ ok: true });
+      } else if (type === 'HW_WATCH_READ_DOC') {
+        const q = await loadQueue();
+        if (!q || q.paused || q.tabId !== tabId) return sendResponse({ ok: false });
+        await chrome.tabs.sendMessage(tabId, { type: 'HW_WATCH_READ_DOC' }).catch(() => {});
+        sendResponse({ ok: true });
       } else if (type === 'HW_WATCH_QUEUE_GET') {
         /* 只把队列发给属主标签页——否则用户随手开一个超星页面，
            那个页面也会来接力，把用户的浏览器抢去刷课（真机踩过：新开标签页直接被带去 5.3 播视频）。
