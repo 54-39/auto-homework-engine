@@ -137,16 +137,16 @@ async function loopChecks() {
     document.querySelector('#dct4').textContent = '本章讨论';
   });
 
-  await check('视频与文档混合页在视频结束后继续滚动阅读，再推进下一章', async () => {
+  for (const type of ['video', 'quiz']) await check((type === 'video' ? '视频' : '测验') + '与文档混合页在完成后继续滚动阅读，再推进下一章', async () => {
     HW.Watch.stop();
     const frame = document.querySelector('#iframe');
     let completed = 0;
     const attach = () => {
       const doc = frame.contentDocument;
-      if (!doc?.querySelector('#vid')) return;
+      if (!doc?.querySelector(type === 'video' ? '#vid' : '#submitBtn')) return;
       const card = doc.createElement('div');
       card.className = 'ans-attach-ct';
-      card.innerHTML = '<div class="ans-job-icon"></div><div class="content" style="height:120px;overflow:auto"><div style="height:900px">同一页签的阅读任务</div></div>';
+      card.innerHTML = '<div class="ans-job-icon"></div><iframe src="/ananas/modules/pdf/index.html" srcdoc="阅读附件" style="height:40px"></iframe><div class="content" style="height:120px;overflow:auto"><div style="height:900px">同一页签的阅读任务</div></div>';
       doc.body.append(card);
       const box = card.querySelector('.content');
       box.addEventListener('scroll', () => {
@@ -160,7 +160,7 @@ async function loopChecks() {
       HW.Watch.start({ rate: 2, onNote: t => notes.push(t) });
       for (let i = 0; i < 100 && HW.Watch.running; i++) await wait(500);
       ok(!HW.Watch.running, '混合页未走完');
-      ok(completed >= 2, '视频结束后未处理同页文档：' + completed);
+      ok(completed >= 2, '主任务结束后未处理同页文档：' + completed);
     } finally { HW.Watch.stop(); frame.removeEventListener('load', attach); }
   });
 

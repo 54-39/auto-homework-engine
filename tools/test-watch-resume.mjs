@@ -38,11 +38,20 @@ for (const value of [null, undefined]) {
 }
 {
   const f = fixture({ counts: { 1: 0, 2: 0 } }); await f.tick(); assert.equal(f.resumed(), 0);
-  console.log('PASS 已完成整门课程不重新启动');
+  assert.ok(f.messages.includes('HW_WATCH_REOPEN'),'本页已完成但队列未结束时没有返回目录核验');
+  await f.tick();assert.equal(f.messages.filter(type=>type==='HW_WATCH_REOPEN').length,1);
+  console.log('PASS 本页任务归零不重刷，队列仍在时有退避地重开目录核验');
+}
+{
+  const f=fixture({counts:{1:0}});
+  for(let i=0;i<10;i++){await f.tick();f.advance(1200000);}
+  assert.equal(f.messages.filter(type=>type==='HW_WATCH_REOPEN').length,5);
+  console.log('PASS 课程切换连续失败最多恢复五次，不无限重开');
 }
 {
   const f = fixture({ targetRun: 1, ids: ['1'], counts: { 1: 0, 2: 2 } }); await f.tick(); assert.equal(f.resumed(), 0);
-  console.log('PASS 限定小节接续不扩展到其他章节');
+  assert.ok(f.messages.includes('HW_WATCH_REOPEN'));
+  console.log('PASS 限定小节完成后只返回目录核验，不擅自扩展章节');
 }
 {
   const f = fixture({ targetRun: 1 }); await f.tick(); assert.equal(f.resumed(), 0);
@@ -62,5 +71,6 @@ for (const stopped of [false, true]) {
 }
 {
   const f = fixture({ currentKey: 'previous-course' }); await f.tick(); assert.equal(f.resumed(), 0);
-  console.log('PASS 页面与队列课程不一致时不在旧课程上恢复');
+  assert.ok(f.messages.includes('HW_WATCH_REOPEN'));
+  console.log('PASS 队列已换课但旧页面未离开时重开队列课程，不恢复旧课程');
 }

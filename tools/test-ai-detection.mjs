@@ -303,6 +303,7 @@ try {
     const claims = await Promise.all([call('HW_WATCH_QUIZ_RETRY', payload, url), call('HW_WATCH_QUIZ_RETRY', payload, url)]);
     assert.equal(claims.filter(r => r.first).length, 1);
     assert.equal((await call('HW_WATCH_QUIZ_RETRY', payload, url)).first, false);
+    assert.equal((await call('HW_WATCH_QUIZ_RETRY', { ...payload, quizId: 'new-work-id' }, url)).first, false, '旧版已登记的章节重做不能因新版任务ID重新触发');
     assert.deepEqual((await call('HW_WATCH_QUEUE_GET', {}, url)).queue.courses[0].quizRetries, ['3']);
     assert.equal((await call('HW_WATCH_QUIZ_RETRY', { ...payload, key: 'wrong' }, url)).ok, false);
     const outsider = await new Promise(resolve => handler({ type: 'HW_WATCH_QUIZ_RETRY', payload }, { url, tab: { id: 32, url } }, resolve));
@@ -314,6 +315,19 @@ try {
     await call('HW_WATCH_STOP');
     assert.equal((await call('HW_WATCH_QUIZ_RETRY', { ...payload, chapterId: '4' }, url)).ok, false);
     } finally { chrome.storage.local.get = originalGet; chrome.storage.local.set = originalSet; }
+  });
+  await test('同章多份测验各有一次重做机会，重复登记仍被拒绝', async () => {
+    const url = 'https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=1&clazzid=2';
+    await call('HW_WATCH_START', { courses: [{ key: '1|2', scUrl: url }] }, url);
+    try {
+      const payload = { key: '1|2', chapterId: '3' };
+      for (const quizId of ['work-one', 'work-two']) {
+        assert.equal((await call('HW_WATCH_QUIZ_RETRY', { ...payload, quizId }, url)).first, true);
+        assert.equal((await call('HW_WATCH_QUIZ_RETRY', { ...payload, quizId }, url)).first, false);
+      }
+      assert.equal((await call('HW_WATCH_QUIZ_RETRY', { ...payload, quizId: '../invalid' }, url)).ok, false);
+      assert.deepEqual((await call('HW_WATCH_QUEUE_GET', {}, url)).queue.courses[0].quizRetries, ['3:work-one', '3:work-two']);
+    } finally { await call('HW_WATCH_STOP'); }
   });
   await test('原生章节地址保留stuenc，仅当前队列属主可打开同一课程目录', async () => {
     const original = chrome.tabs.update, updates = [];
@@ -327,6 +341,34 @@ try {
       const foreign = await new Promise(resolve => handler({ type: 'HW_WATCH_OPEN_CATALOG', payload: { url } }, { url: 'https://mooc1.chaoxing.com/', tab: { id: 32 } }, resolve));
       assert.equal(foreign.ok, false); assert.equal(updates.length, 1);
     } finally { await call('HW_WATCH_STOP'); chrome.tabs.update = original; }
+  });
+  await test('断开的课程切换只重开队列当前课程，不改索引或清除暂停', async () => {
+    const original=chrome.tabs.update,updates=[];
+    const url='https://mooc1.chaoxing.com/visit/stucoursemiddle?courseid=1&clazzid=2&cpi=3';
+    chrome.tabs.update=async(id,options)=>updates.push({id,...options});
+    try{
+      await call('HW_WATCH_START',{courses:[{key:'1|2',scUrl:url}]});updates.length=0;
+      assert.equal((await call('HW_WATCH_REOPEN',{key:'1|2'})).ok,true);
+      assert.equal(updates[0].url,url);
+      assert.equal((await call('HW_WATCH_QUEUE_GET')).queue.index,0);
+      assert.equal((await call('HW_WATCH_REOPEN',{key:'wrong'})).ok,false);
+      const foreign=await new Promise(resolve=>handler({type:'HW_WATCH_REOPEN',payload:{key:'1|2'}},{url,tab:{id:32,url}},resolve));
+      assert.equal(foreign.ok,false);
+      store.watchQueue.courses[0].scUrl='https://example.invalid/?courseid=1&clazzid=2';
+      assert.equal((await call('HW_WATCH_REOPEN',{key:'1|2'})).ok,false);
+      store.watchQueue.courses[0].scUrl=url;
+      await call('HW_WATCH_PAUSE',{reason:'需要人脸验证'});
+      assert.equal((await call('HW_WATCH_REOPEN',{key:'1|2'})).ok,false);
+      assert.equal((await call('HW_WATCH_QUEUE_GET')).queue.paused,'需要人脸验证');
+      assert.equal(updates.length,1);
+      await call('HW_WATCH_RESUME');
+      const originalContains=chrome.permissions.contains;
+      try{
+        chrome.permissions.contains=async()=>{store.watchQueue.paused='授权检查期间人工停止';return true;};
+        assert.equal((await call('HW_WATCH_REOPEN',{key:'1|2'})).ok,false);
+        assert.equal(updates.length,1);
+      }finally{chrome.permissions.contains=originalContains;}
+    }finally{await call('HW_WATCH_STOP');chrome.tabs.update=original;}
   });
   await test('静音选项保存配置，并只切换发起操作的标签页声音', async () => {
     const updates = [];

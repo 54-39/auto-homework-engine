@@ -22,7 +22,7 @@
   const NODE_WAIT = 3500; // 点目录项后等 AJAX 换页
   const VIDEO_WAIT = 12000; // 进视频页后等 <video> 出现
   const DWELL_TEXT = 4000; // 阅读／PPT 类停留时长
-  const QUIZ_TIMEOUT = 240000; // 一道测验最多等多久（AI 识题＋逐题填写）
+  const QUIZ_TIMEOUT = 240000; // 测验连续没有逐题进展时的等待上限
   const MAX_KICK_FAIL = 2; // 播放未能启动时停止，不反复点播放器
   const CHAPTER_GAP = 8000; // 相邻两节开始时间的基准间隔，章节处理耗时已超过时无需再等
   const TAB_GAP = 600; // 同一节里切换页签前的短暂停顿
@@ -371,6 +371,32 @@
     } catch { /* 跨域文档只报告不可读 */ }
     note(`重画后仍未渲染（${state}），跳过这一页，不计完成`);
     return false;
+  }
+
+  const expandedTaskCards = new WeakSet();
+  function cardHasNoTasks() {
+    try {
+      const page = document.querySelector('#iframe')?.contentDocument?.querySelector('#pageDiv');
+      const empty = page?.querySelector('.nullpage');
+      return !!(visible(empty) && /暂无内容/.test(empty.textContent || '') &&
+        !page.querySelector('.ans-attach-ct,iframe,video,audio,form,.questionLi,.TiMu'));
+    } catch { return false; }
+  }
+  async function expandTaskCards() {
+    const chapter = activeChapterId();
+    const my = gen;
+    for (const doc of docs()) for (const card of doc.querySelectorAll('.blockquote-wrap')) {
+      const handle = card.querySelector('.ans-blockquote-handle');
+      if (!card.querySelector('.cmd-autoblockquote') || card.classList.contains('open') || !visible(handle) || expandedTaskCards.has(card)) continue;
+      if (!on || my !== gen || activeChapterId() !== chapter) return;
+      expandedTaskCards.add(card);
+      handle.click();
+      const deadline = Date.now() + 8000;
+      while (card.isConnected && !card.querySelector('.cmd-autoblockquote iframe') && Date.now() < deadline) {
+        await step(200);
+        if (activeChapterId() !== chapter) return;
+      }
+    }
   }
 
   /* 讨论任务点：卡片是 ananas 的话题模块（ananas/modules/insertbbs），
@@ -1318,9 +1344,11 @@
 
   /* 当前页签里是什么任务点。ended 的视频也算视频页：findVideo() 把它挪开是为了
      接着守第二个，但分类上它仍是视频任务点，交回 watchVideo 用 everEnded 收尾。 */
-  function quizDocument() {
-    let root = document;
-    try { root = document.querySelector('#iframe')?.contentDocument || document; } catch { /* 卡片尚未加载 */ }
+  let activeQuizFrame = null;
+  let activeQuizId = '';
+  function quizDocuments(root) {
+    if (!root) return [];
+    const out = [];
     const QUIZ = '.questionLi,.TiMu,.Zy_TItle,.exam-question,.mark_item,input[name^="answer"]';
     for (const d of docs(root)) {
       try {
@@ -1328,10 +1356,63 @@
         let frame = d.defaultView?.frameElement;
         while (frame && visible(frame)) frame = frame.ownerDocument.defaultView?.frameElement;
         if (frame) continue;
-        if ([...d.querySelectorAll(QUIZ)].some(visible)) return d;
+        if ([...d.querySelectorAll(QUIZ + ',.Finalresult')].some(visible)) out.push(d);
       } catch { /* 跨域文档跳过 */ }
     }
-    return null;
+    return out;
+  }
+  function quizDocument() {
+    try {
+      const root = activeQuizFrame ? activeQuizFrame.contentDocument : document.querySelector('#iframe')?.contentDocument || document;
+      return quizDocuments(root)[0] || null;
+    } catch { return null; }
+  }
+  const quizRetryKey = () => activeChapterId() + (activeQuizId ? ':' + activeQuizId : '');
+  function quizActionDocuments() {
+    if (!activeQuizFrame) return docs();
+    const roots = docs(activeQuizFrame.contentDocument);
+    for (let frame = activeQuizFrame; frame; frame = frame.ownerDocument.defaultView?.frameElement) roots.push(frame.ownerDocument);
+    return [...new Set(roots)];
+  }
+
+  async function runQuizzes() {
+    const my = gen, chapter = activeChapterId();
+    const cards = document.querySelector('#iframe');
+    let root;
+    try { root = cards?.contentDocument || document; } catch { return; }
+    const frames = [...root.querySelectorAll('iframe')].filter(frame =>
+      /\/ananas\/modules\/work\//.test(frame.getAttribute('src') || '') && visible(frame));
+    for (const quiz of quizDocuments(root)) {
+      let frame = quiz.defaultView?.frameElement;
+      while (frame && frame.ownerDocument !== root && frame !== cards) frame = frame.ownerDocument.defaultView?.frameElement;
+      if (!frames.includes(frame || cards)) frames.push(frame || cards);
+    }
+    const done = new Set();
+    for (const [index, frame] of frames.entries()) {
+      if (!on || my !== gen || activeChapterId() !== chapter) return;
+      if (frame && !frame.isConnected) continue;
+      let data = {};
+      try { data = JSON.parse(frame?.getAttribute('data') || '{}'); } catch { /* 使用当前页签内的顺序作为兜底 */ }
+      const id = String(frame?.getAttribute('jobid') || data.jobid || data._jobid || (tabList().find(tabActive)?.id || 'card') + '-frame-' + index);
+      if (done.has(id)) continue;
+      done.add(id);
+      activeQuizFrame = frame;
+      activeQuizId = id;
+      try {
+        const ready = await until(() => quizDocument(), 15000);
+        if (!on || my !== gen || activeChapterId() !== chapter) return;
+        if (!ready) {
+          await recordWatchSkip(new Error('测验内层题目未加载，未计为完成'), { task: '章节测验 ' + (index + 1) }, true);
+          continue;
+        }
+        await runQuiz();
+      } catch (e) {
+        if (e === STOP || e.code === 'HW_VERIFICATION_REQUIRED') throw e;
+        await recordWatchSkip(e, { task: '章节测验 ' + (index + 1) }, true);
+      } finally {
+        if (my === gen) { activeQuizFrame = null; activeQuizId = ''; }
+      }
+    }
   }
 
   function classify() {
@@ -1507,18 +1588,19 @@
      **文字写的是「提交」**（不是「确定」——UI 自动化把它的无障碍名读成「确定」，
      按文字找永远找不到，真实页面 2026-10-20 就是这样白等了 20 次）。 */
   function findConfirm() {
-    if (docs().some(doc => { const dialog = doc.querySelector('#workpop'); return visible(dialog) && QUIZ_RETRY_NOTICE.test(dialog.textContent || ''); })) return null;
-    for (const d of docs()) {
+    const roots = quizActionDocuments();
+    if (roots.some(doc => { const dialog = doc.querySelector('#workpop'); return visible(dialog) && QUIZ_RETRY_NOTICE.test(dialog.textContent || ''); })) return null;
+    for (const d of roots) {
       let el = null;
       try { el = d.querySelector('#popok'); } catch { /* 换下一层文档 */ }
       if (el && visible(el)) return el;
     }
-    for (const d of docs()) {
+    for (const d of roots) {
       let el = null;
       try { el = d.querySelector('#workpop .jb_btn_92, .maskDiv .jb_btn_92'); } catch { /* 同上 */ }
       if (el && visible(el)) return el;
     }
-    return findButton(/^(确定|确认)$/);
+    return findButton(/^(确定|确认)$/, roots);
   }
 
   function findButton(re, roots = docs()) {
@@ -1563,8 +1645,9 @@
   }
 
   function quizGrade() {
-    for (const d of docs()) {
-      if (d === document) continue;
+    const quiz = quizDocument();
+    for (const d of quiz ? [quiz] : docs()) {
+      if (d === document && !quiz) continue;
       const text = d.body?.innerText || '';
       const score = text.match(/本次成绩\s*([\d.]+)\s*分/);
       const total = text.match(/满分\s*[:：]?\s*([\d.]+)/);
@@ -1577,13 +1660,19 @@
   }
 
   const quizRetrySignals = new Set();
+  const quizGrades = new Map();
+  function rememberQuizGrade(grade) {
+    if (!grade) return;
+    lastQuizGrade = { chapter: activeChapterId(), quizKey: quizRetryKey(), score: grade.score, total: grade.total };
+    quizGrades.set(lastQuizGrade.quizKey, lastQuizGrade);
+  }
   const QUIZ_RETRY_NOTICE = /未达(?:到)?及格线[，,、\s]*(?:请)?重做/;
   function dismissQuizRetryNotice() {
-    for (const doc of docs()) {
+    for (const doc of quizActionDocuments()) {
       const dialog = doc.querySelector('#workpop');
       if (!visible(dialog) || !QUIZ_RETRY_NOTICE.test(dialog.textContent || '')) continue;
-      const chapter = quizDocument() ? activeChapterId() : lastQuizGrade?.chapter || activeChapterId();
-      quizRetrySignals.add(chapter);
+      const key = quizDocument() ? quizRetryKey() : lastQuizGrade?.quizKey || lastQuizGrade?.chapter || activeChapterId();
+      quizRetrySignals.add(key);
       const close = [...dialog.querySelectorAll('#popno,#popCloseFocus,.popClose')].find(visible);
       if (close) { close.click(); return true; }
     }
@@ -1595,7 +1684,8 @@
       live('测验页：这一节已经交过了，跳过提交');
       return true;
     }
-    const btn = findButton(/^提交$/);
+    const quiz = quizDocument();
+    const btn = findButton(/^提交$/, quiz ? [quiz] : docs());
     if (!btn) {
       note('测验页：没找到「提交」按钮，这一节不算完成');
       return false;
@@ -1611,7 +1701,7 @@
       await step(500);
       if (quizDone() && quizGrade()) {
         const grade = quizGrade();
-        lastQuizGrade = { chapter: activeChapterId(), score: grade.score, total: grade.total };
+        rememberQuizGrade(grade);
         HW.Panel?.reportGrade?.();
         live(`测验已交卷：${grade.score}/${grade.total}，任务点以平台回执为准`);
         return true;
@@ -1627,7 +1717,7 @@
         for (let check = 0; check < 10 && on && !grade; check++) { await step(250); grade = quizGrade(); }
         if (grade) {
           live(`测验成绩：${grade.score}/${grade.total}`);
-          lastQuizGrade = { chapter: activeChapterId(), score: grade.score, total: grade.total };
+          rememberQuizGrade(grade);
           // 内层作业iframe的load事件不跨文档冒泡，不能只靠顶层load监听记录丢分。
           HW.Panel?.reportGrade?.();
           /* 用户 2026-10-22 明确「先刷完，不强求正确率」：低分只记日志，不再暂停整轮
@@ -1665,7 +1755,7 @@
     dismissQuizRetryNotice();
     if (quizDone()) {
       const grade = quizGrade();
-      if (grade) lastQuizGrade = { chapter: activeChapterId(), score: grade.score, total: grade.total };
+      rememberQuizGrade(grade);
       live('测验页：已经交卷，保留平台任务点状态');
     } else {
       const P = HW.Panel;
@@ -1693,7 +1783,7 @@
     }
     if (!on || my !== gen || activeChapterId() !== chapter) return false;
     const quiz = quizDocument();
-    if (!quizRetrySignals.has(chapter) && !QUIZ_RETRY_NOTICE.test(quiz?.body?.innerText || '')) return true;
+    if (!quizRetrySignals.has(quizRetryKey()) && !QUIZ_RETRY_NOTICE.test(quiz?.body?.innerText || '')) return true;
     const failed = async message => {
       await recordWatchSkip(new Error(message), { task: '章节测验重做', score: quizGrade() });
       if (on && my === gen) dismissQuizRetryNotice();
@@ -1703,10 +1793,10 @@
     const redo = [...(quiz?.querySelectorAll('a.jb_btn_bg,button') || [])].find(el => visible(el) && !el.disabled
       && /^重做/.test(el.textContent.trim()) && !/剩余\s*0\s*次/.test(el.textContent));
     if (!redo) return failed('平台要求重做，但没有可用的原生重做入口，保留未完成');
-    const claim = await chrome.runtime.sendMessage({ type: 'HW_WATCH_QUIZ_RETRY', payload: { key: currentCourse()?.key, chapterId: chapter } });
+    const claim = await chrome.runtime.sendMessage({ type: 'HW_WATCH_QUIZ_RETRY', payload: { key: currentCourse()?.key, chapterId: chapter, quizId: activeQuizId || undefined } });
     if (!on || my !== gen || activeChapterId() !== chapter) return false;
     if (!claim?.ok || !claim.first) return failed(claim?.ok ? '本轮已经重做过这份测验，保留未完成并继续' : '无法登记本轮重做次数，未重复交卷：' + (claim?.error || '后台无回执'));
-    quizRetrySignals.delete(chapter);
+    quizRetrySignals.delete(quizRetryKey());
     live('平台要求重做：正在打开本轮唯一一次重做');
     redo.click();
     let confirmed = false;
@@ -2039,6 +2129,7 @@
         continue;
       }
       for (let t = 0; on && t < tabList().length; t++) {
+        if (unfinishedOf(cur.id) === 0) break;
         /* 切页签前先处理站点的「还有任务点未完成」提示框：它盖在整页上，
            不点掉的话后面的点击全落在遮罩上，表现为「卡住」或「被带到下一节」。 */
         await dismissUnfinishedDialog();
@@ -2066,10 +2157,15 @@
           await recordWatchSkip(new Error('页面刷新后仍为空壳卡片'), { chapter: cur.name, task: `第 ${t + 1} 页签` }, true);
           continue;
         }
+        if (cardHasNoTasks()) { live('该页签暂无内容，继续检查后续任务'); continue; }
+        await expandTaskCards();
+        if (activeChapterId() !== cur.id) { jumped = true; break; }
         const kind = classify();
-        let readCard = false;
+        let readCard = docs().some(d => [...d.querySelectorAll('.ans-attach-ct:not(.ans-job-finished) iframe')].some(frame => DOC_FRAME.test(frame.src)));
+        let handled = false;
         live(`${shortName(cur.name)}｜${tabList()[t]?.textContent.trim() || '任务'}`);
         if (kind === 'video') {
+          handled = true;
           readCard = true;
           /* 视频早就看完、剩下的是「本章讨论」这类别的任务点的节，不重看视频——
              站点在任务点角标的父元素上挂 .ans-job-finished，照抄它的判定
@@ -2086,7 +2182,9 @@
             jumped = true;
             break; // 站点自动进下一节
           }
-        } else if (kind === 'text' && bbsCard()) {
+        }
+        if (bbsCard()) {
+          handled = true;
           /* 讨论任务点：用户 2026-10-22 反馈「讨论点不会打开」。点开话题页、回一条
              切题短帖（bbs.js 在话题页里完成），这里等平台把角标翻绿再算完成。
              回帖成功后站点会重绘卡片区、甚至自己跳到下一个页签，紧接着再查
@@ -2106,7 +2204,9 @@
             jumped = true;
             break;
           }
-        } else if (kind === 'text' && surveyCard()) {
+        }
+        if (surveyCard()) {
+          handled = true;
           /* 学情调查／调查问卷：用户 2026-10-21 明确要求本人能填的问卷也要做。
              页面读不到问卷内部，靠 survey.js 在问卷页自己那一帧填写提交，
              这里只等目录角标归零（平台回执）再算完成。 */
@@ -2118,14 +2218,14 @@
             break;
           }
         } else if (kind === 'quiz') {
-          await runQuiz();
-          await step(800);
-        } else if (/讨论/.test(tabList()[t]?.textContent || '')) {
+          handled = true;
+          // 在本页签其他任务处理后逐份核验测验，不能只答第一份。
+        } else if (!handled && /讨论/.test(tabList()[t]?.textContent || '')) {
           /* 第 4 个页签是「本章讨论」：替用户发一条相关短帖（用户 2026-10-20 批准）。
              发完站点自己会刷新任务点数；判过「发过」的节直接跳过不重发。 */
           await runDiscuss(cur);
           await step(600);
-        } else {
+        } else if (!handled) {
           readCard = true;
           /* 阅读卡里可能嵌着视频任务点（两幅画各带一个介绍短片，2026-10-20 实测），
              只停留 4 秒就走的话任务点永远不计。先滚动把懒加载的视频带出来，
@@ -2149,6 +2249,10 @@
               await step(DWELL_TEXT);
             }
           }
+        }
+        if (activeChapterId() === cur.id && (kind === 'quiz' || quizDocument() || docs().some(d => d.querySelector('iframe[src*="/ananas/modules/work/"]')))) {
+          await runQuizzes();
+          await step(800);
         }
         if (readCard && activeChapterId() === cur.id && !textJobsDone()) {
           /* 剩下的非视频任务点（阅读/文档/PPT）常和视频同在一个页签里：只停几秒站点不计，
@@ -2200,9 +2304,10 @@
         /* 测验低分是「剩 1 个任务点」的主因（2026-10-24 异常记录 41 组）：交卷了但站点
            不认低分卷为完成。分数、剩余任务点的类型与本节的过程性跳过轨迹都写进原因，
            导出记录即可看到「为什么没完成」的完整链条。 */
-        const g = lastQuizGrade && lastQuizGrade.chapter === cur.id ? lastQuizGrade : null;
-        const quizNote = !g ? '' : g.score >= g.total ? '本节测验已满分，剩余任务点与测验无关'
-          : `本节测验 ${g.score}/${g.total} 分` + (quizRetrySignals.has(cur.id) ? '，平台提示未达及格线' : '，剩余任务点原因尚待核对');
+        const grades = [...quizGrades.values()].filter(g => g.chapter === cur.id);
+        const g = grades.find(g => g.score < g.total) || grades[0];
+        const quizNote = !g ? '' : g.score >= g.total ? '本节已读取的测验均为满分，其他任务仍待核对'
+          : `本节测验 ${g.score}/${g.total} 分` + (quizRetrySignals.has(g.quizKey) ? '，平台提示未达及格线' : '，剩余任务点原因尚待核对');
         const trail = chapterSkipTrail.length ? '；过程：' + chapterSkipTrail.join('；') : '';
         await recordWatchSkip(new Error((`仍有 ${leftNow} 个任务点未完成` + (quizNote ? '；' + quizNote : '') + trail).slice(0, 300)),
           { chapter: cur.name, remainingJobs: leftNow, process: chapterSkipTrail.slice(), jobs: unfinishedJobSummary() });
@@ -2303,6 +2408,8 @@
     const was = on;
     on = false;
     gen++;
+    activeQuizFrame = null;
+    activeQuizId = '';
     clearInterval(guard);
     guard = 0;
     if (was) {
@@ -2330,10 +2437,13 @@
     failedChapters.clear();
     bbsTried.clear(); // 新一轮重新认领讨论卡
     quizRetrySignals.clear();
+    quizGrades.clear();
     on = true;
     gen++;
     live('准备中…');
+    const my = gen;
     courseLoop().catch(async (e) => {
+      if (my !== gen) return;
       if (e === STOP) return;
       if (e.code === 'HW_VERIFICATION_REQUIRED') {
         stop();
@@ -2347,7 +2457,7 @@
       if (multi) await reportCourseDone(multi.courses[multi.index]?.key || '', { status: 'incomplete' });
       else note('本门课程已终止：' + String(e.message || e));
       stop();
-    });
+    }).finally(() => { if (my === gen) stop(); });
   }
 
   HW.Watch = {

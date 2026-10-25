@@ -592,6 +592,26 @@ async function browserChecks() {
       ok(!testCalls.slice(before).includes('HW_START'));
     } finally {HW.Watch=originalWatch;window.testApiKey=originalKey;frame.remove();}
   });
+  await check('刷课等待答案时测验换页，迟到答案停止且不填写旧文档', async () => {
+    const frame=document.createElement('iframe'), originalWatch=HW.Watch, originalSend=chrome.runtime.sendMessage, originalFill=HW.Filler.fill, originalKey=testApiKey;
+    window.testApiKey='fixture-only';
+    const html='<section class="questionLi" id="question900" typename="单选题"><h3 class="mark_name">页面切换回归题</h3><input name="answer900" type="hidden"><div class="answerBg"><span class="num_option">A.</span><span class="answer_p">甲</span></div><div class="answerBg"><span class="num_option">B.</span><span class="answer_p">乙</span></div></section>';
+    frame.srcdoc=html;document.body.append(frame);await new Promise(resolve=>frame.onload=resolve);
+    HW.Watch={...originalWatch,quizDocument:()=>frame.contentDocument};
+    let writes=0, stops=0;
+    HW.Filler.fill=async()=>{writes++;};
+    chrome.runtime.sendMessage=async message=>{
+      if(message.type==='HW_STOP')stops++;
+      if(message.type!=='HW_START')return originalSend(message);
+      setTimeout(()=>{frame.onload=()=>emitHWMessage({type:'HW_ANSWER',payload:{index:0,answer:'A',fillToken:'old-frame'}});frame.srcdoc=html;},20);
+      return{ok:true};
+    };
+    try {
+      let error;try{await HW.Panel.runHomework();}catch(e){error=e;}
+      ok(error?.message.includes('测验页面已切换'),error?.message||'旧页答案未被停止');
+      ok(writes===0&&stops>0,'仍尝试填写旧文档或未停止旧请求');
+    } finally {HW.Watch=originalWatch;chrome.runtime.sendMessage=originalSend;HW.Filler.fill=originalFill;window.testApiKey=originalKey;frame.remove();}
+  });
   nativeFixture.remove();
   window.testApiKey = 'fixture-only';
   window.setDetectionUI = async (mode) => {
@@ -956,6 +976,39 @@ async function browserChecks() {
       await new Promise(resolve => { window.resumeFailureUI = resolve; });
     } finally { chrome.runtime.sendMessage = originalSend; }
   });
+  await check('同页两份测验贯通真实读题、填写回读、完成回执和独立交卷', async () => {
+    const root=document.createElement('iframe'), previous=document.getElementById('iframe'), originalSend=chrome.runtime.sendMessage, originalKey=testApiKey;
+    if(previous)previous.id='previous-quiz-frame';root.id='iframe';root.srcdoc='<iframe src="/ananas/modules/work/index.html" srcdoc="加载中" data=\'{"jobid":"flow-one"}\'></iframe><iframe src="/ananas/modules/work/index.html" srcdoc="加载中" data=\'{"jobid":"flow-two"}\'></iframe>';
+    document.body.append(root);await new Promise(resolve=>root.onload=resolve);
+    const frames=[...root.contentDocument.querySelectorAll('iframe')], submissions=[], acknowledgements=[];
+    for(const [index,frame] of frames.entries()){
+      await new Promise(resolve=>{frame.onload=resolve;frame.srcdoc=`<section class="questionLi" id="question${index+1}" typename="单选题"><h3 class="mark_name">独立测验${index+1}</h3><input type="hidden" name="answer${index+1}"><div class="answerBg" aria-checked="false"><span class="num_option">A.</span><span class="answer_p">甲</span></div><div class="answerBg" aria-checked="false"><span class="num_option">B.</span><span class="answer_p">乙</span></div></section><button id="submit">提交</button><button id="popok" hidden>确定</button>`;});
+      const doc=frame.contentDocument;
+      for(const [option,row] of [...doc.querySelectorAll('.answerBg')].entries())row.onclick=()=>{
+        doc.querySelectorAll('.answerBg').forEach(el=>el.setAttribute('aria-checked',String(el===row)));doc.querySelector('input').value='AB'[option];
+      };
+      doc.getElementById('submit').onclick=()=>{doc.getElementById('popok').hidden=false;};
+      doc.getElementById('popok').onclick=()=>{submissions.push([index,doc.querySelector('input').value]);doc.body.innerHTML='<div class="TiMu">已交卷</div><p class="Finalresult">本次成绩 100 分 满分：100</p>';};
+    }
+    let starts=0;window.testApiKey='fixture-only';
+    chrome.runtime.sendMessage=async message=>{
+      if(message.type==='HW_START'){
+        starts++;ok(message.payload.questions.length===1,'把两份卷子合成了一份填写队列');
+        setTimeout(()=>emitHWMessage({type:'HW_ANSWER',payload:{index:0,answer:'A',fillToken:'flow-'+starts}}),20);return{ok:true};
+      }
+      if(message.type==='HW_FILLED'){
+        acknowledgements.push(message.payload);ok(message.payload.ok,'真实填写回读失败');
+        setTimeout(()=>emitHWMessage({type:'HW_DONE',payload:{total:1,filled:1,failed:0,skipped:0}}),20);return{ok:true};
+      }
+      return originalSend(message);
+    };
+    HW.Watch._completionTest.setOn(true);
+    try {
+      await Promise.race([HW.Watch._completionTest.runQuizzes(),wait(20000).then(()=>{throw Error('完整流程未结束：'+JSON.stringify({starts,acknowledgements,submissions,states:HW.questions?.map(q=>q._status),summary:ui.querySelector('.smsg').textContent}));})]);
+      ok(starts===2&&acknowledgements.length===2,'第二份未经过真实答题／填写回执');
+      ok(JSON.stringify(submissions)===JSON.stringify([[0,'A'],[1,'A']]),'交卷时有漏填或串卷：'+JSON.stringify(submissions));
+    } finally {HW.Watch._completionTest.setOn(false);emitHWMessage({type:'HW_STOPPED'});chrome.runtime.sendMessage=originalSend;window.testApiKey=originalKey;root.remove();if(previous)previous.id='iframe';}
+  });
   await check('异常记录保存失败显示持续提醒并停止答题和刷课', async () => {
     const original = HW.Watch;
     let stopped = false;
@@ -992,7 +1045,10 @@ const fixture = `<!doctype html><meta charset="utf-8"><title>AI 识题模拟作�
 <section id="sort"><h3>拖动完成排序</h3><button>甲</button><button>乙</button></section><input type="password" value="SECRET_PASSWORD"><input name="apiKey" value="SECRET_TOKEN">
 </main><script>(${fixtureBoot.toString()})();</script>`;
 const sources = ['adapters/chaoxing.js', 'dropdown.js', 'diagnostics.js', 'extractor.js', 'ai-extractor.js', 'filler.js', '../course/watch.js', 'panel.js']
-  .map((p) => fs.readFileSync(path.join(root, 'content/homework', p), 'utf8')).join('\n;\n');
+  .map((p) => {
+    const code=fs.readFileSync(path.join(root, 'content/homework', p), 'utf8');
+    return p==='../course/watch.js'?code.replace('  HW.Watch = {','  HW.Watch = { _completionTest: { runQuizzes, setOn(value) { on=value; } },'):code;
+  }).join('\n;\n');
 const html = fixture + `<script>${sources}</script><script>window.runDetectionChecks=${browserChecks.toString()};</script>`;
 const inbox = `<!doctype html><meta charset="utf-8"><title>学习通知</title><style>body{font:14px system-ui;margin:32px}main{max-width:650px}li{padding:18px}label{display:block}</style><nav>消息导航</nav><main><h2>学习通知</h2><ul><li><label><input type="checkbox">我发出的</label></li><li><label><input type="checkbox">未完成</label></li><li><label><input type="checkbox">已完成作业</label></li></ul><input type="text" placeholder="搜索通知"><select><option>全部课程</option><option>未读通知</option></select><textarea placeholder="快捷回复"></textarea><p>课程名称：计算机组成原理；作业通知，请点击进入查看。</p></main><script>(${fixtureBoot.toString()})();</script><script>${sources};HW.Panel.init();</script>`;
 const questionnaire = `<!doctype html><meta charset="utf-8"><style>.optionRadio,.optionCheckbox{padding:8px}.optionRadio input,.optionCheckbox input{display:none}textarea{width:160px;height:45px}</style>

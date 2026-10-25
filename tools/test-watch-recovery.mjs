@@ -35,15 +35,17 @@ function fixture(failure) {
     tabList: () => [{ id: 'dct1', textContent: '测验一' }, { id: 'dct2', textContent: '测验二' }],
     tabActive: item => item.id === 'dct' + (tab + 1),
     dismissUnfinishedDialog: async () => false, jitter: n => n,
-    dismissQuizRetryNotice: () => false,
+    dismissQuizRetryNotice: () => false, quizGrades: new Map(),
     step: async () => {}, until: async predicate => predicate(),
     clickNode: id => { if (failure === 'entry' && id === '1') throw Error('目录点击异常'); active = id; return true; },
     goto: async index => { tab = index; calls.push(active + ':' + tab); return true; },
-    ensureCardRendered: async () => true, classify: () => failure === 'mixed' ? 'video' : 'quiz', bbsCard: () => false, surveyCard: () => false,
+    ensureCardRendered: async () => true, cardHasNoTasks: () => false, expandTaskCards: async () => {}, classify: () => failure === 'mixed' ? 'video' : 'quiz', bbsCard: () => false, surveyCard: () => false,
     videoJobsDone: () => true,
     textJobsDone: () => counts[active] === 0,
     readThrough: async () => { calls.push(active + ':read'); counts[active] = 0; return true; },
-    runQuiz: async () => {
+    quizDocument: () => null,
+    docs: () => [],
+    runQuizzes: async () => {
       if (active === '1' && tab === 0 && failure !== 'success') {
         if (failure === 'stop') throw STOP;
         if (failure === 'captcha') throw Object.assign(Error('验证码'), { code: 'HW_VERIFICATION_REQUIRED' });
@@ -66,11 +68,36 @@ function fixture(failure) {
 const success = fixture('success');
 await success.run();
 assert.equal(success.notes.length, 1, '正常遍历仅记录整门课程完成，不逐章刷日志');
+assert.ok(!success.calls.includes('1:1')&&!success.calls.includes('2:1'),'任务已归零仍进入后续空页');
+{
+  const f=fixture('success'),asked=[],original=f.context.runQuizzes;
+  f.context.cardHasNoTasks=()=>f.calls.at(-1)==='1:0';
+  f.context.runQuizzes=async()=>{asked.push(f.calls.at(-1));return original();};
+  await f.run();
+  assert.ok(!asked.includes('1:0')&&asked.includes('1:1')&&asked.includes('2:0'));
+  console.log('PASS 平台暂无内容页不空等，继续下一页签和后续章节');
+}
 const mixed = fixture('mixed');
 await mixed.run();
 assert.ok(mixed.calls.includes('1:read') && mixed.calls.includes('2:read'), '视频已完成的混合页跳过了文档，后续章节也无法完成');
 assert.equal(mixed.messages.length, 0, '正常阅读完成不应记录任务缺口');
 console.log('PASS 视频已完成的混合页继续处理阅读，完成后推进下一章');
+{
+  const f = fixture('mixed'), bbs = new Set(), surveys = new Set();
+  const key = () => f.context.activeChapterId();
+  f.context.bbsCard = () => bbs.has(key()) ? null : {};
+  f.context.openBbsCard = async () => { f.calls.push(key() + ':bbs'); bbs.add(key()); return true; };
+  f.context.surveyCard = () => surveys.has(key()) ? null : {};
+  f.context.openSurveyCard = async () => { f.calls.push(key() + ':survey'); surveys.add(key()); return true; };
+  f.context.quizDocument = () => ({});
+  f.context.runQuizzes = async () => { f.calls.push(key() + ':quiz'); };
+  await f.run();
+  for (const chapter of ['1', '2']) {
+    const indices = ['bbs', 'survey', 'quiz', 'read'].map(type => f.calls.indexOf(chapter + ':' + type));
+    assert.ok(indices.every(index => index >= 0) && indices.every((index, i) => i === 0 || index > indices[i - 1]), '视频优先分类仍漏掉同页其他任务：' + chapter);
+  }
+  console.log('PASS 视频、讨论、问卷、测验与文档同页时分别处理，不互斥漏项');
+}
 assert.match(success.notes[0], /测试课程.*已走完一遍/);
 console.log('PASS 正常课程只记录一次课程完成，并带课程名');
 for (const type of ['task', 'entry', 'incomplete', 'progress']) {

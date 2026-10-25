@@ -961,15 +961,18 @@
         await HW.Watch?.observeProgress?.(!!q && !q.paused);
         if (!q || q.paused) return;
         if (Date.now() < reviveAt) return;
-        const ids = q.courses?.[q.index]?.chapterIds;
-        if (Number(q.targetRun) >= 1 && (!Array.isArray(ids) || !ids.length)) return;
-        if (HW.Watch.currentCourse?.()?.key !== q.courses?.[q.index]?.key) return;
-        const scope = Array.isArray(ids) && ids.length ? ids : (HW.Watch.nodes?.() || []).map(n => n.id);
+        const course = q.courses?.[q.index];
+        if (!course) return;
+        const sameCourse = HW.Watch.currentCourse?.()?.key === course.key;
+        const ids = course.chapterIds;
+        if (sameCourse && Number(q.targetRun) >= 1 && (!Array.isArray(ids) || !ids.length)) return;
+        const scope = sameCourse ? Array.isArray(ids) && ids.length ? ids : (HW.Watch.nodes?.() || []).map(n => n.id) : [];
         const counts = scope.map(id => HW.Watch.unfinishedOf?.(id));
         const unknown = counts.some(count => count == null);
         const left = counts.reduce((sum, count) => sum + (count || 0), 0);
-        if (!left && !unknown) return; // 当前范围确实完成时不重复启动；未知任务数仍需接续核验
-        const mark = `${q.courses[q.index].key}:${HW.Watch.activeChapterId?.() || ''}:${left}:${unknown}`;
+        const reopen = !sameCourse || scope.length > 0 && !left && !unknown;
+        if (!reopen && !scope.length) return;
+        const mark = reopen ? `${course.key}:navigation` : `${course.key}:${HW.Watch.activeChapterId?.() || ''}:${left}:${unknown}`;
         if (mark !== reviveMark) { reviveMark = mark; reviveCount = 0; }
         if (reviveCount >= 5) {
           setWatchLine('循环连续中断 5 次，已停止自动接续，请点「开始刷课」', true);
@@ -977,6 +980,12 @@
         }
         reviveCount += 1;
         reviveAt = Date.now() + 120000 * reviveCount; // 2 / 4 / 6 分钟，越往后越慢
+        if (reopen) {
+          log(`刷课：课程切换未完成，第 ${reviveCount} 次重新打开队列中的课程核验`);
+          const result = await send('HW_WATCH_REOPEN', { key: course.key });
+          if (!result?.ok) setWatchLine('课程接续未成功：' + (result?.error || '后台无回执'), true);
+          return;
+        }
         log(`刷课：循环中断（${unknown ? '任务数量待核对' : `还剩 ${left} 个任务点`}），第 ${reviveCount} 次自动接续`);
         // 自动接续只读队列，不能清除此刻刚出现的验证码或手动暂停。
         await HW.Watch.resumeQueued({ onLive: setWatchLine, onNote: watchNote, onStop: watchStopped });
@@ -1764,19 +1773,25 @@
               { question: still.map((el) => (el.querySelector('.stem')?.textContent || '').slice(0, 60)).join('；') });
           }
         }
+        if (HW.Watch?.quizDocument && HW.Watch.quizDocument() !== autoDocument) throw new Error('测验页面已切换，不继续填写旧题');
         const started = await startAnswering({ auto: true, retry: !!opts.retry });
         if (!started) throw new Error('没能开始填写，不提交测验');
         // 等后台把这一页的题填完（HW_DONE / HW_STOPPED 都会把按钮解锁）
-        const deadline = Date.now() + 180000;
+        const idleMs = Number(opts.timeout) > 0 ? Number(opts.timeout) : 240000;
+        let deadline = Date.now() + idleMs;
+        let progress = (HW.questions || []).map(q => q._status || 'queued').join('|');
         const wait = (ms) => new Promise((r) => setTimeout(r, ms));
         while (Date.now() < deadline) {
           await wait(700);
+          if (HW.Watch?.quizDocument && HW.Watch.quizDocument() !== autoDocument) throw new Error('测验页面已切换，不继续填写旧题');
+          const next = (HW.questions || []).map(q => q._status || 'queued').join('|');
+          if (next !== progress) { progress = next; deadline = Date.now() + idleMs; }
           if (els.detect.disabled || !els.stop.disabled) continue; // 还在跑
           break;
         }
         const filled = (HW.questions || []).filter((q) => ['filled', 'fixed', 'skipped'].includes(q._status)).length;
         const failed = (HW.questions || []).filter((q) => q._status === 'failed').length;
-        if (els.detect.disabled || !els.stop.disabled) throw new Error('答题超时，不提交测验');
+        if (els.detect.disabled || !els.stop.disabled) throw new Error('答题长时间无进展，不提交测验');
         if (answerPauseReason) throw new Error(answerPauseReason + '，不提交测验');
         if (failed || filled !== HW.questions.length) {
           /* 用户 2026-10-22：先刷完。个别题填写失败（如「共用选项点击后回读不一致」）
@@ -1855,6 +1870,13 @@
         if (payload.status === 'skipped' && !autoRun) log(`第 ${payload.index + 1} 题：${payload.note || '已作答，跳过'}`);
       } else if (type === 'HW_ANSWER') {
         if (stopRequested) return; // 已停止：丢弃迟到的回答
+        if (autoRun && HW.Watch?.quizDocument && HW.Watch.quizDocument() !== autoDocument) {
+          answerPauseReason = '测验页面已切换，不继续填写旧题';
+          stopRequested = true;
+          setBusy(false);
+          send('HW_STOP').catch(() => {});
+          return;
+        }
         (async () => {
           const i = payload.index;
           try {

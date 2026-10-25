@@ -755,6 +755,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // 沿用原生章节 iframe 的完整地址（含 stuenc），不自行拼接鉴权参数。
         await chrome.tabs.update(tabId, { url: url.href });
         sendResponse({ ok: true });
+      } else if (type === 'HW_WATCH_REOPEN') {
+        const q = await loadQueue(), course = q?.courses[q.index];
+        if (!q || q.paused || q.tabId !== tabId || course?.key !== payload.key) throw new Error('不是当前运行队列的课程');
+        if (!(await ensureWatchHostAccess())) return sendResponse({ ok: false, error: WATCH_HOST_ACCESS_ERROR });
+        const current = await loadQueue();
+        if (!current || current.paused || current.tabId !== tabId || current.courses[current.index]?.key !== payload.key) throw new Error('队列状态已变化，未重新打开课程');
+        const url = new URL(current.courses[current.index].scUrl);
+        if (url.protocol !== 'https:' || !/(^|\.)chaoxing\.com$/.test(url.hostname) || url.username || url.password ||
+            `${url.searchParams.get('courseid') || url.searchParams.get('courseId')}|${url.searchParams.get('clazzid')}` !== course.key)
+          throw new Error('队列课程地址无效，未重新打开');
+        await chrome.tabs.update(tabId, { url: url.href });
+        sendResponse({ ok: true });
       } else if (type === 'HW_WATCH_QUEUE_GET') {
         /* 只把队列发给属主标签页——否则用户随手开一个超星页面，
            那个页面也会来接力，把用户的浏览器抢去刷课（真机踩过：新开标签页直接被带去 5.3 播视频）。
@@ -802,12 +814,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (type === 'HW_WATCH_QUIZ_RETRY') {
         const claim = quizRetryClaims.then(async () => {
           const q = await loadQueue(), course = q?.courses[q.index];
-          if (!q || q.paused || q.tabId !== tabId || course?.key !== payload.key || !/^\d+$/.test(String(payload.chapterId)))
+          if (!q || q.paused || q.tabId !== tabId || course?.key !== payload.key || !/^\d+$/.test(String(payload.chapterId)) ||
+              payload.quizId != null && !/^[\w:-]{1,160}$/.test(String(payload.quizId)))
             return { ok: false, error: '重做测验与当前刷课队列不一致' };
           course.quizRetries ||= [];
           const chapterId = String(payload.chapterId);
-          if (course.quizRetries.includes(chapterId)) return { ok: true, first: false };
-          course.quizRetries.push(chapterId);
+          const retryId = payload.quizId ? chapterId + ':' + payload.quizId : chapterId;
+          if (course.quizRetries.includes(chapterId) || course.quizRetries.includes(retryId)) return { ok: true, first: false };
+          course.quizRetries.push(retryId);
           await chrome.storage.local.set({ [WQ_KEY]: q });
           return { ok: true, first: true };
         });
