@@ -48,6 +48,12 @@ try {
   sw = replaceOnce(sw,
     "import { hashKey, compareVersions, isMajorUpdate } from './engines/engine.js';",
     "import { hashKey } from './engines/engine.js';", 'service worker imports');
+  sw = replaceOnce(sw,
+    '  autoUpdate: true, // 后台定时检查，空闲时自动装新版（刷课中不打断）；设置页可关\n',
+    '', 'updater configuration');
+  sw = replaceOnce(sw,
+    "['app', 'mem', 'watch', 'diag', 'upd'].includes(payload.section)",
+    "['app', 'mem', 'watch', 'diag'].includes(payload.section)", 'updater settings route');
   sw = removeBetween(sw, '/* —— 更新检查：', 'async function askEngine(', 'service worker update checker');
   sw = removeBetween(sw, 'const UPDATE_HOST =', 'function cacheKeyOf(q) {', 'native updater');
   sw = replaceOnce(sw,
@@ -104,11 +110,11 @@ try {
     '', 'panel update notice element');
   panel = replaceOnce(panel, "      updline: $('.updline'),\n", '', 'panel update notice reference');
   panel = removeBetween(panel, '      // 更新提示：只读后台缓存', '\n    })();', 'panel update notice logic');
-  panel = panel.replaceAll('检测更新', '记忆 / 诊断');
+  panel = panel.replaceAll('和检测更新', '');
   write('content/homework/panel.js', panel);
 
   const sourceFiles = ['background/service-worker.js', 'background/engines/engine.js', 'settings.html', 'settings.js', 'content/homework/panel.js'];
-  const forbidden = /CHECK_UPDATE|HW_RUN_UPDATE|DIAG_UPDATE_HOST|UPDATE_PAGE_READY|nativeMessaging|connectNative|autoupdate\.mjs|install-updater\.cmd|检测更新|updline|自动更新/;
+  const forbidden = /CHECK_UPDATE|HW_RUN_UPDATE|DIAG_UPDATE_HOST|UPDATE_PAGE_READY|nativeMessaging|connectNative|autoUpdate|autoupdate\.mjs|install-updater\.cmd|检测更新|updline|自动更新/;
   for (const file of sourceFiles) {
     const hits = read(file).match(new RegExp(forbidden.source, 'g')) || [];
     if (hits.length) throw new Error(`商店包仍含更新功能：${file}（${[...new Set(hits)].join(', ')}）`);

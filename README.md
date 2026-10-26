@@ -19,6 +19,8 @@
 
 ## 安装
 
+Edge 用户也可从 [Edge 扩展商店](https://microsoftedge.microsoft.com/addons/detail/cblgpldccbkadljnllpjlodafooehngg) 安装，商店版由浏览器管理更新。
+
 1. 在 [下载页面](https://github.com/54-39/auto-homework-engine/releases/latest) 选择 `homework-helper-版本号.zip`，解压到固定文件夹。
 2. 打开 `chrome://extensions` 或 `edge://extensions`，开启「开发者模式」。
 3. 点击「加载已解压的扩展程序」，选择包含 `manifest.json` 的插件文件夹。
