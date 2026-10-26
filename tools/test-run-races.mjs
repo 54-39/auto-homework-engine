@@ -25,6 +25,22 @@ function fixture(){
  console.log('PASS 读取配置期间停止不会迟到启动答题');
 }
 {
+ const f=fixture(),view=deferred();let opened=0;
+ f.context.getConfig=async()=>({engine:'bridge',bridge:{viewMode:'split'}});
+ f.context.openBridgeView=async(tabId,cfg)=>{assert.equal(tabId,7);assert.equal(cfg.viewMode,'split');opened++;await view.promise;};
+ const start=f.context.startRun([{_decision:'skip'}],7,'bridge');await flush();
+ assert.equal(opened,1);assert.equal(f.messages.length,0);
+ f.context.stop(7);view.resolve();assert.equal((await start).ok,false);assert.equal(f.messages.length,0);
+ console.log('PASS 点击开始先准备豆包布局，等待期间停止不迟到启动答题');
+}
+{
+ const f=fixture();f.context.getConfig=async()=>({engine:'bridge'});
+ f.context.openBridgeView=async()=>{throw Error('布局未打开');};
+ const result=await f.context.startRun([{_decision:'skip'}],7,'bridge');
+ assert.equal(result.ok,false);assert.equal(result.error,'布局未打开');assert.equal(f.messages.length,0);
+ console.log('PASS 豆包布局打开失败返回可见启动错误，不残留运行中队列');
+}
+{
  const f=fixture(),config=deferred();let reads=0;f.context.getConfig=()=>++reads===1?config.promise:Promise.resolve({engine:'api'});
  const older=f.context.startRun([{_decision:'skip'}],7,'old');await f.context.startRun([{_decision:'skip'}],7,'new');
  config.resolve({engine:'api'});assert.equal((await older).ok,false);assert.equal(f.context.run.sourceUrl,'new');

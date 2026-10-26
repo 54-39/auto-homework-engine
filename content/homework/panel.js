@@ -117,9 +117,6 @@
     button.act{flex:1;height:32px;border:0;border-radius:6px;background:#2563EB;color:#fff;cursor:pointer;font-size:12px;font-weight:500}
     button.act.ghost{background:#fff;color:#374151;border:1px solid #CCD2D9;font-weight:400}
     button.act:disabled{opacity:.45;cursor:not-allowed}
-    .bridgebar{display:flex;flex-direction:column;gap:4px;flex:none}
-    .bridgebar button.act{flex:none;width:100%}
-    .bridgestatus{margin:0;color:#4B5563;font-size:11px;line-height:1.6}
     .panel.watchmode .homework-only{display:none}
     .watchview{display:flex;flex-direction:column;gap:8px;flex:1.6 0 auto;min-height:min-content}
     .watchview>*{flex:none}
@@ -277,7 +274,6 @@
           <button class="tbtn btn-collapse" data-tip="收起面板">收起</button>
         </header>
         <div class="row moderow"><label>模式</label><div class="dd modeslot"></div></div>
-        <div class="bridgebar hidden"><button type="button" class="act ghost bridgesplit">并排查看豆包</button><p class="bridgestatus hidden" role="status" aria-live="polite"></p></div>
         <div class="hintline homework-only">题目发送至所选 AI；请核对后自行提交</div>
         <div class="keywarn hidden">还没有 API Key？前往 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer">DeepSeek 获取 API Key</a>，再在「接口与 API Key」中填写。</div>
         <div class="updline hidden" data-tip="点击「更新」启动更新事务；下载、验证与回滚状态请在设置页查看，成功后作业页面需 F5"></div>
@@ -367,7 +363,7 @@
       apiToggle: $('.apitoggle'), apisec: $('.apisec'),
       modal: $('.keymodal'), msave: $('.msave'), mtemp: $('.mtemp'), mcancel: $('.mcancel'),
       subjmodal: $('.subjmodal'), subjbody: $('.subjbody'), subjcancel: $('.subjcancel'), subjkeep: $('.subjkeep'), subjrewrite: $('.subjrewrite'),
-      detect: $('.detect'), start: $('.start'), stop: $('.stop'), bridgebar: $('.bridgebar'), bridgesplit: $('.bridgesplit'), bridgestatus: $('.bridgestatus'),
+      detect: $('.detect'), start: $('.start'), stop: $('.stop'),
       watch: $('.watchbtn'), watchmute: $('.watchmute'), watchline: $('.watchline'), courselist: $('.courselist'), courserefresh: $('.courserefresh'),
       watchqueue: $('.watchqueue'), wqnow: $('.wqnow'), wqrest: $('.wqrest'), wqtime: $('.wqtime'),
       moderow: $('.moderow'), watchview: $('.watchview'), watchheading: $('.watchheading'), watchcontext: $('.watchcontext'), watchmeta: $('.watchmeta'), watchempty: $('.watchempty'),
@@ -392,28 +388,10 @@
       const watch = isApi && els.mode.value === 'watch';
       els.moderow.classList.remove('hidden');
       els.panel.classList.toggle('watchmode', watch);
-      els.bridgebar.classList.toggle('hidden', engine !== 'bridge');
       els.watchview.classList.toggle('hidden', !watch);
       if (watch) loadCourseTimes();
       updateWatchContext();
     }
-    els.bridgesplit.addEventListener('click', async () => {
-      const focused = root.activeElement === els.bridgesplit;
-      els.bridgesplit.disabled = true;
-      els.bridgesplit.textContent = '正在打开分屏…';
-      els.bridgesplit.setAttribute('aria-busy', 'true');
-      try {
-        const result = await send('HW_BRIDGE_SPLIT');
-        els.bridgestatus.textContent = result?.ok ? '已并排显示，可直接在豆包侧登录或处理验证。' : result?.error || '分屏未打开，请用 Edge 工具栏的分屏按钮选择豆包';
-      } catch (e) { els.bridgestatus.textContent = '分屏未打开：' + String(e.message || e); }
-      finally {
-        els.bridgestatus.classList.remove('hidden');
-        els.bridgesplit.disabled = false;
-        els.bridgesplit.textContent = '并排查看豆包';
-        els.bridgesplit.removeAttribute('aria-busy');
-        if (focused) els.bridgesplit.focus({ preventScroll: true });
-      }
-    });
     /* 每门课处理几节由设置页决定（用户 2026-10-23 要求：不要再写死在面板里）。
        0 = 整门课程；N>0 = 从第一节起连续完成 N 节，只处理进度低于 35% 的课。 */
     let watchSections = 0;

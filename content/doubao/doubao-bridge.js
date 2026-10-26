@@ -15,9 +15,36 @@
   const vis = (el) => {
     if (!el || !el.getBoundingClientRect) return false;
     const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
+    const style = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0';
   };
   const squash = (s) => (s || '').replace(/\s+/g, '');
+
+  /* 只点可见弹窗自身的关闭控件，不删除遮罩，也不替用户完成验证或同意条款。 */
+  function checkPageNotices() {
+    const challenges = document.querySelectorAll('iframe[src*="captcha"],iframe[src*="verifycenter"],.captcha_verify_container,[data-testid="captcha"]');
+    if ([...challenges].some(vis)) throw new Error('豆包需要安全验证，请在豆包页面完成验证后继续');
+    const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"],.semi-modal,.arco-modal,.ant-modal,.modal-content')].filter(vis);
+    for (const dialog of dialogs) {
+      if (dialogs.some(other => other !== dialog && dialog.contains(other))) continue;
+      const text = squash(dialog.innerText || dialog.textContent);
+      if (/安全验证|人机验证|人脸验证|滑块验证|拖动.{0,12}(滑块|拼图)|访问异常|操作频繁|异常请求|完成验证/.test(text)
+          || (/验证码/.test(text) && !/登录|注册|手机号|手机号码|短信/.test(text))) {
+        throw new Error('豆包需要安全验证，请在豆包页面完成验证后继续');
+      }
+      const close = [...dialog.querySelectorAll('button,[role="button"],[data-testid*="close"],[class*="modal-close"],[class*="dialog-close"]')].find(el => {
+        if (!vis(el) || typeof el.click !== 'function' || el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+        const label = squash(el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent);
+        return /^(关闭|关闭弹窗|关闭弹出窗口|关闭对话框|取消|暂不|暂不登录|以后再说|稍后再说|我知道了|知道了|跳过|close(?:dialog|window)?|dismiss|×|✕|✖|x)$/i.test(label)
+          || /(?:modal[-_]?close|dialog[-_]?close|close[-_]?button)/i.test(el.className?.toString() || '')
+          || /close/i.test(el.getAttribute('data-testid') || '');
+      });
+      if (close) close.click();
+      else if (/登录|登入|log\s*in|sign\s*in/i.test(text)) {
+        throw new Error('豆包需要登录，请在豆包页面登录后继续');
+      }
+    }
+  }
 
   /* 编辑器定位：优先 ProseMirror；初始态可能只有 textarea（聚焦可唤醒编辑器） */
   function findEditor() {
@@ -64,13 +91,14 @@
   }
 
   async function newChat() {
+    checkPageNotices();
     const empty = () => findEditor() && !squash(findEditor().textContent) &&
       !document.querySelector('[data-testid="send_message"],[data-testid="receive_message"]');
     if (empty()) return;
     const btn = document.querySelector('[data-testid="create_conversation_button"]');
     if (btn) {
       btn.click();
-      if (!(await waitUntil(empty, 5000))) throw new Error('豆包新对话未就绪，请检查登录或验证状态');
+      if (!(await waitUntil(empty, 5000))) throw new Error('豆包新对话未就绪，请检查豆包页面后重试');
     }
   }
 
@@ -96,6 +124,7 @@
   async function waitUntil(predicate, timeoutMs) {
     const deadline = Date.now() + timeoutMs;
     while (!predicate()) {
+      checkPageNotices();
       const left = deadline - Date.now();
       if (left <= 0) return false;
       await waitForChange(Math.min(left, 250));
@@ -107,6 +136,7 @@
      发出/回答的判定用"元素身份"而非数量：新对话会重建消息区，数量对比会误判
      （基线在旧 DOM 上数的，重置后新消息数小于基线）。 */
   async function askOne(prompt, useNewChat) {
+    checkPageNotices();
     if (useNewChat) await newChat();
     const editor = findEditor();
     if (!editor) throw new Error('豆包输入框未就绪');
@@ -125,26 +155,29 @@
     if (!(await waitUntil(() => {
       const btn = document.querySelector('button[data-testid="chat_input_send_button"]');
       return btn && !btn.disabled;
-    }, 3000))) throw new Error('豆包发送按钮不可用，请检查登录或验证状态');
+    }, 3000))) throw new Error('豆包发送按钮不可用，请检查页面或稍后重试');
+    checkPageNotices();
     clickSend();
 
     // 只发送一次，最多等 30 秒确认气泡；未发出时暂停交给用户处理，避免重复提问。
     const sentDeadline = Date.now() + 30000;
     let sent = false;
     while (Date.now() < sentDeadline) {
+      checkPageNotices();
       if (hasFreshSent() || hasBubbleWithPrompt()) {
         sent = true;
         break;
       }
       await waitForChange(1000);
     }
-    if (!sent) throw new Error('消息似乎未发出，已暂停；点击通知打开豆包检查登录或验证');
+    if (!sent) throw new Error('消息似乎未发出，已暂停；请在豆包页面确认后重试');
 
     // 等回答：只认发送后"新出现"的 receive_message（元素身份），文本稳定 2 秒视为生成完成
     const t0 = Date.now();
     let lastText = '';
     let stableSince = 0;
     while (Date.now() - t0 < 150000) {
+      checkPageNotices();
       const fresh = [...document.querySelectorAll('[data-testid="receive_message"]')].filter(
         (el) => !seenRecv.has(el),
       );
@@ -166,6 +199,11 @@
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.type === 'BRIDGE_PING') {
+      try { checkPageNotices(); }
+      catch (e) {
+        sendResponse({ ok: false, ready: false, attention: true, error: e.message, url: location.href });
+        return;
+      }
       sendResponse({
         ok: true,
         ready: !!findEditor(),

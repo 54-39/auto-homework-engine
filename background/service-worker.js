@@ -1,6 +1,6 @@
 /* 后台 Service Worker：引擎路由、题目队列、答案缓存、与作业页消息中转、热重载、自动更新检查 */
 import { answerWithAPI, testAPI, sanitizeKey, detectEndpoint, requestWithAPI } from './engines/api-engine.js';
-import { answerWithBridge, requestWithBridge, openBridgeSplit } from './engines/bridge-engine.js';
+import { answerWithBridge, requestWithBridge, openBridgeView } from './engines/bridge-engine.js';
 import { detectQuestions } from './engines/detection-engine.js';
 import { hashKey, compareVersions, isMajorUpdate } from './engines/engine.js';
 import { appendIssue, readIssuePage, clearIssueHistory } from './issue-history.js';
@@ -8,7 +8,7 @@ import { appendIssue, readIssuePage, clearIssueHistory } from './issue-history.j
 const DEFAULT_CONFIG = {
   engine: 'api', // api | bridge
   api: { iface: 'auto', baseURL: '', model: '', apiKey: '' },
-  bridge: { newChat: true, delayMin: 3000, delayMax: 8000 },
+  bridge: { newChat: true, delayMin: 3000, delayMax: 8000, viewMode: 'split' },
   subjMode: 'ask', // 简答题策略：ask=每次弹窗询问 | keep=保留跳过 | rewrite=清空重写
   verify2: true, // 多选/判断题二次复核开关（API 引擎）：关掉每题少一次 AI 调用
   watchRate: 'auto', // 刷课倍速：'auto' 跟播放器菜单最高档 | '1'/'1.25'/'1.5'/'2' 固定档
@@ -266,7 +266,7 @@ function sendTab(tabId, msg) {
 }
 
 /* —— 系统通知：风控验证/队列暂停/完成提醒。点击通知跳转到豆包标签页 —— */
-const RISKY_RE = /风控|验证|未就绪|登录墙|未发出/;
+const RISKY_RE = /风控|安全验证|人机验证|验证码|人脸验证|需要登录|登录墙/;
 const AUTH_RE = /HTTP 40[13]|authentication|invalid[_ ]?api[_ ]?key|认证|鉴权/i;
 let lastNotifyAt = 0;
 function notify(message, openDoubao = false) {
@@ -509,6 +509,14 @@ async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
   if (activeRun.cancelled || run !== activeRun) return { ok: false, error: '本次答题已取消' };
   activeRun.engine = cfg.engine;
   activeRun.auto = auto && cfg.engine === 'api';
+  if (cfg.engine === 'bridge') {
+    try { await openBridgeView(tabId, cfg.bridge); }
+    catch (e) {
+      activeRun.cancelled = true;
+      return { ok: false, error: String(e.message || e) };
+    }
+    if (activeRun.cancelled || run !== activeRun) return { ok: false, error: '本次答题已取消' };
+  }
   (async () => {
     for (let i = 0; i < activeRun.items.length; i++) {
       if (activeRun.cancelled || run !== activeRun) return;
@@ -716,10 +724,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         } catch (e) {
           sendResponse({ ok: false, needsPermission: true, error: '无法完成超星授权，请在扩展的站点访问设置中允许超星站点后重试：' + String(e.message || e) });
         }
-      } else if (type === 'HW_BRIDGE_SPLIT') {
-        const here = new URL(sender.url || sender.tab?.url || 'about:blank');
-        if (tabId == null || !/(^|\.)chaoxing\.com$/.test(here.hostname)) throw new Error('请在超星作业页面打开豆包分屏');
-        sendResponse({ ok: true, ...await openBridgeSplit(tabId) });
       } else if (type === 'HW_WATCH_COURSES') {
         const here = new URL(sender.url || sender.tab?.url || 'about:blank');
         if (tabId == null || !/(^|\.)chaoxing\.com$/.test(here.hostname)) throw new Error('只能读取当前超星页面的课程清单');

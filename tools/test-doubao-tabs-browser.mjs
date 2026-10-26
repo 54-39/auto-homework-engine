@@ -51,7 +51,7 @@ if (!publicPage) {
   assert.equal(code.split('    clickSend();').length, 2, '真实页面检查必须在唯一发送动作之前终止');
   fs.writeFileSync(client, code.replace('    clickSend();', "    throw new Error('TAB_INPUT_VERIFIED_NO_SEND');"));
 }
-fs.writeFileSync(path.join(stage, 'background/test-worker.mjs'), `import {requestWithBridge,openBridgeSplit} from './engines/bridge-engine.js';globalThis.bridgeAsk=prompt=>requestWithBridge([{role:'user',content:prompt}],{newChat:true});globalThis.bridgeSplit=tabId=>openBridgeSplit(tabId);`);
+fs.writeFileSync(path.join(stage, 'background/test-worker.mjs'), `import {requestWithBridge,openBridgeSplit,openBridgeView} from './engines/bridge-engine.js';globalThis.bridgeAsk=prompt=>requestWithBridge([{role:'user',content:prompt}],{newChat:true});globalThis.bridgeSplit=tabId=>openBridgeSplit(tabId);globalThis.bridgeView=(tabId,viewMode)=>openBridgeView(tabId,{viewMode});`);
 fs.writeFileSync(path.join(stage, 'manifest.json'), JSON.stringify({
   manifest_version: 3, name: '豆包标签页桥接回归', version: '1.0.0',
   permissions: ['tabs', 'scripting'], host_permissions: [publicPage ? '*://*.doubao.com/*' : 'http://127.0.0.1/*'],
@@ -163,7 +163,34 @@ try {
     console.log('PASS 原生分屏内继续取答，重复点击复用分屏且不新增标签');
     groups += 2;
   } else console.log('SKIP 当前浏览器没有原生分屏 API，兼容提示由专项单元测试覆盖');
-  fs.writeFileSync(path.join(output, 'tabs-results.json'), JSON.stringify({ groups, sendDelay, sent, tabs: afterReopen, split }, null, 2));
+  const view=await evaluate(worker, `bridgeView(${before[0].id},'window')`);
+  const windowTab=await evaluate(worker,`chrome.tabs.get(${view.tabId})`);
+  assert.notEqual(windowTab.windowId,(await evaluate(worker,`chrome.tabs.get(${before[0].id})`)).windowId);
+  assert.ok(!(windowTab.splitViewId>=0));
+  assert.equal((await evaluate(worker,`bridgeView(${before[0].id},'window')`)).tabId,view.tabId);
+  console.log('PASS 真实 Edge 新窗口模式退出豆包分屏，并复用原网页');groups++;
+  const notice=async(text,close=true)=>evaluate(worker,`chrome.scripting.executeScript({target:{tabId:${view.tabId}},func:(text,close)=>{
+    const d=document.createElement('div');d.id='test-notice';d.setAttribute('role','dialog');d.style.cssText='position:fixed;inset:20px;background:white;z-index:999';
+    d.textContent=text;
+    if(close){const b=document.createElement('button');b.setAttribute('aria-label','关闭');b.textContent='×';b.onclick=()=>{window.noticeClosed=(window.noticeClosed||0)+1;d.remove();};d.append(b);}
+    document.body.append(d);
+  },args:${JSON.stringify([text,close])}})`);
+  const noticeState=()=>evaluate(worker,`chrome.scripting.executeScript({target:{tabId:${view.tabId}},func:()=>({open:!!document.getElementById('test-notice'),closed:window.noticeClosed||0})}).then(r=>r[0].result)`);
+  for(const text of ['豆包功能更新，试试新功能','登录解锁更多功能，手机号登录，获取验证码']){
+    await notice(text);const count=sent.length;
+    assert.equal((await evaluate(worker,'bridgeAsk("dismiss-notice")')).raw,'{"answers":["B"]}');
+    assert.equal(sent.length,count+1);assert.equal((await noticeState()).open,false);
+  }
+  console.log('PASS 更新弹窗和可关闭的登录邀请自动点叉，连续题正常完成且不重复发送');groups++;
+  for(const [text,close,pattern] of [['请完成安全验证，拖动滑块',true,/安全验证/],['请登录后继续',false,/需要登录/]]){
+    await notice(text,close);const count=sent.length,closed=(await noticeState()).closed;
+    const error=await evaluate(worker,'bridgeAsk("real-attention").then(()=>null,e=>e.message)');
+    assert.match(error,pattern);assert.equal(sent.length,count);assert.deepEqual(await noticeState(),{open:true,closed});
+    await evaluate(worker,`chrome.scripting.executeScript({target:{tabId:${view.tabId}},func:()=>document.getElementById('test-notice').remove()})`);
+  }
+  assert.equal((await evaluate(worker,'bridgeAsk("after-attention-cleared")')).raw,'{"answers":["B"]}');
+  console.log('PASS 真实验证和强制登录不点叉、不发题，解除后无需重启即可恢复');groups++;
+  fs.writeFileSync(path.join(output, 'tabs-results.json'), JSON.stringify({ groups, sendDelay, sent, tabs: afterReopen, split, view }, null, 2));
   }
 } finally {
   worker?.close();

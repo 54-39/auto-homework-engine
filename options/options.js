@@ -134,7 +134,7 @@ $('clearKey').addEventListener('click', () => changeKey('SET_CONFIG', { api: { a
 $('appForm').addEventListener('submit', async event => {
   event.preventDefault();
   const api = apiFields();
-  const bridge = { delayMin: +$('delayMin').value, delayMax: +$('delayMax').value, newChat: $('newChat').checked };
+  const bridge = { delayMin: +$('delayMin').value, delayMax: +$('delayMax').value, newChat: $('newChat').checked, viewMode: $('bridgeViewMode').value };
   if ($('engine').value === 'bridge' && bridge.delayMax < bridge.delayMin) {
     out('msg', '间隔上限不能小于下限，请调整后再保存', 'err'); $('delayMax').focus(); return;
   }
@@ -174,6 +174,7 @@ $('test').addEventListener('click', async () => {
   $('delayMin').value = config.bridge?.delayMin ?? 3000;
   $('delayMax').value = config.bridge?.delayMax ?? 8000;
   $('newChat').checked = config.bridge?.newChat !== false;
+  $('bridgeViewMode').value = config.bridge?.viewMode === 'window' ? 'window' : 'split';
   showEngine();
   $('appFields').disabled = false;
   out('msg', '');

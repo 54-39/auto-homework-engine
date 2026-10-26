@@ -44,7 +44,7 @@ async function checks() {
   const select = (id, value) => { $(id).value = value; $(id).dispatchEvent(new Event('change')); };
   await until(() => !$('appFields').disabled);
   await check('设置下拉复用面板样式，键盘切换、单弹层与焦点可用', async () => {
-    for (const id of ['engine','subjMode','provider','watchSections']) {
+    for (const id of ['engine','subjMode','provider','watchSections','bridgeViewMode']) {
       ok($(id).hidden && $(id+'-trigger'), '原生下拉未替换：'+id);
       ok(document.querySelector('label[for="'+id+'-trigger"]'), '标签未关联：'+id);
     }
@@ -100,6 +100,14 @@ async function checks() {
     ok(location.hash === '#app' && !$('sec-app').hidden && $('sec-mem').hidden);
     ok($('savedKeys').children.length === 2 && $('apiKey').value === '');
     ok($('keyStatus').textContent.includes('3eb1') && !document.body.innerText.includes('fixture-old-3eb1'));
+  });
+  await check('豆包打开方式默认分屏，可保存新窗口并切回分屏', async () => {
+    select('engine','bridge');
+    ok($('bridgeViewMode').value==='split');
+    select('bridgeViewMode','window');await click('save');
+    ok(testConfig.bridge.viewMode==='window' && $('msg').textContent.includes('已保存'));
+    select('bridgeViewMode','split');await click('save');
+    ok(testConfig.bridge.viewMode==='split');select('engine','api');
   });
   await check('诊断展示跳过任务的课程、章节、处理结果、堆栈和上下文', async () => {
     document.querySelector('[data-sec="diag"]').click();await wait(30);
@@ -242,7 +250,8 @@ try {
     interactionResults.push({name:width + 'px 刷课下拉滚轮、末项点击保存、重新展开与键盘选择',ok:true});
   }
   await call('Emulation.setDeviceMetricsOverride', { width:420, height:900, deviceScaleFactor:1, mobile:false });
-  for (const id of ['engine', 'subjMode', 'provider', 'watchSections']) {
+  for (const id of ['engine', 'subjMode', 'provider', 'watchSections', 'bridgeViewMode']) {
+    await evaluate(`(()=>{const e=document.getElementById('engine');e.value=${JSON.stringify(id === 'bridgeViewMode' ? 'bridge' : 'api')};e.dispatchEvent(new Event('change'));})()`);
     await evaluate(`(()=>{document.querySelector('[data-sec="${id === 'watchSections' ? 'watch' : 'app'}"]').click();document.getElementById('apiDetails').open=${id === 'provider'};document.getElementById('${id}-trigger').scrollIntoView({block:'center'});})()`);
     const point = await evaluate(`(()=>{const r=document.getElementById('${id}-trigger').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
     await call('Input.dispatchMouseEvent', { type:'mouseMoved', ...point }); await pause(180);
@@ -261,7 +270,7 @@ try {
     await evaluate(`document.getElementById('${id}-trigger').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
     interactionResults.push({ name:id + ' 实际鼠标悬停、展开、选中态一致且无外圈', ok:true });
   }
-  await evaluate(`document.querySelector('[data-sec="app"]').click();document.getElementById('apiDetails').open=false;window.scrollTo(0,0)`);
+  await evaluate(`document.querySelector('[data-sec="app"]').click();document.getElementById('apiDetails').open=false;const e=document.getElementById('engine');e.value='api';e.dispatchEvent(new Event('change'));window.scrollTo(0,0)`);
   const results=await evaluate('runSettingsChecks()');
   results.push(...interactionResults);
   for(const r of results)console.log(r.ok?'PASS':'FAIL',r.name,r.error||'');

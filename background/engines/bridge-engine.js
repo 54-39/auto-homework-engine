@@ -37,6 +37,31 @@ export async function openBridgeSplit(sourceTabId) {
   return { tabId: target.id, reused: tabs.some(t => t.id === target.id) };
 }
 
+export async function openBridgeView(sourceTabId, cfg) {
+  if (cfg?.viewMode !== 'window' && typeof chrome.tabs.createSplit === 'function') {
+    return { ...await openBridgeSplit(sourceTabId), mode: 'split' };
+  }
+  const source = await chrome.tabs.get(sourceTabId);
+  const tabs = await chrome.tabs.query({ url: '*://*.doubao.com/*' });
+  const paired = tabs.find(t => source.splitViewId >= 0 && t.splitViewId === source.splitViewId);
+  if (paired) {
+    if (typeof chrome.tabs.unsplit !== 'function') throw new Error('请先退出当前豆包分屏，再开始使用新窗口模式');
+    await chrome.tabs.unsplit(source.splitViewId);
+  }
+  const target = paired || tabs.find(t => t.id === preferredTabId && !(t.splitViewId >= 0))
+    || tabs.find(t => !(t.splitViewId >= 0));
+  let window;
+  if (target && target.windowId !== source.windowId) {
+    const existing = await chrome.windows.get(target.windowId, { populate: true });
+    if (existing.tabs?.length === 1) window = existing;
+  }
+  window ||= await chrome.windows.create(target
+    ? { tabId: target.id, type: 'normal', focused: false }
+    : { url: DOUBAO_URL, type: 'normal', focused: false });
+  preferredTabId = target?.id ?? window.tabs[0].id;
+  return { tabId: preferredTabId, reused: !!target, mode: 'window' };
+}
+
 async function ensureBridge() {
   const tabs = await chrome.tabs.query({ url: '*://*.doubao.com/*' });
   const tab = tabs.find(t => t.id === preferredTabId) || tabs[0] || await chrome.tabs.create({ url: DOUBAO_URL, active: false });
@@ -51,6 +76,7 @@ async function pingReady(target) {
     try {
       const r = await target.send({ type: 'BRIDGE_PING' });
       last = r;
+      if (r?.attention) return { ok: false, info: r };
       if (r?.ok && r.ready) return { ok: true, info: r };
     } catch {
       last = { ok: false };
@@ -74,11 +100,13 @@ async function askOnce(prompt, cfg) {
   const ready = await pingReady(target);
   if (!ready.ok) {
     const info = ready.info || {};
+    if (info.attention) throw new Error(info.error);
     const bits = [`地址 ${info.url || DOUBAO_URL}`];
     bits.push(`输入框${info.hasEditor ? '有' : '无'}`);
     bits.push(`发送按钮${info.hasSend ? '有' : '无'}`);
-    throw new Error(`豆包页面未就绪（${bits.join('、')}）：点击暂停通知打开豆包，完成登录或验证后回插件继续`);
+    throw new Error(`豆包页面未就绪（${bits.join('、')}）：请检查页面是否加载完成后重试`);
   }
+  try { await chrome.notifications?.clear('hw-doubao-attention'); } catch { /* 通知可能已关闭 */ }
   const send = target.send({
     type: 'BRIDGE_ASK',
     payload: { prompt, newChat: cfg?.newChat !== false },

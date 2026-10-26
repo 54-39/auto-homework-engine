@@ -173,11 +173,9 @@ try {
     try { await installed();await startup();assert.deepEqual(injected,[10,10]); }
     finally {chrome.runtime.getManifest=originalManifest;chrome.tabs.query=originalQuery;chrome.scripting=originalScripting;}
   });
-  await test('豆包分屏只接受超星来源，旧浏览器返回可操作的手动分屏提示', async () => {
-    const unsupported = await call('HW_BRIDGE_SPLIT', {}, 'https://mooc1.chaoxing.com/work');
-    assert.equal(unsupported.ok, false); assert.match(unsupported.error, /不支持一键分屏/);
-    const outside = await call('HW_BRIDGE_SPLIT', {}, 'https://example.invalid/');
-    assert.equal(outside.ok, false); assert.match(outside.error, /超星作业页面/);
+  await test('旧分屏按钮消息已移除，布局由开始答题处理', async () => {
+    const result = await call('HW_BRIDGE_SPLIT', {}, 'https://mooc1.chaoxing.com/work');
+    assert.equal(result.ok, false); assert.match(result.error, /unknown type/);
   });
   await test('个人中心跨域课程清单逐框读取并去重，不接受非超星页面', async () => {
     const original = chrome.scripting;

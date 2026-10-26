@@ -52,6 +52,18 @@ try{
   assert.equal(await evaluate(`ui.querySelector('.wpvalue').textContent`),'暂未读取到进度');
   assert.equal(await evaluate(`ui.querySelector('.wptrack').getAttribute('aria-valuenow')`),null);
  });
+ await check('豆包面板移除单独分屏按钮，保留开始入口且宽窄布局无溢出',async()=>{
+  await evaluate(`ui.querySelector('.modeslot button').click();`);
+  await evaluate(`ui.querySelector('.ddlist [data-id="bridge"]').click();`);await pause(100);
+  assert.equal(await evaluate(`!!ui.querySelector('.bridgesplit,.bridgebar')`),false);
+  assert.equal(await evaluate(`ui.querySelector('.panel').classList.contains('bridgemode')`),true);
+  assert.equal(await evaluate(`ui.querySelector('.start').getBoundingClientRect().height>0`),true);
+  for(const width of [1280,420]){
+   await call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});await pause(100);
+   assert.equal(await evaluate(`(()=>{const p=ui.querySelector('.panel');return p.scrollWidth>p.clientWidth;})()`),false);
+   const shot=await call('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(output,`bridge-${width}.png`),Buffer.from(shot.data,'base64'));
+  }
+ });
  fs.writeFileSync(path.join(output,'results.json'),JSON.stringify(results,null,2));console.log(results.length+' course progress browser groups passed (offline).');
 }finally{
  if(close&&ws?.readyState===WebSocket.OPEN)await close().catch(()=>{});ws?.close();child.kill();server.closeAllConnections();server.close();await pause(200);

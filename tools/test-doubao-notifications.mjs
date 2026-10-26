@@ -18,6 +18,11 @@ const context = vm.createContext({ Date,
   }, windows: { update: async () => {} } },
 });
 vm.runInContext(block, context);
+assert.equal(vm.runInContext('RISKY_RE.test("豆包发送按钮不可用，请检查页面或稍后重试")',context),false);
+assert.equal(vm.runInContext('RISKY_RE.test("豆包新对话未就绪，请检查豆包页面后重试")',context),false);
+assert.equal(vm.runInContext('RISKY_RE.test("豆包需要安全验证")',context),true);
+assert.equal(vm.runInContext('RISKY_RE.test("豆包需要登录")',context),true);
+console.log('PASS 普通页面故障不再误归类风控，真实登录和安全验证仍识别');
 context.notify('普通状态');
 context.notify('豆包需要登录，请点击处理', true);
 assert.equal(notifications.length, 2, '登录通知被普通状态通知的间隔限制挡住');
