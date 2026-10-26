@@ -60,12 +60,15 @@
     if (!btn) return;
     await wait(400 + Math.random() * 400);
     if (!(await queueRunning())) return;
+    // 页面可能已有另一条相同回复；只有发送后新增的正文才算本次回帖成功。
+    const replyCount = () => (document.body?.innerText || '').split(reply).length - 1;
+    const before = replyCount();
     try { btn.click(); } catch { return; }
     let confirmed = false;
     for (let i = 0; i < 20; i++) {
       await wait(500);
-      if ((document.body?.innerText || '').includes(reply)) { confirmed = true; break; }
       if (!(await queueRunning())) return;
+      if (replyCount() > before) { confirmed = true; break; }
     }
     if (!confirmed) return;
     markReplied();

@@ -10,7 +10,7 @@
   if (window.HW.CXAdapter) return;
   const TYPE_MAP = { '单选题': 'choice', '多选题': 'multi', '判断题': 'judge', '填空题': 'blank', '简答题': 'subjective', '写作题': 'subjective' };
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
-  const textOf = el => window.HW.AIDetection?.textOf?.(el) || norm(el.textContent);
+  const textOf = el => window.HW.AIDetection?.textOf?.(el) || norm(el?.textContent);
 
   const CX = {
     discussion(doc = document) {

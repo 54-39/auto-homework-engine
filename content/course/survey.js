@@ -72,14 +72,11 @@
   }
 
   function answerOne(item) {
-    const stem = text(item.querySelector('.topic-txt')).slice(0, 40);
     if (item.querySelector('input[type="radio"]:checked,input[type="checkbox"]:checked')) return null;
     /* 自由填答不代写：问卷里出现填空/简答，说明老师想看真实想法，留给人工。 */
-    if (item.querySelector('textarea:not(#text_title),input[type="text"]')) return { blocked: stem };
+    if (item.querySelector('textarea:not(#text_title),input[type="text"]')) return false;
     const options = [...item.querySelectorAll('.optionRadio,.optionCheckbox')].filter(visible);
-    if (!options.length) return { blocked: stem };
-    const value = pick(best(options));
-    return value ? { stem, value } : { blocked: stem };
+    return options.length > 0 && !!pick(best(options));
   }
 
   async function findSubmit() {
@@ -96,8 +93,10 @@
      再处理「提交成功」之类的「确定/知道了」。都在站点自己的浮层里，按文案找按钮。 */
   async function confirmPopups() {
     let confirmed = 0;
+    let success = false;
     for (let i = 0; i < 20; i++) {
-      if (!(await queueRunning())) return;
+      if (!(await queueRunning())) return success;
+      success = accepted() || success;
       const btn = [...document.querySelectorAll('.maskDiv .popBottom a,.maskDiv .popBottom button,[role="dialog"] button')]
         .find((el) => visible(el) && /^(提交|确定|确认|知道了|好的)$/.test(text(el)) && el.getBoundingClientRect().width < 200);
       if (!btn) { await wait(300); continue; }
@@ -106,7 +105,7 @@
       await wait(700);
       if (confirmed >= 2) break;
     }
-    return confirmed;
+    return accepted() || success;
   }
 
   async function run() {
@@ -122,18 +121,17 @@
       await wait(500);
     }
     if (!items.length) { HW.Survey.last = { state: 'failed', reason: '问卷题目未加载' }; return; }
-    const answered = [];
-    const blocked = [];
+    let answered = 0, blocked = false;
     for (const item of items) {
       if (!(await queueRunning())) { HW.Survey.last = { state: 'idle' }; return; }
       if (expired()) { HW.Survey.last = { state: 'expired' }; return; }
       const r = answerOne(item);
-      if (!r) continue;
-      if (r.blocked) blocked.push(r.blocked);
-      else answered.push(`${r.stem}→${r.value}`);
+      if (r === null) continue;
+      if (!r) blocked = true;
+      else answered++;
       await wait(180 + Math.random() * 220);
     }
-    if (blocked.length) { HW.Survey.last = { state: 'blocked', reason: '问卷含无法自动填写的题型' }; return; }
+    if (blocked) { HW.Survey.last = { state: 'blocked', reason: '问卷含无法自动填写的题型' }; return; }
     // 已有保存答案也要正常提交，不能因为本次没有新勾选就直接退出。
     const submit = await findSubmit();
     if (!submit) { HW.Survey.last = { state: 'failed', reason: '未找到问卷提交按钮' }; return; }
@@ -142,8 +140,8 @@
     if (expired()) { HW.Survey.last = { state: 'expired' }; return; }
     HW.Survey.last = { state: 'submitting' };
     try { submit.click(); } catch { HW.Survey.last = { state: 'failed', reason: '问卷提交按钮失效' }; return; }
-    await confirmPopups();
-    HW.Survey.last = { state: accepted() ? 'submitted' : 'pending', at: Date.now(), answered: answered.length };
+    const success = await confirmPopups();
+    HW.Survey.last = { state: success ? 'submitted' : 'pending', at: Date.now(), answered };
   }
 
   let running = null;

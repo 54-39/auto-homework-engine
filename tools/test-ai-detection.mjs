@@ -138,7 +138,7 @@ try {
   });
   let handler;
   const sentMessages = [];
-  const store = { config: { engine: 'api', api: cfg } };
+  const store = { config: { engine: 'api', api: cfg, diagnosticsEnabled: true } };
   let installed, startup;
   chrome.runtime = { getManifest: () => ({ version: '0.6.15' }), getURL: (p) => p, reload: () => {},
     onInstalled: { addListener: fn => { installed = fn; } }, onStartup: { addListener: fn => { startup = fn; } },

@@ -33,6 +33,27 @@ try {
     assert.equal(calls, 2);
     console.log('PASS 复核鉴权、限流或网络错误保留整轮暂停语义：' + failure);
   }
+  for (const failure of [429, 503, Error('network offline')]) {
+    replies(['{"answers":["甲","乙"]}', failure]);
+    await assert.rejects(answerWithAPI({ type:'multi',stem:'刷课复核暂时失败',options },cfg,{auto:true}),e=>e.code==='HW_ANSWER_UNAVAILABLE'&&e.candidateAnswer==='AB');
+    assert.equal(calls,2,'采用初答不应再次请求模型');
+    console.log('PASS 刷课复核普通故障保留有效初答，可未确认填写后继续：'+failure);
+  }
+  for(const failure of [401,403]){
+    replies(['{"answers":["甲","乙"]}',failure]);
+    await assert.rejects(answerWithAPI({type:'multi',stem:'刷课复核鉴权失败',options},cfg,{auto:true}),e=>e.code!=='HW_ANSWER_UNAVAILABLE'&&e.status===failure);
+    assert.equal(calls,2);console.log('PASS 刷课复核鉴权失败仍保留暂停：'+failure);
+  }
+  for(const thinking of [false,true]){
+    const bodies=[];
+    globalThis.fetch=async(_,request)=>{bodies.push(JSON.parse(request.body));return bodies.length===1?
+      {ok:false,status:400,text:async()=>thinking?'unsupported key: thinking':'invalid model'}:
+      {ok:true,json:async()=>({choices:[{message:{content:'{"answers":["甲"]}'}}]})};};
+    const task=answerWithAPI({type:'choice',stem:'火山参数拒绝',options},{...cfg,baseURL:'https://ark.cn-beijing.volces.com/api/v3'});
+    if(thinking){assert.equal((await task).answer,'A');assert.equal(bodies.length,2);assert.ok(!bodies[1].thinking);}
+    else{await assert.rejects(task,/invalid model/);assert.equal(bodies.length,1);}
+    console.log('PASS 火山仅对明确不支持thinking的400移除参数一次：'+thinking);
+  }
   replies(['{"answers":["甲","乙"]}', '{"answers":["甲","乙"]}']);
   const agreed = await answerWithAPI({ type: 'multi', stem: '一致的答案', options }, cfg);
   assert.equal(agreed.answer, 'AB'); assert.match(agreed.note, /已二次复核确认/); assert.equal(calls, 2);

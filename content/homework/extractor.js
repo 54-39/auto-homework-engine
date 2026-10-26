@@ -282,9 +282,16 @@
 
     // 去重（同一输入被嵌套块重复提取时）
     const seen = new Set();
+    const targetIds = new Map();
     const out = [];
     for (const q of questions) {
-      const sig = [q.meta.type, q.el.inputs[0]?.name || '', q.meta.stem.slice(0, 40)].join('|');
+      const targets = [...(q.el.fields || []), ...(q.el.inputs || []), ...(q.el.iframes || []),
+        q.el.iframe, ...(q.el.labels || []).map(l => l.input || l.clickEl)].filter(Boolean);
+      const ids = [...new Set(targets)].map(el => {
+        if (!targetIds.has(el)) targetIds.set(el, targetIds.size);
+        return targetIds.get(el);
+      }).sort((a, b) => a - b);
+      const sig = q.meta.type + '|' + ids.join(',');
       if (seen.has(sig)) continue;
       seen.add(sig);
       out.push(q);

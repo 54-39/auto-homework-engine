@@ -130,6 +130,55 @@ import './options/options.js';
 
   /* 诊断：把最近打开的网页（作业页）DOM 导出为 HTML 下载文件 */
   const diagMsg = $('#diagMsg');
+  const diagnosticsToggle = $('#diagnosticsEnabled');
+  let diagnosticsEnabled = false;
+  let diagnosticsBusy = false;
+  let diagnosticsExporting = false;
+  let diagnosticsLoadVersion = 0;
+  const syncDiagnosticsUI = () => {
+    diagnosticsToggle.checked = diagnosticsEnabled;
+    diagnosticsToggle.disabled = diagnosticsBusy;
+    $('#diagExport').disabled = diagnosticsBusy || diagnosticsExporting || !diagnosticsEnabled;
+  };
+  const loadDiagnostics = async () => {
+    const version = ++diagnosticsLoadVersion;
+    const result = await send('GET_CONFIG');
+    if (version !== diagnosticsLoadVersion) return;
+    if (!result?.ok || !result.config) {
+      diagnosticsEnabled = false;
+      syncDiagnosticsUI();
+      out($('#diagnosticsMsg'), '读取诊断设置失败：' + (result?.error || '请刷新页面重试'), 'err');
+      return;
+    }
+    diagnosticsEnabled = result.config.diagnosticsEnabled === true;
+    syncDiagnosticsUI();
+    out($('#diagnosticsMsg'), diagnosticsEnabled ? '诊断记录已开启' : '诊断记录已关闭');
+  };
+  diagnosticsToggle.addEventListener('change', async () => {
+    const enabled = diagnosticsToggle.checked;
+    diagnosticsBusy = true;
+    syncDiagnosticsUI();
+    const result = await send('SET_CONFIG', { diagnosticsEnabled: enabled });
+    diagnosticsBusy = false;
+    if (!result?.ok) {
+      diagnosticsEnabled = !enabled;
+      syncDiagnosticsUI();
+      out($('#diagnosticsMsg'), '保存失败：' + (result?.error || '请刷新页面重试'), 'err');
+      return;
+    }
+    diagnosticsEnabled = enabled;
+    diagnosticsLoadVersion++;
+    syncDiagnosticsUI();
+    out($('#diagnosticsMsg'), enabled ? '已开启诊断记录' : '已关闭诊断记录，已有记录仍可查看和导出', 'ok');
+  });
+  chrome.storage.onChanged?.addListener((changes, area) => {
+    if (area !== 'local' || !changes.config || diagnosticsBusy) return;
+    diagnosticsLoadVersion++;
+    diagnosticsEnabled = changes.config.newValue?.diagnosticsEnabled === true;
+    syncDiagnosticsUI();
+    out($('#diagnosticsMsg'), diagnosticsEnabled ? '诊断记录已开启' : '诊断记录已关闭');
+  });
+  loadDiagnostics();
   let issues = [];
   let issueOffset = 0;
   const issuePageSize = 50;
@@ -194,10 +243,13 @@ import './options/options.js';
   loadIssues();
   const diagBtn = $('#diagExport');
   diagBtn.addEventListener('click', async () => {
+    if (!diagnosticsEnabled || diagnosticsBusy) return out(diagMsg, '请先开启「记录诊断」', 'err');
+    diagnosticsExporting = true;
     diagBtn.disabled = true;
     out(diagMsg, '正在导出页面结构…');
     try {
       const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+      if (!diagnosticsEnabled) return out(diagMsg, '诊断记录已关闭，已取消页面结构导出', 'err');
       if (!tabs.length) return out(diagMsg, '没有找到已打开的网页，请先打开作业页面，再回到这里导出', 'err');
       // 取最近访问过的那个网页（＝打开设置页之前停留的作业页）：tabs.query 按标签栏顺序返回，最后一个未必是作业页
       const tab = tabs.reduce((a, b) => ((b.lastAccessed || 0) >= (a.lastAccessed || 0) ? b : a));
@@ -256,6 +308,7 @@ import './options/options.js';
           return '<!DOCTYPE html>\n' + copy.outerHTML;
         },
       });
+      if (!diagnosticsEnabled) return out(diagMsg, '诊断记录已关闭，已取消页面结构导出', 'err');
       const host = tab.url ? new URL(tab.url).hostname.replace(/[^a-z0-9.-]/gi, '_') : 'page';
       const blob = new Blob([res.result], { type: 'text/html' });
       const a = document.createElement('a');
@@ -269,7 +322,8 @@ import './options/options.js';
     } catch (e) {
       out(diagMsg, '导出失败：' + (e.message || e) + '，请刷新作业页面后重试', 'err');
     } finally {
-      diagBtn.disabled = false;
+      diagnosticsExporting = false;
+      syncDiagnosticsUI();
     }
   });
 

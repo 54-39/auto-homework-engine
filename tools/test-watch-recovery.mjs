@@ -155,7 +155,7 @@ const background = fs.readFileSync(new URL('../background/service-worker.js', im
 let recorded;
 const recorder = vm.createContext({
   issueWrites: Promise.resolve(), URL, Date,
-  chrome: { storage: { local: { get: async () => ({config:{api:{apiKey:'SECRET_KEY'}}}) } }, runtime: {getManifest:()=>({version:'0.9.13'})} },
+  chrome: { storage: { local: { get: async () => ({config:{diagnosticsEnabled:true,api:{apiKey:'SECRET_KEY'}}}) } }, runtime: {getManifest:()=>({version:'0.9.13'})} },
   appendIssue: async item => { recorded = item; },
 });
 vm.runInContext(background.slice(background.indexOf('function recordIssue('), background.indexOf('async function saveQueue(')), recorder);

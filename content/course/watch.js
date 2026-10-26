@@ -251,11 +251,12 @@
         /* 目录树是整页加载时画的，站点提交后不会重画：刷新一次拿平台最新计数。
            只刷一次，避免和问卷来回拉锯；刷完还是 1 就如实记成未完成。 */
         if (!surveyReloaded(chapter)) {
-          try { sessionStorage.setItem(SURVEY_RELOAD_KEY, String(chapter)); } catch { /* 存不了就不刷 */ }
+          try { sessionStorage.setItem(SURVEY_RELOAD_KEY, String(chapter)); }
+          catch { note('问卷已提交，无法保存刷新标记，继续核查剩余任务'); return true; }
           live('学情调查已提交，刷新目录核对平台计数');
-          setTimeout(() => location.reload(), 600);
-          return true;
+          setTimeout(() => { if (on && my === gen && activeChapterId() === chapter) location.reload(); }, 600);
         }
+        return true; // 已有提交回执且刷新过目录，不再为同一回执重复等待 90 轮。
       }
       note('问卷自动恢复后仍未收到平台回执，记录未完成并继续后续任务');
       return false;
@@ -1129,8 +1130,10 @@
           setTimeout(() => location.reload(), 800);
         } else {
           try { sessionStorage.removeItem('hwCatRetry'); } catch { }
-          opts?.onNote?.('刷新后目录仍没有节点，按已完成处理，翻下一门');
-          await reportCourseDone(q.courses[q.index] && q.courses[q.index].key);
+          const reason = '刷新后仍无法识别课程目录，保留未完成并继续下一门';
+          opts?.onNote?.(reason);
+          await recordWatchSkip(new Error(reason), { task: '课程目录核验' });
+          await reportCourseDone(q.courses[q.index]?.key, { status: 'incomplete' });
         }
       }
       return true;
@@ -2069,7 +2072,9 @@
     const payload = { stage: '刷课跳过', message, course: course?.name || context.course || multi?.courses[multi.index]?.name || document.title,
       chapter: context.chapter || chapter?.name || '', task: context.task || tabList().find(tabActive)?.textContent.trim() || '',
       url: location.href, action: '跳过出错任务，继续后续；未计为完成', stack: String(error?.stack || new Error(message).stack || ''),
-      details: JSON.stringify(details, null, 2), scene: globalThis.HW?.Diagnostics?.capture() };
+      /* 现场不由内容脚本主动采集：开关关着时连采集都不该启动，SW 确认开关后
+         再反向请求（HW_DIAGNOSTIC_CAPTURE，diagnostics.js 监听）。 */
+      details: JSON.stringify(details, null, 2) };
     try {
       const result = await chrome.runtime.sendMessage({ type: 'HW_ISSUE_ADD', payload });
       if (!result?.ok) note('异常记录保存失败：' + (result?.error || '后台无回执'));
@@ -2104,11 +2109,13 @@
     const now = Date.now();
     if (!stallState || stallState.key !== key) { stallState = { key, since: now, reported: false }; return; }
     if (stallState.reported || now - stallState.since < STALL_TIMEOUT) return;
-    stallState.reported = true;
+    const stalled = stallState;
     stallRecording = true;
     const chapter = nodes().find(n => n.id === state.chapterId);
     const message = '页面连续 5 分钟没有实际进展，已自动记录现场';
     try {
+      const stored = await chrome.storage.local.get('config');
+      if (stored.config?.diagnosticsEnabled !== true || stallState !== stalled) return;
       const result = await chrome.runtime.sendMessage({ type: 'HW_ISSUE_ADD', payload: {
         stage: '刷课停滞', message, course: currentCourse()?.name || document.title,
         chapter: chapter?.name || '', task: tabList().find(tabActive)?.textContent.trim() || '',
@@ -2116,8 +2123,10 @@
         details: JSON.stringify({ idleSeconds: Math.floor((now - stallState.since) / 1000),
           lastProgressAt: new Date(stallState.since).toISOString(), running: on,
           hidden: document.hidden, stopTrace: HW.Watch?.stopTrace, ...state }),
-        scene: HW.Diagnostics?.capture(),
+        /* 现场由 SW 确认开关后反向采集（HW_DIAGNOSTIC_CAPTURE），不在内容脚本白采。 */
       } });
+      if (result?.skipped) return;
+      if (result?.ok) stalled.reported = true;
       note(result?.ok ? message : '停滞现场保存失败：' + (result?.error || '后台无回执'));
     } catch (e) { note('停滞现场保存失败：' + String(e.message || e)); }
     finally { stallRecording = false; }

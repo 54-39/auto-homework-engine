@@ -9,7 +9,7 @@ const source = panel.slice(start, panel.indexOf('\n    readPageQuestions();', st
 let receive;
 const logs = [], writes = [], issues = [], messages = [];
 const context = vm.createContext({
-  autoRun: true, stopRequested: false, detecting: false, queueInfo: null,
+  autoRun: true, autoDocument: null, answerEpoch: 1, stopRequested: false, detecting: false, queueInfo: null,
   log: text => logs.push(text), reportIssue: (...args) => issues.push(args),
   setRow() {}, setBusy() {}, setSummary() {}, setWatchLine() {}, refreshQueueInfo() {},
   requireCurrentPage: () => true, answersMatch: () => false,
@@ -43,7 +43,7 @@ console.log('PASS 手动解题仍有逐题填写与完成消息');
 
 const background = fs.readFileSync(new URL('../background/service-worker.js', import.meta.url), 'utf8');
 let queue = { tabId: 7 }, finished;
-const worker = vm.createContext({ loadQueue: async () => queue, saveQueue: async q => { queue = q; }, sendTab: (_, event) => { finished = event; } });
+const worker = vm.createContext({ watchNavigationEpoch: 0, loadQueue: async () => queue, saveQueue: async q => { queue = q; }, sendTab: (_, event) => { finished = event; } });
 vm.runInContext(background.slice(background.indexOf('async function pauseWatchForInterruptedPage('), background.indexOf('chrome.tabs.onUpdated.addListener(')), worker);
 for (const url of ['https://detect.chaoxing.com/api/monitor_temp', 'https://i.chaoxing.com/space']) {
   queue = { tabId: 7 };
@@ -53,7 +53,7 @@ for (const url of ['https://detect.chaoxing.com/api/monitor_temp', 'https://i.ch
 }
 console.log('PASS 账号检测与离开学习页的停止消息携带具体原因');
 
-const homework = panel.slice(panel.indexOf('    async function runHomework()'), panel.indexOf('    HW.Panel.runHomework = runHomework;'));
+const homework = panel.slice(panel.indexOf('    async function runHomework('), panel.indexOf('    HW.Panel.runHomework = runHomework;'));
 const incomplete = vm.createContext({
   autoRun: false, autoDocument: null, answerPauseReason: '', document: {}, Date,
   setTimeout: fn => setTimeout(fn, 0),
@@ -64,8 +64,8 @@ const incomplete = vm.createContext({
 });
 vm.runInContext(homework, incomplete);
 await incomplete.runHomework();
-assert.match(issues.at(-1), /1 题未处理/);
-assert.ok(!issues.at(-1).includes('0 题填写失败'));
+assert.match(logs.at(-1), /1 题未处理/);
+assert.ok(!logs.at(-1).includes('0 题填写失败'));
 console.log('PASS 未处理题数独立计数，不再误写零题填写失败');
 
 let deadlineClock = 0;
@@ -75,7 +75,7 @@ incomplete.els.stop.disabled = false;
 incomplete.stopRequested = false;
 incomplete.setBusy = busy => { incomplete.els.detect.disabled = busy; incomplete.els.stop.disabled = !busy; };
 incomplete.send = async type => messages.push({ type });
-await assert.rejects(incomplete.runHomework(), /答题超时/);
+await assert.rejects(incomplete.runHomework(), /答题长时间无进展/);
 assert.equal(incomplete.stopRequested, true);
 assert.equal(messages.at(-1).type, 'HW_STOP');
 assert.equal(incomplete.els.stop.disabled, true);

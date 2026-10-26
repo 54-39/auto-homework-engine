@@ -56,6 +56,8 @@
         append('<' + tag);
         for (const attr of node.attributes) {
           if (!/^(id|class|name|type|typename|role|title|aria-label|aria-hidden|aria-expanded|aria-selected|aria-checked|disabled|checked|contenteditable|data|data-type|data-id|data-index|data-status|data-jobid|href|src)$/.test(attr.name)) continue;
+          // data 在判断题中是真/假标记，也可能是隐藏认证载体的完整 JSON，后者不能导出。
+          if (attr.name === 'data' && !/^(true|false)$/i.test(attr.value)) continue;
           const value = /^(href|src)$/.test(attr.name) ? safeURL(attr.value, doc.baseURI) : attr.value.slice(0, 300);
           append(' ' + attr.name + '="' + escape(value) + '"');
         }

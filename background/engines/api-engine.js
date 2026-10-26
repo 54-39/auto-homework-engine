@@ -84,7 +84,7 @@ async function chatOpenAI(cfg, messages, maxTokens) {
     return await attempt(mkBody(true));
   } catch (e) {
     // thinking 参数不被支持（400 且响应里提到参数问题）→ 去掉该参数重试
-    if (e.status === 400 && !/key|token|auth/i.test(String(e.message || ''))) {
+    if (e.status === 400 && /thinking/i.test(e.message) && !/api.?key|auth|鉴权|认证/i.test(e.message)) {
       return await attempt(mkBody(false));
     }
     throw e;
@@ -211,7 +211,7 @@ async function run(q, endpoint, maxTokens, opts = {}) {
     } catch (error) {
       error.answerPreview = '初答：' + content + '\n复核：' + verification;
       error.candidateAnswer = answer;
-      if (received) error.code = 'HW_ANSWER_UNAVAILABLE';
+      if (received || opts.auto === true && ![401, 403].includes(error.status)) error.code = 'HW_ANSWER_UNAVAILABLE';
       throw error;
     }
   }

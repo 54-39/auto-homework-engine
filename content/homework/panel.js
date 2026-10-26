@@ -271,7 +271,7 @@
       <button type="button" class="fab" aria-label="打开或收起作业助手面板" data-tip="点击收起/展开面板，按住可拖动位置"><svg class="boltsvg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/></svg></button>
       <div class="tip hidden" role="tooltip"></div>
       <section class="panel hidden">
-        <header data-tip="按住拖动移动面板；双击复位位置"><b>作业助手</b><span class="badge"></span><span class="spacer"></span>
+        <header><b>作业助手</b><span class="badge"></span><span class="spacer"></span>
           <button class="tbtn expandbtn" data-tip="切换大/小面板（题目多时更清晰）">展开</button>
           <button class="tbtn settingsbtn" data-tip="打开应用设置、刷课、记忆、诊断和检测更新">设置</button>
           <button class="tbtn btn-collapse" data-tip="收起面板">收起</button>
@@ -279,6 +279,7 @@
         <div class="row moderow"><label>模式</label><div class="dd modeslot"></div></div>
         <div class="bridgebar hidden"><button type="button" class="act ghost bridgesplit">并排查看豆包</button><p class="bridgestatus hidden" role="status" aria-live="polite"></p></div>
         <div class="hintline homework-only">题目发送至所选 AI；请核对后自行提交</div>
+        <div class="keywarn hidden">还没有 API Key？前往 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer">DeepSeek 获取 API Key</a>，再在「接口与 API Key」中填写。</div>
         <div class="updline hidden" data-tip="点击「更新」启动更新事务；下载、验证与回滚状态请在设置页查看，成功后作业页面需 F5"></div>
         <button class="apitoggle hidden">接口 与 API Key</button>
         <div class="apisec hidden">
@@ -300,7 +301,6 @@
             <button class="lbtn primary savekey">保存</button>
             <button class="lbtn plain clearkey" data-tip="停用当前 Key（列表记录保留）">停用</button>
           </div>
-          <div class="keywarn hidden">还没有 API Key？可先前往 <a href="https://platform.deepseek.com/usage" target="_blank" rel="noopener noreferrer">DeepSeek 平台</a>了解并准备，获取后粘贴到上方并点「保存」。</div>
         </div>
         <div class="modal subjmodal hidden">
           <div class="mbox">
@@ -442,7 +442,8 @@
         ? limitedRun() ? `只处理进度低于 35% 的课程，每门从第一节起连续完成 ${watchSections} 节（可在设置页改节数）。` : '勾选课程开始学习，进入后显示剩余时间。'
         : active?.name || '打开课程或勾选清单，继续未完成的章节。';
       const left = nodes.map(n => HW.Watch.unfinishedOf(n.id));
-      els.watchmeta.textContent = nodes.length ? `${nodes.length} 节 · ` + (left.some(n => n === null) ? '目录加载中' : `剩余 ${left.reduce((a, b) => a + b, 0)} 个任务点`) : list.length ? `共 ${list.length} 门课程` : '';
+      const unknown = left.filter(n => !Number.isFinite(n) || n < 0).length;
+      els.watchmeta.textContent = nodes.length ? `${nodes.length} 节 · ` + (unknown ? `${unknown} 节状态待核对` : `剩余 ${left.reduce((a, b) => a + b, 0)} 个任务点`) : list.length ? `共 ${list.length} 门课程` : '';
       if (HW.Watch?.running && nodes.length) {
         const seconds = HW.Watch.remainingSeconds?.();
         if (seconds != null) els.watchmeta.textContent += ' · 剩余' + HW.Watch.formatCourseTime(seconds);
@@ -505,7 +506,7 @@
       const nodes = HW.Watch?.nodes?.() || [];
       const course = !current || queued?.key === current.key ? queued : null;
       els.watchprogress.classList.toggle('hidden', !current && !nodes.length && !course);
-      let done, total, unit = '任务点';
+      let done, total, pending = 0, previous = false, unit = '任务点';
       const native = current && /已完成任务点\s*[:：]?\s*(\d+)\s*\/\s*(\d+)/.exec(document.querySelector('.chapter_head')?.textContent || '');
       const left = nodes.map(n => HW.Watch.unfinishedOf(n.id));
       if (nodes.length && left.every(n => Number.isFinite(n) && n >= 0)) {
@@ -518,12 +519,18 @@
         }
       } else if (native) {
         done = Number(native[1]); total = Number(native[2]);
-      } else if (!nodes.length && course) {
+      } else if (nodes.length && left.some(n => Number.isFinite(n) && n >= 0)) {
+        // 部分章节缺少状态时仍显示已确认进度，未知章节不能当作已完成。
+        unit = '节'; total = nodes.length; done = left.filter(n => n === 0).length;
+        pending = left.filter(n => !Number.isFinite(n) || n < 0).length;
+      } else if (course) {
         done = course.done; total = course.total;
+        previous = nodes.length > 0;
       }
       const known = Number.isFinite(done) && Number.isFinite(total) && total > 0 && done >= 0 && done <= total;
       const percent = known ? Math.floor(done / total * 100) : 0;
-      const text = known ? `${percent}% · ${done}/${total} ${unit}` : '进度读取中';
+      const text = known ? `${pending ? '至少 ' : ''}${percent}% · ${done}/${total} ${unit}${previous ? '（上次读取）' : ''}` : '暂未读取到进度';
+      els.wpvalue.dataset.tip = pending ? `已确认 ${done} 节完成，另有 ${pending} 节状态待核对；不会将未知章节算作完成。` : '';
       setText(els.wpvalue, text);
       els.wpfill.style.width = `${percent}%`;
       els.wptrack.setAttribute('aria-valuetext', text);
@@ -609,6 +616,7 @@
     let nativeDetection = true;
     let preparingFonts = false;
     let stopRequested = false; // 停止后忽略后台迟到的答题消息
+    let answerEpoch = 0;
     let detectionSnapshot = null;
     /* 上一次「页面读取」失败的真实原因：刷课日志只转发一句「没识别成功」，
        真正的原因（字体还原不了／题目结构不认识）会丢在面板摘要里，
@@ -638,8 +646,11 @@
     function reportIssue(stage, message, details = {}) {
       const active = HW.Watch?.activeChapterId?.();
       const chapter = HW.Watch?.nodes?.().find(n => n.id === active)?.name || active || '';
+      /* 现场不由内容脚本主动采集：开关关着时连页面结构采集都不该启动。
+         SW 确认 diagnosticsEnabled 后才反向请求（HW_DIAGNOSTIC_CAPTURE）；
+         开关关闭时返回 skipped，不算失败。 */
       send('HW_ISSUE_ADD', { stage, message, chapter, stack: new Error(String(message)).stack,
-        ...details, scene: HW.Diagnostics?.capture() }).then(r => {
+        ...details }).then(r => {
         if (!r?.ok && r?.error !== CONTEXT_NOTICE) showIssueFailure(r?.error || '请刷新扩展后重试');
       });
     }
@@ -648,6 +659,7 @@
       notice.textContent = '异常记录写入失败，已停止自动操作。请检查磁盘空间后刷新页面。原因：' + message;
       notice.classList.remove('hidden');
       stopRequested = true;
+      answerEpoch++;
       HW.Watch?.stop?.();
       send('HW_STOP'); send('HW_WATCH_STOP');
       setBusy(false);
@@ -683,6 +695,7 @@
       detectionSnapshot = null;
       detecting = false;
       stopRequested = true;
+      answerEpoch++;
       HW.questions = [];
       rows = [];
       els.list.replaceChildren();
@@ -958,7 +971,7 @@
        用户重复点击（2026-10-24 反馈），3 秒轮询只做后续刷新。 */
     refreshQueueInfo(true);
     setInterval(() => {
-      if (HW.Watch?.running) updateWatchContext();
+      if (HW.Watch?.running || !els.panel.classList.contains('hidden') && els.mode.value === 'watch') updateWatchContext();
       /* 队列状态每 3 秒对一次：脚本跳页后按钮文字、队列信息、剩余时间都跟着走，
          不再等用户点一下才发现早停了或者早就在跑（2026-10-23 反馈） */
       if (!els.panel.classList.contains('hidden')) refreshQueueInfo();
@@ -1319,10 +1332,9 @@
     }
 
     const apiSecOpen = () => { try { return localStorage.getItem('hwApiOpen') !== '0'; } catch { return true; } };
-    let keyWarningOpen = false;
     let hasSavedApiKey = false;
     const updateKeyWarning = () => {
-      els.keywarn.classList.toggle('hidden', !keyWarningOpen || hasSavedApiKey || !!els.keyinput.value.trim());
+      els.keywarn.classList.toggle('hidden', engine !== 'api' || hasSavedApiKey || !!els.keyinput.value.trim());
     };
     const refreshKeyRow = async (current) => {
       const isApi = engine === 'api';
@@ -1334,7 +1346,6 @@
       els.panel.classList.toggle('apiopen', open);
       const cfg = current || (await send('GET_CONFIG'))?.config;
       const key = cfg?.api?.apiKey;
-      keyWarningOpen = open;
       hasSavedApiKey = !!key;
       els.keylabel.textContent = key ? `使用中：尾号 ${key.slice(-4)}` : '粘贴 API Key';
       updateKeyWarning();
@@ -1519,6 +1530,7 @@
         type: 'unknown', stem: row.querySelector('.stem')?.textContent || '', reason: row.querySelector('.pending-reason')?.textContent || '' })) : [];
       nativeDetection = false;
       const requestId = ++detectionRequest;
+      answerEpoch++;
       stopWatching();
       detectionSnapshot = null;
       HW.questions = [];
@@ -1663,8 +1675,12 @@
       const retry = auto && !!opts.retry;
       if (!HW.questions?.length) return false;
       if (!requireCurrentPage()) return false;
+      const epoch = ++answerEpoch;
+      stopRequested = false;
+      const isCurrent = () => epoch === answerEpoch && !stopRequested;
       try {
         const cfg = (await send('GET_CONFIG'))?.config || {};
+        if (!isCurrent()) return false;
         if (cfg.engine === 'api' && !cfg.api?.apiKey) {
           els.panel.classList.remove('hidden');
           try { localStorage.setItem('hwApiOpen', '1'); } catch {}
@@ -1678,6 +1694,7 @@
         if (subjMode === 'ask') {
           const n = HW.questions.filter((q) => q.meta.type === 'subjective' && substantive(HW.Extractor.currentAnswer(q))).length;
           if (n > 0) subjMode = await askSubjMode(n);
+          if (!isCurrent()) return false;
           if (subjMode === null) {
             log('已取消开始（未做任何改动）');
             return false;
@@ -1692,8 +1709,10 @@
         // 页面答案只信硬证据；页面状态读不出来时一律视为"没写"（重写由 toggleSafeClick 保证不取消）。
         const questions = [];
         for (const q of HW.questions) {
+          if (!isCurrent()) return false;
           const pageAnswer = HW.Extractor.currentAnswer(q); // 硬证据（input.checked / 学习类 / 文本值）
           const cached = retry ? null : await cachedAnswer(q);
+          if (!isCurrent()) return false;
           let decision = 'ask'; // 没写（或读不出）→ 问引擎后填写
           let refAnswer = null;
           let skipNote = '';
@@ -1737,8 +1756,10 @@
             '；只填写不提交）',
         );
         if (!requireCurrentPage()) return false;
+        if (!isCurrent()) return false;
         answerPauseReason = '';
-        const res = await send('HW_START', { questions, auto });
+        const res = await send('HW_START', { questions, auto, requestId: String(epoch) });
+        if (!isCurrent()) return false;
         if (!res?.ok) {
           log('启动失败：' + (res?.error || '未知错误'));
           setBusy(false);
@@ -1746,6 +1767,7 @@
         }
         return true;
       } catch (e) {
+        if (!isCurrent()) return false;
         // 任何意外错误都可见 + 按钮解锁，不再"半天没反应"
         log('启动异常：' + (e && e.message ? e.message : e) + '（按钮已解锁，可重试）');
         setBusy(false);
@@ -1760,6 +1782,7 @@
       // 立即本地解锁按钮：后台可能在忙等回答（最长 150 秒）才回"已停止"，
       // 不能依赖它来恢复 UI；迟到的答题消息用 stopRequested 忽略。
       stopRequested = true;
+      answerEpoch++;
       setBusy(false);
       await send('HW_STOP');
       log('已请求停止（后台正在获取的回答会被丢弃）…');
@@ -1879,12 +1902,17 @@
     }
 
     async function rerun(i) {
+      if (detecting || autoRun || !els.stop.disabled) {
+        log('整页答题尚未结束，请结束后再重问单题');
+        return;
+      }
       if (!requireCurrentPage()) return;
+      const epoch = ++answerEpoch;
       stopRequested = false;
       setRow(i, 'asking');
       log(`重问第 ${i + 1} 题…`);
-      const res = await send('HW_RERUN', { index: i });
-      if (res && !res.ok) log(`重问失败：${res.error}`);
+      const res = await send('HW_RERUN', { index: i, requestId: String(epoch) });
+      if (epoch === answerEpoch && !stopRequested && res && !res.ok) log(`重问失败：${res.error}`);
     }
 
     chrome.runtime.onMessage.addListener((msg) => {
@@ -1894,12 +1922,15 @@
         if (detecting && payload.requestId === detectionRequest) setSummary(`AI 正在识别 ${payload.current}/${payload.total} 批…`, false);
       } else if (type === 'HW_STATUS') {
         if (stopRequested) return;
+        // 轮次守卫：新一轮开始或换题后，上一轮的异步状态不再回写到新列表
+        if (payload.requestId != null && payload.requestId !== String(answerEpoch)) return;
         setRow(payload.index, payload.status, payload.error || payload.note || '');
         if (payload.status === 'failed' && HW.questions?.[payload.index]) HW.questions[payload.index]._answerPreview = payload.answerPreview || '';
         if (payload.status === 'failed') log(`第 ${payload.index + 1} 题获取答案失败：${payload.error}`);
         if (payload.status === 'skipped' && !autoRun) log(`第 ${payload.index + 1} 题：${payload.note || '已作答，跳过'}`);
       } else if (type === 'HW_ANSWER') {
         if (stopRequested) return; // 已停止：丢弃迟到的回答
+        if (payload.requestId != null && payload.requestId !== String(answerEpoch)) return;
         if (autoRun && HW.Watch?.quizDocument && HW.Watch.quizDocument() !== autoDocument) {
           answerPauseReason = '测验页面已切换，不继续填写旧题';
           stopRequested = true;
@@ -1909,26 +1940,34 @@
         }
         (async () => {
           const i = payload.index;
+          const epoch = answerEpoch;
+          const q = HW.questions?.[i];
+          const doc = autoDocument;
+          const isCurrent = () => !stopRequested && epoch === answerEpoch && HW.questions?.[i] === q &&
+            (!autoRun || !HW.Watch?.quizDocument || HW.Watch.quizDocument() === doc);
           try {
-            if (!requireCurrentPage()) return;
-            const q = HW.questions[i];
+            if (!q || !isCurrent() || !requireCurrentPage()) return;
             // 最终比对：页面已写的答案与引擎/缓存答案一致 → 无需点击；不一致（或没写）→ 真实填写
             const live = HW.Extractor.currentAnswer(q);
             if (answersMatch(q.meta.type, live, payload.answer)) {
               setRow(i, 'skipped', '答案：' + payload.answer + '（你原来的答案正确，保持不动）');
               if (!autoRun) log(`第 ${i + 1} 题已写且答案正确，无需改写${payload.fromCache ? '（缓存命中）' : ''}`);
+              if (!isCurrent()) return;
               chrome.runtime.sendMessage({ type: 'HW_FILLED', payload: { index: i, fillToken: payload.fillToken, ok: true } });
               return;
             }
             // 缓存命中只负责"快速拿到答案"，填写永远真实执行：
             // 已选中的选项由 clickOption 的状态保护自动跳过，不会重复点击/取消。
             await HW.Filler.fill(q, payload.answer);
+            if (!isCurrent()) return;
             // 状态载体可能异步更新（超星点击后延迟写状态/标记）：等待式校验（最多约 3 秒）
             let verified = HW.Filler.verify(q, payload.answer);
             for (let w = 0; w < 12 && verified === false; w++) {
               await new Promise((r) => setTimeout(r, 250));
+              if (!isCurrent()) return;
               verified = HW.Filler.verify(q, payload.answer);
             }
+            if (!isCurrent()) return;
             setRow(i, verified === false ? 'failed' : payload.kind === 'rewrite' ? 'fixed' : 'filled', '答案：' + payload.answer);
             rows[i] && (rows[i].dataset.tip = '答案：' + payload.answer);
             const vTip = verified === 'unknown' ? '｜（页面不暴露选中状态，按点击成功处理）'
@@ -1939,6 +1978,7 @@
               payload: { index: i, fillToken: payload.fillToken, ok: verified !== false, error: verified === false ? '填写校验未通过' : undefined },
             });
           } catch (e) {
+            if (!isCurrent()) return;
             setRow(i, 'failed', String(e.message || e));
             log(`第 ${i + 1} 题填写失败：${e.message || e}`);
             chrome.runtime.sendMessage({ type: 'HW_FILLED', payload: { index: i, fillToken: payload.fillToken, ok: false, error: String(e.message || e) } });

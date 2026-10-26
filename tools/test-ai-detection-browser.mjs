@@ -179,10 +179,11 @@ async function browserChecks() {
   });
   await check('contenteditable 与同源 iframe 文本框可填写，正文换行保留', async () => {
     await HW.Filler.fill(bound.questions[4], '第一段\n\n第二段');
-    ok(HW.Extractor.currentAnswer(bound.questions[4]).includes('第二段'));
-    ok(HW.Filler.verify(bound.questions[4], '第一段') === true);
+    ok(HW.Extractor.currentAnswer(bound.questions[4]).includes('第二段'), 'contenteditable 填写后读不回：' + JSON.stringify(HW.Extractor.currentAnswer(bound.questions[4])));
+    ok(HW.Filler.verify(bound.questions[4], '第一段\n\n第二段') === true, 'contenteditable verify 失败');
+    ok(HW.Filler.verify(bound.questions[4], '第一段') === false, '不完整答案不能通过校验');
     await HW.Filler.fill(bound.questions[7], 'frame answer');
-    ok(HW.Extractor.currentAnswer(bound.questions[7]) === 'frame answer');
+    ok(HW.Extractor.currentAnswer(bound.questions[7]) === 'frame answer', 'iframe 文本框读不回：' + JSON.stringify(HW.Extractor.currentAnswer(bound.questions[7])));
     ok(HW.AIDetection.isCurrent(s), 'answer edits invalidated structural snapshot');
   });
   await check('同题干的不同输入框不会去重，重叠批次相同结果可去重', () => {
@@ -638,6 +639,43 @@ async function browserChecks() {
     await wait(30);
     ok(HW.questions.length === 0 && ui.querySelector('.start').disabled);
   });
+  await check('答题轮次标记：每轮 requestId 独立，旧轮状态不再回写新列表', async () => {
+    const state = await setDetectionUI('mixed');
+    ok(state.ready === 8, JSON.stringify(state));
+    const startIds = [];
+    const realSend = chrome.runtime.sendMessage;
+    window.testApiKey = 'round-key'; // 过 startAnswering 的 Key 检查
+    chrome.runtime.sendMessage = async (msg) => {
+      if (msg.type === 'HW_START') startIds.push(msg.payload.requestId);
+      return realSend(msg);
+    };
+    try {
+      // 第一轮：start（主观题若弹策略窗选「保留」继续）→ 拿到轮次 id → 停止
+      ui.querySelector('.start').click();
+      await until(() => startIds.length === 1 || !ui.querySelector('.subjmodal').classList.contains('hidden'));
+      if (!ui.querySelector('.subjmodal').classList.contains('hidden')) ui.querySelector('.subjkeep').click();
+      await until(() => startIds.length === 1);
+      ui.querySelector('.stop').click();
+      await wait(30);
+      // 第二轮：重新检测并 start，requestId 必须与第一轮不同
+      await setDetectionUI('mixed');
+      ui.querySelector('.start').click();
+      await until(() => startIds.length === 2 || !ui.querySelector('.subjmodal').classList.contains('hidden'));
+      if (!ui.querySelector('.subjmodal').classList.contains('hidden')) ui.querySelector('.subjkeep').click();
+      await until(() => startIds.length === 2);
+      // 第二轮进行中验证：两轮 requestId 独立；旧轮状态不回写，当前轮状态正常更新（先验证再停止）
+      ok(startIds.length === 2 && startIds[0] != null && startIds[0] !== startIds[1],
+        '两轮 HW_START 的 requestId 应存在且不同：' + JSON.stringify(startIds));
+      const row = ui.querySelector('.list .item');
+      const before = row?.textContent || '';
+      emitHWMessage({ type: 'HW_STATUS', payload: { requestId: startIds[0], index: 0, status: 'asking' } });
+      ok((ui.querySelector('.list .item')?.textContent || '') === before, '旧轮次状态回写了新列表');
+      emitHWMessage({ type: 'HW_STATUS', payload: { requestId: startIds[1], index: 0, status: 'asking' } });
+      ok((ui.querySelector('.list .item')?.textContent || '') !== before, '当前轮次状态未更新');
+      ui.querySelector('.stop').click();
+      await wait(30);
+    } finally { chrome.runtime.sendMessage = realSend; window.testApiKey = 'fixture-only'; ui.querySelector('.stop')?.click(); }
+  });
   await check('可处理与待确认分列，检测完成不会自动开始作答', async () => {
     const starts = testCalls.filter(type => type === 'HW_START').length;
     const state = await setDetectionUI('mixed');
@@ -737,6 +775,12 @@ async function browserChecks() {
       setExternalConfig({ api: { apiKey: '' }, verify2: false });
       await until(() => ui.querySelector('.keylabel').textContent === '粘贴 API Key' && !ui.querySelector('.v2input').checked);
       ok(ui.querySelector('.keywarn').getBoundingClientRect().height > 0, '无 Key 时缺少准备提示');
+      const drawer = ui.querySelector('.apitoggle');
+      drawer.click(); await wait(30);
+      ok(ui.querySelector('.apisec').getBoundingClientRect().height === 0, '抽屉未折叠');
+      ok(ui.querySelector('.keywarn').getBoundingClientRect().height > 0, '折叠抽屉后缺少 DeepSeek 入口');
+      ok(ui.querySelector('.keywarn a').href === 'https://platform.deepseek.com/api_keys');
+      drawer.click(); await wait(30);
       setExternalConfig({ api: { apiKey: 'replacement-3eb1' }, verify2: true });
       await until(() => ui.querySelector('.keylabel').textContent.includes('3eb1') && ui.querySelector('.v2input').checked);
       ok(ui.querySelector('.keywarn').getBoundingClientRect().height === 0, '已启用 Key 后仍显示未配置提示');
@@ -958,13 +1002,13 @@ async function browserChecks() {
         {native:'17/24', expected:'70% · 17/24 任务点', percent:'70'},
         {native:'24/24', expected:'100% · 24/24 任务点', percent:'100'},
         {native:'0/24', expected:'0% · 0/24 任务点', percent:'0'},
-        {native:'25/24', expected:'进度读取中', percent:null},
+        {native:'25/24', expected:'暂未读取到进度', percent:null},
         {left:{a:0,b:2,c:0}, expected:'66% · 2/3 节', percent:'66'},
-        {left:{a:0,b:null}, expected:'进度读取中', percent:null},
+        {left:{a:0,b:null}, expected:'至少 50% · 1/2 节', percent:'50'},
         {native:'0/10', left:{a:0,b:3}, expected:'70% · 7/10 任务点', percent:'70'},
         {native:'199/200', expected:'99% · 199/200 任务点', percent:'99'},
-        {expected:'进度读取中', percent:null},
-        {current:false, expected:'进度读取中', percent:null, hidden:true},
+        {expected:'暂未读取到进度', percent:null},
+        {current:false, expected:'暂未读取到进度', percent:null, hidden:true},
       ]) {
         state = next; head.textContent = next.native ? '已完成任务点：' + next.native : '';
         await setPanelMode('homework'); await setPanelMode('watch');

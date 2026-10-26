@@ -15,7 +15,7 @@ function fixture(){
     activeChapterId:()=>chapter,unfinishedOf:()=>remaining,tabList:()=>[{id:task,textContent:'学理'}],tabActive:()=>true,
     allVideos:()=>media,docs:()=>[doc],nodes:()=>[{id:chapter,name:'2.4 测试章节'}],currentCourse:()=>({name:'测试课程'}),
     HW:{questions,Watch:{stopTrace:[]},Diagnostics:{capture:()=>({status:'captured',documents:[{html:'已脱敏现场'}]})}},
-    note:text=>notes.push(text),chrome:{runtime:{sendMessage:async message=>{writes.push(message);return{ok:true};}}},
+    note:text=>notes.push(text),chrome:{storage:{local:{get:async()=>({config:{diagnosticsEnabled:true}})}},runtime:{sendMessage:async message=>{writes.push(message);return{ok:true};}}},
   });
   vm.runInContext(monitor,context);
   return{context,media,questions,writes,notes,doc,advance:ms=>{now+=ms;},chapter:value=>{chapter=value;},remaining:value=>{remaining=value;},task:value=>{task=value;},page:value=>{page=value;},scroll:value=>{scroll=value;},check:(active)=>context.observeProgress(active)};
@@ -24,7 +24,7 @@ function fixture(){
   const f=fixture();await f.check();f.advance(299999);await f.check();assert.equal(f.writes.length,0);
   f.advance(1);await f.check();assert.equal(f.writes.length,1);
   const payload=f.writes[0].payload;assert.equal(payload.stage,'刷课停滞');assert.equal(payload.chapter,'2.4 测试章节');
-  assert.equal(JSON.parse(payload.details).idleSeconds,300);assert.equal(payload.scene.status,'captured');
+  assert.equal(JSON.parse(payload.details).idleSeconds,300);assert.ok(!('scene' in payload),'现场由后台确认开关后反向采集');
   for(let i=0;i<10;i++){f.advance(30000);await f.check();}assert.equal(f.writes.length,1);assert.equal(f.context.on,true);
   console.log('PASS 5分钟无进展自动记录现场，同次只记一次，保持队列运行');
 }
@@ -44,6 +44,22 @@ for(const type of ['page','scroll','task','chapter','remaining','answers']){
   await f.check();f.advance(240000);await f.check();assert.equal(f.writes.length,0,type);
   f.advance(60000);await f.check();assert.equal(f.writes.length,1,type);
   console.log('PASS 实际进展重新计时：'+type);
+}
+{
+  const f=fixture();let enabled=false;
+  f.context.chrome.storage.local.get=async()=>({config:{diagnosticsEnabled:enabled}});
+  await f.check();f.advance(300000);await f.check();f.advance(30000);await f.check();
+  assert.equal(f.writes.length,0);assert.equal(f.notes.length,0);
+  enabled=true;await f.check();assert.equal(f.writes.length,1);assert.equal(f.notes.length,1);
+  await f.check();assert.equal(f.writes.length,1);
+  console.log('PASS 关闭诊断不发采集请求、不误报成功；开启后补记当前停滞且只记一次');
+}
+{
+  const f=fixture();f.context.chrome.runtime.sendMessage=async()=>({ok:true,skipped:true});
+  await f.check();f.advance(300000);await f.check();assert.equal(f.notes.length,0);
+  f.context.chrome.runtime.sendMessage=async message=>{f.writes.push(message);return{ok:true};};
+  await f.check();assert.equal(f.writes.length,1);
+  console.log('PASS skipped 不计为成功，也不消耗下一次记录机会');
 }
 {
   const f=fixture();await f.check();f.advance(240000);await f.check(false);f.advance(3600000);

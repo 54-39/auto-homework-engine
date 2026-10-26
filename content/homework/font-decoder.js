@@ -99,7 +99,10 @@
       }
       if (!response?.ok) throw new Error(response?.error || '无法读取本地字体索引');
       state.map = new Map(entries.map(([char, hash]) => [char, response.map[hash] || null]));
-    })();
+    })().catch(error => {
+      if (states.get(doc) === state) states.delete(doc);
+      throw error;
+    });
     return state.promise;
   }
   const ready = root => documents(root).every(doc => {

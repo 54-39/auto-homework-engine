@@ -218,16 +218,18 @@ async function queueChecks() {
     ok(took === false, '没有排队却动了手');
   });
 
-  await check('目录页没有可点节点时，报这门课做完、让后台翻下一门', async () => {
+  await check('目录页无法识别时保留未完成与诊断，并让后台翻下一门', async () => {
     document.body.innerHTML = '<div id="catalog"></div>';
     // 真实站点上这种空壳课就是 studentcourse 页（只有「已完成任务点: 0/0」，一个节点都没有）
     history.replaceState({}, '', '/mooc2-ans/mycourse/studentcourse?courseid=9&clazzid=8&ut=s');
     window.__doneKey = null;
+    window.__catalogIssue = null;
     window.chrome.runtime.sendMessage = async (msg) => {
       if (msg.type === 'HW_WATCH_QUEUE_GET') {
         return { ok: true, queue: { courses: [{ key: '9|8', scUrl: 'about:blank', name: '空壳课' }], index: 0 } };
       }
-      if (msg.type === 'HW_WATCH_COURSE_DONE') { window.__doneKey = msg.payload.key; return { ok: true }; }
+      if (msg.type === 'HW_WATCH_COURSE_DONE') { window.__doneKey = msg.payload.key; window.__doneStatus = msg.payload.status; return { ok: true }; }
+      if (msg.type === 'HW_ISSUE_ADD') { window.__catalogIssue = msg.payload; return { ok: true }; }
       return { ok: true };
     };
     /* 空壳课先给一次自愈刷新；这里模拟「已经刷新过一次、目录仍然为空」，
@@ -236,6 +238,8 @@ async function queueChecks() {
     const took = await HW.Watch.resumeQueued({ onNote: (t) => window.__notes.push(t) });
     ok(took === true, '空壳课没被认成目录页处理');
     ok(window.__doneKey === '9|8', '没报完成，队列会卡死：' + window.__doneKey);
+    ok(window.__doneStatus === 'incomplete', '未识别的目录被误计完成');
+    ok(window.__catalogIssue?.message.includes('无法识别课程目录'), '缺少目录未完成诊断');
     ok(!sessionStorage.getItem('hwCatRetry'), '自愈标记没清掉，下一门课会少一次刷新机会');
     history.replaceState({}, '', '/');
   });

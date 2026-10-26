@@ -339,11 +339,9 @@
       ok = false;
     }
     if (!ok || !squash(body.textContent).includes(squash(text))) {
-      const esc = text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
       body.innerHTML = text
-        .split(/\n+/)
-        .filter(Boolean)
-        .map((l) => `<p>${esc}</p>`)
+        .split('\n')
+        .map((line) => `<p>${line.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) || '<br>'}</p>`)
         .join('');
     }
     fire(body);
@@ -363,6 +361,9 @@
     const ans = norm(String(answer ?? ''));
     if (!ans) return false;
     try {
+      const targets = [...(q.el.inputs || []), ...(q.el.fields || []), ...(q.el.iframes || []),
+        q.el.iframe, q.el.stateInput, ...(q.el.labels || []).flatMap(l => [l.input, l.clickEl])].filter(Boolean);
+      if (targets.some(el => el.isConnected === false)) return false;
       // 超星：可见选中标记（字母圈 check_answer 类）为真相；无标记元素时回退隐藏 input
       if (q.el.stateInput && (type === 'choice' || type === 'multi' || type === 'judge')) {
         const rowsWithSpan = q.el.labels.filter((l) => l.clickEl && l.clickEl.querySelector('[class*="num_option"]'));
@@ -421,10 +422,11 @@
       if (type === 'subjective') {
         if (q.el.iframe) {
           const body = q.el.iframe.contentDocument?.body;
-          return !!body && squash(body.textContent).length > 0;
+          return !!body && squash(body.textContent) === squash(ans);
         }
         const input = q.el.inputs[0];
-        return !!norm(input?.isContentEditable ? input.textContent : input?.value);
+        const value = input?.isContentEditable ? input.textContent : input?.value;
+        return input?.isContentEditable ? squash(value) === squash(ans) : norm(value) === ans;
       }
     } catch {
       return false;

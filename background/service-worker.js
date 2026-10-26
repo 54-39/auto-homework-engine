@@ -16,6 +16,7 @@ const DEFAULT_CONFIG = {
   watchMuted: true, // 保持原有刷课默认静音；面板可取消
   autoUpdate: true, // 后台定时检查，空闲时自动装新版（刷课中不打断）；设置页可关
   panelMode: 'homework', // API 面板：写题 / 刷课
+  diagnosticsEnabled: false, // 用户打开诊断记录开关后才采集和写入新异常
 };
 
 let run = null; // { tabId, cancelled, items: [{ q, status, answer, error }] }
@@ -31,10 +32,14 @@ const WQ_KEY = 'watchQueue';
 let quizRetryClaims = Promise.resolve();
 let fontIndex;
 let watchQueue = null; // { courses:[{key,scUrl,name}], index, tabId, rate, autoRate }
+let watchNavigationEpoch = 0;
 let issueWrites = Promise.resolve();
 function recordIssue(entry, sender = {}) {
-  // 在进入串行写队列前请求现场，避免等前一条写完时页面已跳走。
-  const scenePromise = entry.scene ? Promise.resolve(entry.scene) : (async () => {
+  const storedPromise = chrome.storage.local.get(['config', 'savedKeys']);
+  // 开关确认后立即采集，不等前一条写入；关闭时连采集请求也不发送。
+  const scenePromise = storedPromise.then(async stored => {
+    if (stored.config?.diagnosticsEnabled !== true) return null;
+    if (entry.scene) return entry.scene;
     if (!sender.tab?.id) return { status: 'unavailable', reason: '没有可读取的页面上下文' };
     let timer;
     try {
@@ -44,9 +49,10 @@ function recordIssue(entry, sender = {}) {
       ]) || { status: 'unavailable', reason: '页面未返回现场' };
     } catch (e) { return { status: 'unavailable', reason: String(e.message || e) }; }
     finally { clearTimeout(timer); }
-  })();
+  }).catch(e => ({ status: 'unavailable', reason: String(e.message || e) }));
   const write = issueWrites.then(async () => {
-    const stored = await chrome.storage.local.get(['config', 'savedKeys']);
+    const stored = await storedPromise;
+    if (stored.config?.diagnosticsEnabled !== true) return { ok: true, skipped: true };
     const secrets = [stored.config?.api?.apiKey, ...(stored.savedKeys || []).map(row => row.key)].filter(Boolean);
     const clean = value => {
       let text = String(value || '');
@@ -57,6 +63,8 @@ function recordIssue(entry, sender = {}) {
     let url = '';
     try { const u = new URL(sender.url || sender.tab?.url || entry.url); url = u.origin + u.pathname; } catch { /* 无页面上下文 */ }
     const rawScene = await scenePromise;
+    const latest = await chrome.storage.local.get('config');
+    if (latest.config?.diagnosticsEnabled !== true) return { ok: true, skipped: true };
     const cleanScene = (value, depth = 0) => {
       if (depth > 12) return '[层级已截断]';
       if (typeof value === 'string') return clean(value);
@@ -113,6 +121,7 @@ async function pauseWatchForInterruptedPage(tab) {
   const q = await loadQueue();
   if (!q || q.tabId !== tab.id) return false;
   if (!q.paused) {
+    watchNavigationEpoch++;
     q.paused = accountNotice
       ? '平台显示账号登录检测提示，已暂停并保留队列；请先处理网页提示，再手动继续。'
       : '已退出课程学习页，队列已暂停；点「开始刷课」继续。';
@@ -127,9 +136,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 async function watchGo(index) {
-  const q = await loadQueue();
-  if (!q || q.paused) return;
+  const epoch = watchNavigationEpoch;
+  const current = () => epoch === watchNavigationEpoch;
+  let q = await loadQueue();
+  if (!current() || !q || q.paused) return;
   if (!(await ensureWatchHostAccess())) return;
+  if (!current()) return;
+  q = await loadQueue();
+  if (!current() || !q || q.paused) return;
   q.index = index;
   const cur = q.courses[index];
   if (!cur) {
@@ -139,6 +153,7 @@ async function watchGo(index) {
         key: c.key, name: c.name, status: c.outcome?.status || 'incomplete',
         chapterIds: c.outcome?.chapterIds || [], exceptions: c.outcome?.exceptions || [], gaps: c.gaps || [] })) };
       await chrome.storage.local.set({ watchFourReport: report });
+      if (!current()) return;
       const done = report.courses.filter(c => c.status === 'complete' || c.status === 'complete_with_exceptions').length;
       /* 用户 2026-10-21：不达目标不罢休。这一轮没收尾的课自动再排一轮，
          最多 3 轮（每轮都从目录重新核验，已完成的小节会被跳过，只重做欠账的那几个点）。
@@ -159,20 +174,24 @@ async function watchGo(index) {
           round: round + 1,
         };
         await saveQueue(next);
+        if (!current()) return;
         notify(`第 ${round} 轮：${done}/${q.courses.length} 门达标，剩 ${failed.length} 门，开始第 ${round + 1} 轮`);
         await chrome.tabs.update(q.tabId, { url: next.courses[0].scUrl }).catch(() => {});
         return;
       }
       await saveQueue(null);
+      if (!current()) return;
       notify(`开头 ${size} 节核验：${done}/${report.courses.length} 门达标（口语例外单列）；其余详见插件日志`);
       sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { count: done, total: report.courses.length, targetRun: size, limited: true } });
       return;
     }
     await saveQueue(null);
+    if (!current()) return;
     const limited = q.courses.some(course => course.chapterIds?.length);
     /* 补刷后仍未完成、被跳过的节（多是阅读/文档类任务点，站点不计完成）——一起报出来，
        否则用户只会看到「都走完了」，实际还有几节要人工看。 */
     const gaps = (await chrome.storage.local.get('watchGaps').catch(() => ({}))).watchGaps || [];
+    if (!current()) return;
     const gapCount = gaps.reduce((sum, g) => sum + (g.sections?.length || 0), 0);
     const tail = gapCount ? `；另有 ${gapCount} 个小节需人工完成（详见插件日志）` : '';
     notify(limited ? `刷课结束：${q.courses.length} 门课的本次限定小节已完成${tail}` : `刷课结束：${q.courses.length} 门课都走完了${tail}`);
@@ -180,6 +199,7 @@ async function watchGo(index) {
     return;
   }
   await saveQueue(q);
+  if (!current()) return;
   await chrome.tabs.update(q.tabId, { url: cur.scUrl }).catch(() => {});
 }
 
@@ -465,7 +485,7 @@ async function fillAnswer(activeRun, index, payload) {
   const item = activeRun.items[index];
   item.fillToken = crypto.randomUUID();
   item.status = 'answered';
-  sendTab(activeRun.tabId, { type: 'HW_ANSWER', payload: { ...payload, index, fillToken: item.fillToken } });
+  sendTab(activeRun.tabId, { type: 'HW_ANSWER', payload: { ...payload, index, fillToken: item.fillToken, requestId: activeRun.requestId } });
   const deadline = Date.now() + 30000;
   while (item.status === 'answered' && !activeRun.cancelled && run === activeRun && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 50));
@@ -474,18 +494,21 @@ async function fillAnswer(activeRun, index, payload) {
   if (item.status === 'answered') {
     item.status = 'failed';
     item.error = '页面填写回执超时，已停止；请刷新页面（F5）后核对';
-    sendTab(activeRun.tabId, { type: 'HW_STATUS', payload: { index, status: 'failed', error: item.error } });
+    sendTab(activeRun.tabId, { type: 'HW_STATUS', payload: { index, status: 'failed', error: item.error, requestId: activeRun.requestId } });
     await pauseRun(activeRun.tabId, item.error);
   }
   return item.status === 'filled' || (activeRun.auto && item.status === 'failed' && !activeRun.cancelled);
 }
 
-async function startRun(questions, tabId, sourceUrl, auto = false) {
-  const cfg = await getConfig();
+async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
   if (run) run.cancelled = true;
-  const activeRun = { tabId, sourceUrl, engine: cfg.engine, auto: auto && cfg.engine === 'api', cancelled: false,
+  const activeRun = { tabId, sourceUrl, requestId, engine: null, auto: false, cancelled: false,
     items: questions.map((q) => ({ q, status: 'queued', answer: null, error: null })) };
   run = activeRun;
+  const cfg = await getConfig();
+  if (activeRun.cancelled || run !== activeRun) return { ok: false, error: '本次答题已取消' };
+  activeRun.engine = cfg.engine;
+  activeRun.auto = auto && cfg.engine === 'api';
   (async () => {
     for (let i = 0; i < activeRun.items.length; i++) {
       if (activeRun.cancelled || run !== activeRun) return;
@@ -494,7 +517,7 @@ async function startRun(questions, tabId, sourceUrl, auto = false) {
       if (item.q._decision === 'skip') {
         item.status = 'skipped';
         const sn = item.q._skipNote || `已写且正确（页面: ${item.q._pageAnswer || '空'}），跳过`;
-        sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'skipped', note: sn } });
+        sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'skipped', note: sn, requestId: activeRun.requestId } });
         continue;
       }
       if (item.q._decision === 'rewrite') {
@@ -503,7 +526,7 @@ async function startRun(questions, tabId, sourceUrl, auto = false) {
         continue;
       }
       item.status = 'asking';
-      sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'asking' } });
+      sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'asking', requestId: activeRun.requestId } });
       try {
         const key = await cacheKeyOf(item.q);
         let ans = activeRun.auto && item.q._retry ? null : await cached(key);
@@ -524,7 +547,7 @@ async function startRun(questions, tabId, sourceUrl, auto = false) {
         item.status = 'failed';
         item.error = String(e.message || e);
         item.raw = e.answerPreview;
-        sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error, answerPreview: item.raw } });
+        sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error, answerPreview: item.raw, requestId: activeRun.requestId } });
         // 风控/验证类错误：第一次就暂停队列，不去撞验证码
         if (cfg.engine === 'bridge' && RISKY_RE.test(item.error)) {
           return pauseRun(tabId, '豆包需要人工确认，队列已暂停：' + item.error);
@@ -571,31 +594,37 @@ async function startRun(questions, tabId, sourceUrl, auto = false) {
   return { ok: true, count: questions.length, engine: cfg.engine };
 }
 
-async function rerunOne(index, tabId) {
-  const cfg = await getConfig();
+async function rerunOne(index, tabId, requestId) {
   const activeRun = run;
   const item = activeRun?.tabId === tabId ? activeRun.items[index] : null;
-  if (!item) return { ok: false, error: '题目不存在，请重新检测' };
+  if (!item || activeRun.cancelled) return { ok: false, error: '题目不存在或已停止，请重新检测' };
+  const token = item.fillToken = crypto.randomUUID();
+  const current = () => run === activeRun && !activeRun.cancelled && item.fillToken === token;
+  const stale = () => ({ ok: false, error: '页面题目已失效，请重新检测' });
+  const cfg = await getConfig();
+  if (!current()) return stale();
   item.status = 'asking';
   item.error = null;
-  sendTab(tabId, { type: 'HW_STATUS', payload: { index, status: 'asking' } });
+  sendTab(tabId, { type: 'HW_STATUS', payload: { index, status: 'asking', requestId } });
   try {
     const r = await askEngine(cfg, item.q);
-    if (activeRun.cancelled || run !== activeRun) return { ok: false, error: '页面题目已失效，请重新检测' };
+    if (!current()) return stale();
     item.answer = r.answer;
     // 手动重答视为最新权威答案：覆盖旧缓存（包括之前的错误答案）
     if (r.answer) {
       const key = await cacheKeyOf(item.q);
+      if (!current()) return stale();
       await cacheSet(key, { answer: r.answer, note: r.note || null });
     }
-    item.fillToken = crypto.randomUUID();
+    if (!current()) return stale();
     item.status = 'answered';
-    sendTab(tabId, { type: 'HW_ANSWER', payload: { index, fillToken: item.fillToken, answer: r.answer, kind: 'rewrite', note: r.note } });
+    sendTab(tabId, { type: 'HW_ANSWER', payload: { index, fillToken: item.fillToken, requestId, answer: r.answer, kind: 'rewrite', note: r.note } });
     return { ok: true };
   } catch (e) {
+    if (!current()) return stale();
     item.status = 'failed';
     item.error = String(e.message || e);
-    sendTab(tabId, { type: 'HW_STATUS', payload: { index, status: 'failed', error: item.error } });
+    sendTab(tabId, { type: 'HW_STATUS', payload: { index, status: 'failed', error: item.error, requestId } });
     return { ok: false, error: item.error };
   }
 }
@@ -617,8 +646,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const index = await fontIndex;
         sendResponse({ ok: true, map: Object.fromEntries(payload.hashes.map(hash => [hash, index[hash] || null])) });
       } else if (type === 'HW_ISSUE_ADD') {
-        await recordIssue(payload, sender);
-        sendResponse({ ok: true });
+        const result = await recordIssue(payload, sender);
+        sendResponse(result || { ok: true });
       } else if (type === 'HW_ISSUE_LIST') {
         await issueWrites;
         sendResponse({ ok: true, ...await readIssuePage(payload.offset, payload.limit) });
@@ -661,7 +690,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') + '#' + section });
         sendResponse({ ok: true });
       } else if (type === 'HW_START') {
-        sendResponse(await startRun(payload.questions || [], tabId, sender.url || sender.tab?.url, payload.auto === true));
+        sendResponse(await startRun(payload.questions || [], tabId, sender.url || sender.tab?.url, payload.auto === true, payload.requestId));
       } else if (type === 'HW_FILLED') {
         const it = run?.items[payload.index];
         if (!it || it.status !== 'answered' || run.tabId !== tabId || (it.fillToken && payload.fillToken !== it.fillToken) || run.cancelled) return sendResponse({ ok: true });
@@ -673,7 +702,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         it.status = 'failed';
         it.error = '填写失败：' + (payload.error || '页面未接受答案');
         if (run && !run.cancelled) {
-          sendTab(run.tabId, { type: 'HW_STATUS', payload: { index: payload.index, status: 'failed', error: it.error } });
+          sendTab(run.tabId, { type: 'HW_STATUS', payload: { index: payload.index, status: 'failed', error: it.error, requestId: run.requestId } });
           if (!run.auto) pauseRun(run.tabId, '填写失败，队列已暂停：' + it.error);
         }
         sendResponse({ ok: true });
@@ -711,6 +740,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         sendResponse({ ok: true, courses: [...courses.values()] });
       } else if (type === 'HW_WATCH_START') {
+        watchNavigationEpoch++;
         if (!(await ensureWatchHostAccess())) return sendResponse({ ok: false, error: WATCH_HOST_ACCESS_ERROR });
         /* 开始刷一门或几门课：courses 是内容脚本在列表页扫出来的，后台只负责排队与翻页 */
         const courses = (payload.courses || []).filter((c) => c && c.key && c.scUrl);
@@ -782,13 +812,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
            那个页面也会来接力，把用户的浏览器抢去刷课（真机踩过：新开标签页直接被带去 5.3 播视频）。
            例外：讨论任务点开出来的 groupweb 话题页（bbs.js 要在里头回帖），
            凭 URL 识别，不算「别人的页面」。 */
-        const helper = (() => {
+        const q = await loadQueue();
+        const helper = q?.topic?.tabId === tabId && q.topic.url === sender.url && (() => {
           try {
             const u = new URL(sender.url || '');
-            return /groupweb\.chaoxing\.com$/.test(u.hostname) && u.pathname.includes('/course/topic/');
+            return u.hostname === 'groupweb.chaoxing.com' && u.pathname.startsWith('/course/topic/');
           } catch { return false; }
         })();
-        const q = await loadQueue();
         if (q && tabId != null && q.tabId != null && q.tabId !== tabId && !helper) {
           sendResponse({ ok: true, queue: null });
         } else {
@@ -885,6 +915,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         sendResponse({ ok: true });
       } else if (type === 'HW_WATCH_PAUSE') {
+        watchNavigationEpoch++;
         const q = await loadQueue();
         if (q && q.tabId === tabId) {
           q.paused = String(payload.reason || '请核对页面后继续').slice(0, 160);
@@ -899,6 +930,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await saveQueue(q);
         sendResponse({ ok: true });
       } else if (type === 'HW_WATCH_STOP') {
+        watchNavigationEpoch++;
         const q = await loadQueue();
         await saveQueue(null);
         if (q) sendTab(q.tabId, { type: 'HW_WATCH_FINISHED', payload: { cancelled: true, reason: '用户取消刷课队列' } });
@@ -941,12 +973,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         sendResponse({ ok: true, list });
       } else if (type === 'HW_STOP') {
-        if (run) run.cancelled = true;
+        if (run?.tabId === tabId) run.cancelled = true;
         const detection = detectingTabs.get(tabId);
         if (detection) detection.cancelled = true;
         sendResponse({ ok: true });
       } else if (type === 'HW_RERUN') {
-        sendResponse(await rerunOne(payload.index, tabId));
+        sendResponse(await rerunOne(payload.index, tabId, payload.requestId));
       } else if (type === 'TEST_API') {
         sendResponse({ ok: true, reply: await testAPI(payload.api) });
       } else if (type === 'CACHE_CLEAR') {

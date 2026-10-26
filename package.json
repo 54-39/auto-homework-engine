@@ -1,7 +1,7 @@
 {
   "name": "homework-helper-extension",
   "private": true,
-  "version": "0.9.41",
+  "version": "0.9.42",
   "type": "module",
   "scripts": {
     "watch": "node tools/watch.mjs"
