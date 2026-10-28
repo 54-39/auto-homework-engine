@@ -8,7 +8,7 @@ import { appendIssue, readIssuePage, clearIssueHistory } from './issue-history.j
 const DEFAULT_CONFIG = {
   engine: 'api', // api | bridge
   api: { iface: 'auto', baseURL: '', model: '', apiKey: '' },
-  bridge: { newChat: true, delayMin: 3000, delayMax: 8000, viewMode: 'split' },
+  bridge: { newChat: false, delayMin: 3000, delayMax: 8000, viewMode: 'split' },
   subjMode: 'ask', // 简答题策略：ask=每次弹窗询问 | keep=保留跳过 | rewrite=清空重写
   verify2: true, // 多选/判断题二次复核开关（API 引擎）：关掉每题少一次 AI 调用
   watchRate: 'auto', // 刷课倍速：'auto' 跟播放器菜单最高档 | '1'/'1.25'/'1.5'/'2' 固定档
@@ -245,7 +245,7 @@ function pauseRun(tabId, reason) {
       notify('异常记录写入失败，已停止答题：' + String(e.message || e).slice(0, 100));
     });
   notify('已暂停：' + reason.slice(0, 90), run?.engine === 'bridge');
-  return sendTab(tabId, { type: 'HW_DONE', payload: { paused: reason } });
+  return sendTab(tabId, { type: 'HW_DONE', payload: { paused: reason, requestId: run?.requestId } });
 }
 
 function deepMerge(base, patch) {
@@ -537,7 +537,7 @@ async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
       sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'asking', requestId: activeRun.requestId } });
       try {
         const key = await cacheKeyOf(item.q);
-        let ans = activeRun.auto && item.q._retry ? null : await cached(key);
+        let ans = item.q._refresh || (activeRun.auto && item.q._retry) ? null : await cached(key);
         if (ans && /采用初答|先刷完|复核不一致|复核失败/.test(ans.note || '')) ans = null;
         if (activeRun.cancelled || run !== activeRun) return;
         const fromCache = !!ans;
@@ -564,7 +564,7 @@ async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
         if (AUTH_RE.test(item.error)) {
           return pauseRun(tabId, 'API 鉴权失败（Key 无效或与接口地址不匹配）。包月套餐（如火山 Coding Plan）必须选对应供应商预设、用 /api/coding 专用地址：' + item.error.slice(0, 110));
         }
-        if (activeRun.auto && e.code === 'HW_ANSWER_UNAVAILABLE') {
+        if ((activeRun.auto || cfg.engine === 'bridge') && e.code === 'HW_ANSWER_UNAVAILABLE') {
           const options = (item.q.options || []).map(option => option.key).filter(key => /^[A-H]$/.test(key));
           const slots = item.q.slotOptions || [];
           const pick = values => values[Math.floor(Math.random() * values.length)];
@@ -573,15 +573,22 @@ async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
             : item.q.type === 'blank' && slots.length === item.q.blanks && slots.length && slots.every(values => values.length)
               ? JSON.stringify(slots.map(pick)) : '');
           if (guess) {
-            const note = e.candidateAnswer ? '复核未确认，采用初答继续' : 'AI 无法作答，随机选项兜底（未确认）';
+            const note = e.candidateAnswer ? '复核未确认，采用初答继续' : 'AI 无法作答，猜选兜底（未确认）';
             item.answer = { answer: guess, note };
-            // 仅在刷课中使用一次，不把未确认答案写入答题缓存。
+            item.guessed = !e.candidateAnswer;
+            if (cfg.engine === 'bridge') {
+              await recordIssue({ stage: '猜选兜底', message: note,
+                question: [item.q.stem, ...(item.q.options || []).map(option => `${option.key}. ${option.text}`)].join('\n'),
+                answer: guess, details: item.error + '\n复核返回：' + (item.raw || ''), url: activeRun.sourceUrl }, { tab: { id: tabId } })
+                .catch(error => sendTab(tabId, { type: 'HW_ISSUE_WRITE_FAILED', payload: { error: String(error.message || error) } }));
+            }
+            // 用户授权的刷课/豆包兜底均不写入可信答案缓存。
             if (!(await fillAnswer(activeRun, i, { answer: guess, note, fallback: true, answerPreview: item.raw }))) return;
           }
-          continue;
+        } else {
+          // 非内容错误仍暂停，避免在页面或桥接异常时继续操作。
+          return pauseRun(tabId, item.error.slice(0, 140));
         }
-        // 任何失败立即暂停（用户要求：不重试不硬扛）
-        return pauseRun(tabId, item.error.slice(0, 140));
       }
       if (cfg.engine === 'bridge') {
         // 按用户配置的间隔等待，控制连续请求频率
@@ -596,8 +603,9 @@ async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
     const filled = activeRun.items.filter((it) => it.status === 'filled').length;
     const failed = activeRun.items.filter((it) => it.status === 'failed').length;
     const skipped = activeRun.items.filter((it) => it.status === 'skipped').length;
+    const guessedIndexes = activeRun.items.flatMap((it, index) => it.guessed && it.status === 'filled' ? [index] : []);
     notify(failed ? `答题完成：填写 ${filled}、跳过 ${skipped}、失败 ${failed} 题` : `处理完成：填写 ${filled}、跳过 ${skipped}，请检查后手动提交`);
-    sendTab(tabId, { type: 'HW_DONE', payload: { total: activeRun.items.length, filled, failed, skipped } });
+    sendTab(tabId, { type: 'HW_DONE', payload: { total: activeRun.items.length, filled, failed, skipped, guessedIndexes, requestId: activeRun.requestId } });
   })();
   return { ok: true, count: questions.length, engine: cfg.engine };
 }
@@ -635,6 +643,23 @@ async function rerunOne(index, tabId, requestId) {
     sendTab(tabId, { type: 'HW_STATUS', payload: { index, status: 'failed', error: item.error, requestId } });
     return { ok: false, error: item.error };
   }
+}
+
+let settingsNavigation = Promise.resolve();
+function openSettings(section) {
+  const next = settingsNavigation.then(async () => {
+    const base = chrome.runtime.getURL('settings.html');
+    const tabs = await chrome.tabs.query({ url: base + '*' });
+    const existing = tabs[0];
+    if (existing) {
+      const url = new URL(existing.url || base);
+      url.hash = section;
+      await chrome.tabs.update(existing.id, { active: true, ...(url.href !== existing.url ? { url: url.href } : {}) });
+      if (existing.windowId != null) await chrome.windows.update(existing.windowId, { focused: true });
+    } else await chrome.tabs.create({ url: base + '#' + section });
+  });
+  settingsNavigation = next.catch(() => {});
+  return next;
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -695,7 +720,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (type === 'OPEN_SETTINGS') {
         // 面板是 content script，没有 chrome.tabs 权限，由后台代开设置页
         const section = ['app', 'mem', 'watch', 'diag', 'upd'].includes(payload.section) ? payload.section : 'app';
-        await chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') + '#' + section });
+        await openSettings(section);
         sendResponse({ ok: true });
       } else if (type === 'HW_START') {
         sendResponse(await startRun(payload.questions || [], tabId, sender.url || sender.tab?.url, payload.auto === true, payload.requestId));

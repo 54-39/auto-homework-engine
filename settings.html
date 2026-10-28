@@ -251,7 +251,7 @@
 
             <fieldset id="bridgeFields" hidden>
               <legend>豆包网页桥接</legend>
-              <p class="hint">题目会发送到你的豆包会话并读取回复。如遇登录或验证，请在豆包页面手动处理；每题约 10～40 秒。</p>
+              <p class="hint">连续题目沿用当前豆包对话，每次读取本题的新回复。如遇登录或验证，请在豆包页面手动处理；每题约 10～40 秒。</p>
               <div class="app-field">
                 <label for="bridgeViewMode">打开方式</label>
                 <select id="bridgeViewMode"><option value="split">分屏模式</option><option value="window">新窗口模式</option></select>
@@ -261,7 +261,6 @@
                 <div class="app-field"><div class="input-field"><input id="delayMin" type="number" min="1000" step="500" value="3000" placeholder=" " required><label for="delayMin">每题间隔下限（毫秒）</label></div></div>
                 <div class="app-field"><div class="input-field"><input id="delayMax" type="number" min="1500" step="500" value="8000" placeholder=" " required><label for="delayMax">每题间隔上限（毫秒）</label></div></div>
               </div>
-              <label class="check"><input id="newChat" type="checkbox" checked>每题新开对话，避免上下文串扰</label>
             </fieldset>
             <div class="actions app-save"><button type="submit" id="save">保存设置</button></div>
           </fieldset>

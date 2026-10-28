@@ -8,11 +8,14 @@
   const TYPES = new Set(['choice', 'multi', 'judge', 'blank', 'subjective']);
   const questionRoot = el => el?.closest('.questionLi,.TiMu,.mark_item,.q-item,.question-item,.question,.exam-question,.topic-item,fieldset') ||
     (el?.matches('.topicDetail_editContainer textarea[placeholder="回复话题"]') ? el.closest('.topicDetail_editContainer') : null);
+  // 页面混用 encodeURIComponent 与旧 escape 的 %uXXXX；先展开旧 Unicode 编码，再按 JSON 读取。
+  const formulaData = img => JSON.parse(decodeURIComponent((img.getAttribute('data') || '')
+    .replace(/%u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))));
   function imageText(img) {
     // 超星公式图的 data 是经过 URL 编码的 JSON 字符串，保留其 LaTeX 原文。
     if (img.matches('img.ans-latex-moudle')) {
       try {
-        const latex = JSON.parse(decodeURIComponent(img.getAttribute('data') || ''));
+        const latex = formulaData(img);
         if (typeof latex === 'string' && latex.trim() && latex.length <= 12000) return '$' + latex.trim() + '$';
       } catch { /* 公式元数据损坏时仍按未读取的图片处理 */ }
     }
@@ -20,7 +23,7 @@
        转成纯文字（∪、∩、‾ 这类符号都在），能读就不该再报「未读取的图片」。 */
     if (img.matches('img.ans-edrawmath-moudle')) {
       try {
-        const markup = JSON.parse(decodeURIComponent(img.getAttribute('data') || ''));
+        const markup = formulaData(img);
         if (typeof markup === 'string' && markup.trim()) {
           const text = norm(new DOMParser().parseFromString(markup, 'text/html').body?.textContent || '');
           if (text) return text;

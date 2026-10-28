@@ -38,6 +38,7 @@ export async function openBridgeSplit(sourceTabId) {
 }
 
 export async function openBridgeView(sourceTabId, cfg) {
+  tidyDone = false; // 每轮开始重新允许一次「收侧栏」
   if (cfg?.viewMode !== 'window' && typeof chrome.tabs.createSplit === 'function') {
     return { ...await openBridgeSplit(sourceTabId), mode: 'split' };
   }
@@ -94,8 +95,58 @@ async function pingReady(target) {
 }
 
 let busy = false;
+/* 每轮开始后只收一次豆包侧栏：用户之后自己展开就不再去点，避免和人工操作抢。 */
+let tidyDone = false;
 
-async function askOnce(prompt, cfg) {
+/* 在豆包页面里执行：点它自己的「收起侧栏」按钮。
+   必须自包含（会被序列化后注入），不引用外部变量。选择器来自 2026-10-28 实测：
+   展开时 aria-label="收起侧栏"，收起后变成「显示侧栏」。找不到就返回 not-found。 */
+function tidySidebarInPage() {
+  const squash = (s) => (s || '').replace(/\s+/g, '');
+  const visible = (el) => {
+    if (!el || !el.getBoundingClientRect) return false;
+    const r = el.getBoundingClientRect();
+    const st = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none' && st.opacity !== '0';
+  };
+  const label = (el) => squash(el.getAttribute('aria-label') || el.getAttribute('title') || '');
+  /* 豆包把一部分浮层挂在 shadow root 里，document.querySelectorAll 照不到；
+     先把 document 扫一遍，找不到再补扫开放的 shadow root（不穿透 iframe）。 */
+  const collect = () => {
+    const out = [...document.querySelectorAll('button,[role="button"]')];
+    if (out.some((el) => /^(收起侧栏|收起侧边栏|收起导航栏)$/.test(label(el)))) return out;
+    const roots = [];
+    for (const el of document.querySelectorAll('*')) if (el.shadowRoot) roots.push(el.shadowRoot);
+    for (const root of roots) out.push(...root.querySelectorAll('button,[role="button"]'));
+    return out;
+  };
+  const buttons = collect()
+    .filter((el) => visible(el) && !el.disabled && el.getAttribute('aria-disabled') !== 'true');
+  const collapse = buttons.find((el) => /^(收起侧栏|收起侧边栏|收起导航栏)$/.test(label(el)));
+  if (!collapse) {
+    return buttons.some((el) => /^(显示侧栏|展开侧栏|展开侧边栏)$/.test(label(el))) ? 'already' : 'not-found';
+  }
+  collapse.click();
+  return 'clicked';
+}
+
+/* 收侧栏一律走 scripting 一次性注入，不走页面里的消息：扩展重载后，已打开标签页里的
+   旧内容脚本不会更新，靠消息会让这个功能在重载后的第一轮整个哑掉（2026-10-28 实测）。 */
+async function collapseDoubaoSidebar(tabId) {
+  if (tabId == null) return 'failed';
+  for (let i = 0; i < 3; i++) {
+    try {
+      const [r] = await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, func: tidySidebarInPage });
+      if (r?.result === 'clicked' || r?.result === 'already') return r.result;
+    } catch {
+      /* 页面还在加载或不允许注入：稍后再试 */
+    }
+    await sleep(600);
+  }
+  return 'failed';
+}
+
+async function askOnce(prompt) {
   const target = await ensureBridge();
   const ready = await pingReady(target);
   if (!ready.ok) {
@@ -107,9 +158,15 @@ async function askOnce(prompt, cfg) {
     throw new Error(`豆包页面未就绪（${bits.join('、')}）：请检查页面是否加载完成后重试`);
   }
   try { await chrome.notifications?.clear('hw-doubao-attention'); } catch { /* 通知可能已关闭 */ }
+  /* 页面已就绪（输入框可找到）再收侧栏：此时布局已成型，点一下就能收；
+     侧栏挡不住作业页也不报错，纯优化。 */
+  if (!tidyDone) {
+    tidyDone = true;
+    await collapseDoubaoSidebar(target.tabId);
+  }
   const send = target.send({
     type: 'BRIDGE_ASK',
-    payload: { prompt, newChat: cfg?.newChat !== false },
+    payload: { prompt, newChat: false },
   });
   let timer;
   const timeout = new Promise((_, rej) => {
@@ -126,18 +183,38 @@ async function askOnce(prompt, cfg) {
   return { raw: res.text };
 }
 
-export async function requestWithBridge(messages, cfg) {
+export async function requestWithBridge(messages) {
   if (busy) throw new Error('豆包正在处理上一条请求，请等待完成后重试');
   busy = true;
   const prompt = messages.map((m) => m.content).join('\n\n');
   try {
-    return await askOnce(prompt, cfg);
+    return await askOnce(prompt);
   } finally {
     busy = false;
   }
 }
 
-export async function answerWithBridge(q, cfg) {
-  const result = await requestWithBridge(buildMessages(q), cfg);
-  return { answer: parseAnswer(q, result.raw) };
+export async function answerWithBridge(q) {
+  const messages = buildMessages(q);
+  const result = await requestWithBridge(messages);
+  try {
+    const answer = parseAnswer(q, result.raw);
+    if (!answer && q.type !== 'subjective') throw new Error('AI 未返回可用答案');
+    return { answer };
+  } catch (error) {
+    if (!['choice', 'multi', 'judge', 'blank'].includes(q.type)) throw error;
+    // 仅在已收到但无法采用的答案后复核一次；登录、验证和会话切换错误不走这里。
+    const review = await requestWithBridge([...buildMessages(q, { bestEffort: true }), { role: 'user', content:
+      '这是同一道题的唯一一次复核，上次的空答案不能照抄。请重新列式计算，把候选选项逐项代入验证；检查单位、题目精度、选项有效数字和合理近似。对于选择、判断题，必须从题面现有选项中给出最可能的有效答案，不要再次输出空数组。即使没有精确匹配，也选择最接近且有题意依据的一项；不要编造选项。只输出原要求的 JSON 和选项完整文字。' }]);
+    try {
+      const answer = parseAnswer(q, review.raw);
+      if (!answer) throw new Error('AI 未返回可用答案');
+      return { answer };
+    } catch (error) {
+      error.code = 'HW_ANSWER_UNAVAILABLE';
+      error.answerPreview = String(review.raw || '').slice(0, 12000);
+      error.message += '（已自动复核一次）';
+      throw error;
+    }
+  }
 }

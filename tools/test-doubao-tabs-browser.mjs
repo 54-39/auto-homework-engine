@@ -15,18 +15,38 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const sent = [];
 const attempts = [];
 const publicPage = process.argv.includes('--public-page');
+const reuseChatCases = process.argv.includes('--reuse-chat-cases');
+const switchChatCases = process.argv.includes('--conversation-switch-cases');
+const collapsedMessageCases = process.argv.includes('--collapsed-message-cases');
+const requestIdCases = process.argv.includes('--request-id-cases');
+const answerRecoveryCases = process.argv.includes('--answer-recovery-cases');
 const fixture = `<!doctype html><meta charset="utf-8"><style>.ProseMirror{min-height:50px}button{padding:8px}</style>
 <button data-testid="create_conversation_button">新对话</button>
 <div id="messages"><div data-testid="send_message">旧题</div><div data-testid="receive_message">旧答案 A</div></div>
-<div data-testid="chat_input_input"><div class="ProseMirror" contenteditable="true"></div></div>
+<div data-testid="chat_input_input"><div id="chat-editor" class="ProseMirror" contenteditable="true"></div></div>
 <button data-testid="chat_input_send_button" disabled>发送</button>
 <script>
-const editor=document.querySelector('.ProseMirror'),send=document.querySelector('[data-testid="chat_input_send_button"]'),messages=document.querySelector('#messages');
-document.querySelector('[data-testid="create_conversation_button"]').onclick=()=>setTimeout(()=>{messages.textContent='';editor.textContent='';send.disabled=true;},150);
-editor.addEventListener('input',()=>setTimeout(()=>{send.disabled=editor.textContent.includes('blocked')||!editor.textContent.trim();},40));
-send.onclick=()=>{const prompt=editor.textContent;fetch('/attempt',{method:'POST',body:prompt});if(prompt.includes('lost'))return;fetch('/sent',{method:'POST',body:prompt});
-const bubble=document.createElement('div');bubble.dataset.testid='send_message';bubble.textContent=prompt;messages.append(bubble);editor.textContent='';send.disabled=true;
-setTimeout(()=>{const answer=document.createElement('div');answer.dataset.testid='receive_message';answer.innerHTML='<div data-testid="message_text_content">生成中</div>';messages.append(answer);setTimeout(()=>answer.firstElementChild.textContent='{"answers":["B"]}',180);},100);};
+const editor=()=>document.querySelector('#chat-editor')||document.querySelector('.ProseMirror'),send=document.querySelector('[data-testid="chat_input_send_button"]'),messages=document.querySelector('#messages');
+const inputText=()=>editor().tagName==='TEXTAREA'?editor().value:editor().textContent;
+const clearInput=()=>{if(editor().tagName==='TEXTAREA')editor().value='';else editor().textContent='';};
+document.querySelector('[data-testid="create_conversation_button"]').onclick=()=>{window.newChatClicks=(window.newChatClicks||0)+1;setTimeout(()=>{messages.textContent='';clearInput();send.disabled=true;},150);};
+document.addEventListener('input',()=>setTimeout(()=>{send.disabled=inputText().includes('blocked')||!inputText().trim();},40));
+send.onclick=()=>{const wirePrompt=inputText(),prompt=wirePrompt.replace(/^【请求编号：hw-[a-f0-9-]{36}，不要在答案中输出编号】\\s*/,'');fetch('/attempt',{method:'POST',body:prompt});if(prompt.includes('lost'))return;fetch('/sent',{method:'POST',body:prompt});
+const bubble=document.createElement('div');bubble.dataset.testid='send_message';bubble.textContent=wirePrompt;messages.append(bubble);clearInput();send.disabled=true;
+if(prompt.includes('collapsed-preview')||prompt.includes('inline-expand')){
+ bubble.textContent='';const text=document.createElement('div');text.dataset.testid='message_text_content';bubble.append(text);
+ const label=document.createElement('button');label.textContent='展开全部';
+ if(prompt.includes('collapsed-preview')){text.textContent=wirePrompt.slice(0,110);bubble.append(label);}
+ else{text.append(document.createTextNode(wirePrompt.slice(0,110)),label,document.createTextNode(wirePrompt.slice(110)));}
+ label.onclick=()=>{document.body.dataset.expandClicks=String(Number(document.body.dataset.expandClicks||0)+1);text.textContent=wirePrompt;label.remove();};
+}
+if(prompt.includes('formatted-message')){bubble.textContent='';const head=document.createElement('div'),body=document.createElement('div');head.dataset.testid=body.dataset.testid='message_text_content';head.textContent=wirePrompt.match(/^【[^】]+】/)?.[0]||'';body.textContent=prompt.replaceAll('…','...').replaceAll('~','～');bubble.append(head,body);}
+if(prompt.includes('switch-away')){setTimeout(()=>{messages.innerHTML='<div data-testid="send_message">其他对话的问题</div><div data-testid="receive_message">其他对话的答案</div>';},100);return;}
+if(prompt.includes('transient-render')){setTimeout(()=>{const nodes=[...messages.childNodes];messages.replaceChildren();setTimeout(()=>messages.prepend(...nodes),400);},50);}
+if(prompt.includes('reuse-second'))messages.prepend(messages.querySelector('[data-testid="receive_message"]').cloneNode(true));
+const answerValue=prompt.includes('reuse-second')||(prompt.includes('formatted-message')&&messages.querySelectorAll('[data-testid="send_message"]').length>2)?'C':'B';
+const answerPayload=prompt.includes('review-empty')?{answers:prompt.includes('唯一一次复核')&&!prompt.includes('review-empty-still')?['2.5']:[]}:{answers:[answerValue]};
+setTimeout(()=>{const answer=document.createElement('div');answer.dataset.testid='receive_message';answer.innerHTML='<div data-testid="message_text_content">生成中</div>';messages.append(answer);setTimeout(()=>answer.firstElementChild.textContent=JSON.stringify(answerPayload),180);},prompt.includes('reuse-second')?2600:prompt.includes('transient-render')?800:100);};
 </script>`;
 const server = http.createServer(async (req, res) => {
   if (req.url === '/sent' || req.url === '/attempt') {
@@ -51,7 +71,7 @@ if (!publicPage) {
   assert.equal(code.split('    clickSend();').length, 2, '真实页面检查必须在唯一发送动作之前终止');
   fs.writeFileSync(client, code.replace('    clickSend();', "    throw new Error('TAB_INPUT_VERIFIED_NO_SEND');"));
 }
-fs.writeFileSync(path.join(stage, 'background/test-worker.mjs'), `import {requestWithBridge,openBridgeSplit,openBridgeView} from './engines/bridge-engine.js';globalThis.bridgeAsk=prompt=>requestWithBridge([{role:'user',content:prompt}],{newChat:true});globalThis.bridgeSplit=tabId=>openBridgeSplit(tabId);globalThis.bridgeView=(tabId,viewMode)=>openBridgeView(tabId,{viewMode});`);
+fs.writeFileSync(path.join(stage, 'background/test-worker.mjs'), `import {requestWithBridge,answerWithBridge,openBridgeSplit,openBridgeView} from './engines/bridge-engine.js';globalThis.bridgeAsk=prompt=>requestWithBridge([{role:'user',content:prompt}],{newChat:true});globalThis.bridgeAnswer=q=>answerWithBridge(q);globalThis.bridgeSplit=tabId=>openBridgeSplit(tabId);globalThis.bridgeView=(tabId,viewMode)=>openBridgeView(tabId,{viewMode});`);
 fs.writeFileSync(path.join(stage, 'manifest.json'), JSON.stringify({
   manifest_version: 3, name: '豆包标签页桥接回归', version: '1.0.0',
   permissions: ['tabs', 'scripting'], host_permissions: [publicPage ? '*://*.doubao.com/*' : 'http://127.0.0.1/*'],
@@ -96,7 +116,7 @@ try {
   if (publicPage) {
     const tab = await evaluate(worker, `chrome.tabs.create({url:'https://www.doubao.com/chat/',active:false})`);
     let state;
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 60; i++) {
       state = await evaluate(worker, `chrome.tabs.sendMessage(${tab.id},{type:'BRIDGE_PING'},{frameId:0}).catch(()=>null)`);
       if (state?.ready && state?.hasSend) break;
       await wait(500);
@@ -104,6 +124,12 @@ try {
     if (state?.url) { const u = new URL(state.url); state.url = u.origin + u.pathname; }
     assert.deepEqual((await evaluate(worker, 'chrome.tabs.query({}).then(t=>t.map(x=>({id:x.id,url:x.url,active:x.active})))')).filter(t => t.id !== tab.id), before);
     console.log('PUBLIC PAGE (no login, no chat):', JSON.stringify(state));
+    const controls=await evaluate(worker,`chrome.scripting.executeScript({target:{tabId:${tab.id}},func:()=>[...document.querySelectorAll('button,[role="button"],a,[data-testid="create_conversation_button"]')].filter(e=>/新对话|新聊天|create_conversation/.test((e.innerText||'')+' '+(e.getAttribute('data-testid')||''))).map(e=>({tag:e.tagName,testid:e.getAttribute('data-testid'),label:e.getAttribute('aria-label'),text:(e.innerText||'').slice(0,60),visible:e.getBoundingClientRect().width>0&&e.getBoundingClientRect().height>0})).slice(0,12)}).then(r=>r[0].result)`);
+    console.log('PUBLIC NEW CHAT CONTROLS:',JSON.stringify(controls));
+    const editors=await evaluate(worker,`chrome.scripting.executeScript({target:{tabId:${tab.id}},func:()=>[...document.querySelectorAll('[data-testid="chat_input_input"],textarea,.ProseMirror,[contenteditable="true"]')].map(e=>({tag:e.tagName,testid:e.getAttribute('data-testid'),class:e.className,editable:e.getAttribute('contenteditable'),role:e.getAttribute('role'),placeholder:e.getAttribute('placeholder'),readonly:e.readOnly,disabled:e.disabled,width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height,visibility:getComputedStyle(e).visibility,display:getComputedStyle(e).display})).slice(0,12)}).then(r=>r[0].result)`);
+    console.log('PUBLIC EDITORS:',JSON.stringify(editors));
+    state = await evaluate(worker, `chrome.tabs.sendMessage(${tab.id},{type:'BRIDGE_PING'},{frameId:0}).catch(()=>null)`);
+    if (state?.url) { const u = new URL(state.url); state.url = u.origin + u.pathname; }
     if (state?.ready && state?.hasSend) {
       const input = await evaluate(worker, `bridgeAsk('仅验证隔离编辑器输入，不提交聊天').then(()=>null,error=>error.message)`);
       console.log('PUBLIC INPUT (send disabled by test guard):', input);
@@ -112,6 +138,89 @@ try {
     }
     assert.ok(state?.ready && state?.hasSend, '真实豆包标签页尚未就绪');
     fs.writeFileSync(path.join(output, 'tabs-public-page-results.json'), JSON.stringify(state, null, 2));
+  } else if(answerRecoveryCases) {
+    const q={type:'choice',stem:'review-empty：设 X 服从泊松分布且 P(X=1)=0.2，参数为何？',options:['1.5','2','2.5','3'].map((text,i)=>({key:'ABCD'[i],text}))};
+    assert.equal((await evaluate(worker,`bridgeAnswer(${JSON.stringify(q)})`)).answer,'C');
+    assert.equal(sent.length,2);assert.ok(sent[1].prompt.includes('合理近似'));
+    console.log('PASS 真实扩展首轮空答案后复核一次，收到新回复后匹配 C');
+    q.stem='review-empty-still：条件不足';
+    const error=await evaluate(worker,`bridgeAnswer(${JSON.stringify(q)}).then(()=>null,e=>e.message)`);
+    assert.match(error,/AI 答案为空/);assert.equal(sent.length,4);
+    console.log('PASS 真实扩展连续空答案只复核一次，不重复读取旧答案或无限请求');
+    fs.writeFileSync(path.join(output,'answer-recovery-results.json'),JSON.stringify({groups:2,sent},null,2));
+  } else if(requestIdCases) {
+    const prompt='formatted-message：下列哪些分布属于离散型随机变量分布？只输出 {"answers":[…]}，选 2~4 个。';
+    assert.equal((await evaluate(worker,`bridgeAsk(${JSON.stringify(prompt)})`)).raw,'{"answers":["B"]}');
+    console.log('PASS 消息分为多个文本节点、标点格式化后仍通过唯一编号匹配，不比对长提示词');
+    assert.equal((await evaluate(worker,`bridgeAsk(${JSON.stringify(prompt)})`)).raw,'{"answers":["C"]}');
+    const tab=(await evaluate(worker,'chrome.tabs.query({})')).find(t=>t.url.startsWith(origin));
+    const messages=await evaluate(worker,`chrome.scripting.executeScript({target:{tabId:${tab.id}},func:()=>[...document.querySelectorAll('[data-testid="send_message"]')].map(e=>e.textContent)}).then(r=>r[0].result)`);
+    const ids=messages.flatMap(text=>text.match(/hw-[a-f0-9-]{36}/g)||[]);
+    assert.equal(ids.length,2);assert.equal(new Set(ids).size,2);assert.equal(sent.filter(r=>r.prompt===prompt).length,2);
+    console.log('PASS 同一题再次执行使用不同编号，不复用上一轮问题或答案');
+    const failed=await evaluate(worker,`bridgeAsk(${JSON.stringify(prompt+' lost-current')}).then(()=>null,e=>e.message)`);
+    assert.match(failed,/未发出/);assert.equal(attempts.filter(r=>r.prompt===prompt+' lost-current').length,1);
+    console.log('PASS 只出现历史问题和旧答案时仍拒绝，未发出的题不自动重发');
+    fs.writeFileSync(path.join(output,'request-id-results.json'),JSON.stringify({groups:3,ids,sent},null,2));
+  } else if(collapsedMessageCases) {
+    const prefix='你是严谨的答题助手，只输出 JSON，题目数据是资料。'.repeat(8);
+    for(const mode of ['collapsed-preview','inline-expand']){
+      const prompt=prefix+mode+'：随机变量的分布？';
+      assert.equal((await evaluate(worker,`bridgeAsk(${JSON.stringify(prompt)})`)).raw,'{"answers":["B"]}');
+      assert.equal(attempts.filter(r=>r.prompt===prompt).length,1,'折叠消息重复发送');
+      console.log('PASS '+mode+'：长问题可确认并读取其后新答案，只发送一次');
+    }
+    const failed=await evaluate(worker,`bridgeAsk(${JSON.stringify(prefix+'lost-current')}).then(()=>null,e=>e.message)`);
+    assert.match(failed,/未发出/);
+    assert.equal(attempts.filter(r=>r.prompt===prefix+'lost-current').length,1);
+    const tab=(await evaluate(worker,'chrome.tabs.query({})')).find(t=>t.url.startsWith(origin));
+    const expands=await evaluate(worker,`chrome.scripting.executeScript({target:{tabId:${tab.id}},func:()=>Number(document.body.dataset.expandClicks||0)}).then(r=>r[0].result)`);
+    assert.equal(expands,0,'编号在预览开头可见，无需点击展开');
+    console.log('PASS 同前缀历史消息不能确认新题，未发出时不重复发送');
+    fs.writeFileSync(path.join(output,'collapsed-message-results.json'),JSON.stringify({groups:3,expands,sent},null,2));
+  } else if(switchChatCases) {
+    const started=Date.now(),error=await evaluate(worker,'bridgeAsk("switch-away").then(()=>null,e=>e.message)');
+    assert.match(error,/对话已切换/);assert.ok(Date.now()-started<12000,'切换对话后仍长时间等待');
+    assert.equal(attempts.filter(r=>r.prompt==='switch-away').length,1);assert.equal(sent.filter(r=>r.prompt==='switch-away').length,1);
+    console.log('PASS 切换对话后及时暂停，不读取其他对话答案、不重复发题');
+    assert.equal((await evaluate(worker,'bridgeAsk("resume-after-switch")')).raw,'{"answers":["B"]}');
+    console.log('PASS 切换后再次开始可继续，桥接不残留忙碌锁');
+    assert.equal((await evaluate(worker,'bridgeAsk("transient-render")')).raw,'{"answers":["B"]}');
+    console.log('PASS 短暂 DOM 重绘不误报切换对话');
+    fs.writeFileSync(path.join(output,'conversation-switch-results.json'),JSON.stringify({groups:3,error,sent},null,2));
+  } else if(reuseChatCases) {
+    assert.equal((await evaluate(worker,'bridgeAsk("first-real-question")')).raw,'{"answers":["B"]}');
+    const bridgeTab=(await evaluate(worker,'chrome.tabs.query({})')).find(t=>t.url.startsWith(origin));
+    assert.equal((await evaluate(worker,'bridgeAsk("reuse-second")')).raw,'{"answers":["C"]}');
+    console.log('PASS 同一对话第二题读取新答案 C，忽略重新挂载的历史答案 A');
+    const prefix='同样的答题提示词，请只输出本题 JSON。'.repeat(7);
+    assert.equal((await evaluate(worker,`bridgeAsk(${JSON.stringify(prefix+'上一题')})`)).raw,'{"answers":["B"]}');
+    const failed=await evaluate(worker,`bridgeAsk(${JSON.stringify(prefix+'lost-current')}).then(()=>null,e=>e.message)`);
+    assert.match(failed,/未发出/);assert.equal(attempts.filter(r=>r.prompt===prefix+'lost-current').length,1);
+    console.log('PASS 提示词前缀相同也不误把旧问题当成本次发送成功，不重发');
+    for(const mode of ['hidden-button','hidden-editor','hidden-history','native-textarea','native-next-question']){
+      await evaluate(worker,`chrome.scripting.executeScript({target:{tabId:${bridgeTab.id}},func:mode=>{
+        document.getElementById('decoy')?.remove();
+        if(mode==='hidden-button'){
+          const b=document.createElement('button');b.id='decoy';b.dataset.testid='create_conversation_button';b.style.display='none';b.textContent='新对话';document.body.prepend(b);
+        } else if(mode==='hidden-editor'){
+          const z=document.createElement('div');z.id='decoy';z.dataset.testid='chat_input_input';z.style.display='none';z.innerHTML='<div class="ProseMirror" contenteditable="true">旧草稿</div>';document.body.prepend(z);
+        } else if(mode==='hidden-history'){
+          const d=document.createElement('div');d.id='decoy';d.style.display='none';d.innerHTML='<div data-testid="send_message">旧题</div><div data-testid="receive_message">旧答案</div>';document.body.prepend(d);
+        } else if(mode==='native-textarea'){
+          const t=document.createElement('textarea');t.id='chat-editor';t.dataset.testid='chat_input_input';t.placeholder='发消息...';
+          document.querySelector('[data-testid="chat_input_input"]').replaceWith(t);
+        }
+      },args:[${JSON.stringify(mode)}]})`);
+      const count=sent.length;
+      assert.equal((await evaluate(worker,`bridgeAsk(${JSON.stringify(mode)})`)).raw,'{"answers":["B"]}');
+      assert.equal(sent.length,count+1,'每题只能发送一次');
+      console.log('PASS 沿用对话场景 '+mode+'：连续非缓存请求正常取答');
+    }
+    const state=await evaluate(worker,`chrome.scripting.executeScript({target:{tabId:${bridgeTab.id}},func:()=>({newChatClicks:window.newChatClicks||0,hasOriginalHistory:[...document.querySelectorAll('[data-testid="receive_message"]')].some(e=>e.textContent==='旧答案 A')})}).then(r=>r[0].result)`);
+    assert.equal(state.newChatClicks,0);assert.equal(state.hasOriginalHistory,true);
+    console.log('PASS 旧配置 newChat:true 也不点击新对话，原历史完整保留');
+    fs.writeFileSync(path.join(output,'reuse-chat-results.json'),JSON.stringify({groups:8,sent,state},null,2));
   } else {
   const first = await evaluate(worker, 'bridgeAsk("first")');
   assert.equal(first.raw, '{"answers":["B"]}'); assert.equal(sent.length, 1);

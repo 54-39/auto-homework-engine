@@ -168,7 +168,8 @@ async function checks() {
   await check('豆包配置按引擎出现，间隔范围有校验且正常保存', async () => {
     select('engine', 'bridge'); ok($('apiFields').hidden && !$('bridgeFields').hidden && $('verify2').disabled);
     $('delayMin').value = '5000'; $('delayMax').value = '3000'; await click('save'); ok($('msg').classList.contains('err'));
-    $('delayMax').value = '9000'; $('newChat').checked = false; await click('save');
+    ok(!$('newChat'), '不应再显示每题新开对话开关');
+    $('delayMax').value = '9000'; await click('save');
     ok(testConfig.engine === 'bridge' && testConfig.bridge.delayMin === 5000 && testConfig.bridge.delayMax === 9000 && !testConfig.bridge.newChat);
     select('engine', 'api');
   });

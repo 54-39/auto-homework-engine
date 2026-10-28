@@ -119,7 +119,9 @@ export function buildMessages(q, policy = {}) {
     const slots = q.type === 'blank' ? (q.slotOptions || []).map((options, i) => options.length
       ? `第 ${i + 1} 空是下拉选择，只能逐字输出以下一个选项：${JSON.stringify(options)}` : '').filter(Boolean).join('\n') : '';
     const uncertain = policy.bestEffort
-      ? '本轮优先完成作答。信息不足时也请结合题干和选项尽力给出最可能的答案，保持上述格式与选项范围。'
+      ? ['choice', 'multi', 'judge'].includes(q.type)
+        ? '本轮必须完成选择。先独立解题，再逐项核对；即使没有完全精确匹配，也必须从现有选项中选出最可能正确的有效选项，不能输出空数组、不能回答无选项的内容。数值题优先选择符合题目精度的最近合理选项；多选按顺序输出所有最可能正确选项。'
+        : '本轮优先完成作答。信息不足时也请结合题干和可用选项尽力给出最可能的答案；按空位输出，不要虚构不存在的题干条件。'
       : '无法确定答案时输出 {"answers":[]}。';
     const user = `【题目】\n${q.stem}\n${opts ? opts + '\n\n' : ''}${slots ? slots + '\n' : ''}只输出 {"answers":[…]} JSON 对象。\n规则：${rule}\n${uncertain}`;
     return [

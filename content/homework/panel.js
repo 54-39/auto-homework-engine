@@ -168,6 +168,7 @@
     .summary .shint{margin-left:auto;font-size:10.5px;color:#9AA1A9;flex:none;font-weight:400}
     .list{flex:none;height:clamp(120px,20vh,170px);overflow:auto;border:1px solid #CCD2D9;background:#fff;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:4px}
     .item{display:flex;gap:8px;align-items:center;padding:0 6px;min-height:30px;cursor:pointer;flex:none;border-radius:4px}
+    .item[role="button"]:focus-visible{outline:1px solid #64748B;outline-offset:-2px}
     .item:hover{background:#F5F8FF}
     .item.pending{cursor:default;flex-wrap:wrap;padding-top:6px;padding-bottom:6px;gap:6px 8px}
     .pending-reason{flex-basis:100%;margin:0 0 0 24px;color:#6B7280;font-size:11px;line-height:1.6;overflow-wrap:anywhere}
@@ -201,6 +202,10 @@
     .mbtns{display:flex;gap:8px;margin-top:12px}
     .mbtns .act{padding:6px}
     .subjhint{color:#98A2B3;margin-top:8px}
+    .guessmodal{max-width:calc(100vw - 32px)}
+    .guessmodal::backdrop{background:rgba(15,23,42,.45)}
+    .guessmodal button:focus-visible{outline:1px solid #98A2B3;outline-offset:2px;box-shadow:none}
+    .guessbody{max-height:40vh;overflow:auto;overflow-wrap:anywhere}
   `;
 
   const TYPE_NAME = { choice: '单选', multi: '多选', judge: '判断', blank: '填空', subjective: '简答' };
@@ -350,7 +355,12 @@
         <div class="summary homework-only" role="status" aria-live="polite"><span class="smsg">正在读取页面题目…</span><span class="shint hidden">列表可滚动</span></div>
         <div class="list homework-only"></div>
         <div class="logwrap"><div class="loghd">日志</div><div class="log"></div></div>
-      </section>`;
+      </section>
+      <dialog class="mbox guessmodal" aria-labelledby="hw-guess-title">
+        <b id="hw-guess-title">本轮包含猜选题</b>
+        <p class="guessbody"></p>
+        <form method="dialog" class="mbtns"><button class="act" autofocus>知道了</button></form>
+      </dialog>`;
     wire(root);
   }
 
@@ -363,6 +373,7 @@
       apiToggle: $('.apitoggle'), apisec: $('.apisec'),
       modal: $('.keymodal'), msave: $('.msave'), mtemp: $('.mtemp'), mcancel: $('.mcancel'),
       subjmodal: $('.subjmodal'), subjbody: $('.subjbody'), subjcancel: $('.subjcancel'), subjkeep: $('.subjkeep'), subjrewrite: $('.subjrewrite'),
+      guessmodal: $('.guessmodal'), guessbody: $('.guessbody'),
       detect: $('.detect'), start: $('.start'), stop: $('.stop'),
       watch: $('.watchbtn'), watchmute: $('.watchmute'), watchline: $('.watchline'), courselist: $('.courselist'), courserefresh: $('.courserefresh'),
       watchqueue: $('.watchqueue'), wqnow: $('.wqnow'), wqrest: $('.wqrest'), wqtime: $('.wqtime'),
@@ -594,7 +605,16 @@
     let nativeDetection = true;
     let preparingFonts = false;
     let stopRequested = false; // 停止后忽略后台迟到的答题消息
+    /* 豆包模式下开始答题会自动收起面板（挡住题干）；队列停下或失败时再放回来，
+       别让用户对着一个没反应的悬浮球猜发生了什么。 */
+    let autoCollapsed = false;
+    const revealAutoCollapsed = () => {
+      if (!autoCollapsed) return;
+      autoCollapsed = false;
+      els.panel.classList.remove('hidden');
+    };
     let answerEpoch = 0;
+    let answerIndexes = [];
     let detectionSnapshot = null;
     /* 上一次「页面读取」失败的真实原因：刷课日志只转发一句「没识别成功」，
        真正的原因（字体还原不了／题目结构不认识）会丢在面板摘要里，
@@ -686,6 +706,10 @@
     const requireCurrentPage = () => {
       if (autoRun) return true; // 无人值守填写中，签名变化是自己点出来的，不算页面被换
       if (HW.AIDetection.isCurrent(detectionSnapshot)) return true;
+      if (!els.stop.disabled) {
+        log('答题中断：题目结构发生变化，队列已暂停，请重新检测后继续');
+        reportIssue('答题中断', '题目结构发生变化，当前答题队列已暂停');
+      }
       invalidateDetection('页面已变化，请重新检测题目');
       if (nativeDetection) readPageQuestions();
       return false;
@@ -1603,15 +1627,31 @@
       );
       els.shint.classList.toggle('hidden', !(qs.length + pending.length));
       els.list.innerHTML = '';
+      /* 右键＝从本题往后答。部分作业页会在 document 捕获阶段吃掉 contextmenu
+         （禁右键/呼出翻译），行上的 contextmenu 收不到，所以再挂一条右键按下兜底；
+         两条路 500ms 内只认一次，不会重复开跑。 */
+      let fromHereAt = 0;
+      const fromHere = (i) => {
+        const now = Date.now();
+        if (now - fromHereAt < 500) return;
+        fromHereAt = now;
+        rerun(i, true);
+      };
       rows = qs.map((q, i) => {
         const r = document.createElement('div');
         r.className = 'item';
         r.innerHTML = `<span class="no">${i + 1}</span><span class="type t-${q.meta.type}"></span><span class="stem"></span><span class="st">待机</span>`;
         r.querySelector('.type').textContent = TYPE_NAME[q.meta.type] || q.meta.type;
         r.querySelector('.stem').textContent = q.meta.stem.replace(/_{2,}/g, '＿＿').slice(0, 60);
-        r.dataset.tip = '点击可重新询问本题';
-        r.addEventListener('click', () => {
-          if (['filled', 'failed', 'skipped'].includes(q._status)) rerun(i);
+        r.dataset.tip = '单击仅答本题；右键从本题开始。键盘 Enter 答本题，Shift+Enter 从本题开始';
+        r.tabIndex = 0;
+        r.setAttribute('role', 'button');
+        r.setAttribute('aria-label', `第 ${i + 1} 题：${q.meta.stem}。单击仅答本题，右键从本题开始`);
+        r.addEventListener('click', () => rerun(i));
+        r.addEventListener('contextmenu', e => { e.preventDefault(); fromHere(i); });
+        r.addEventListener('mousedown', e => { if (e.button === 2) fromHere(i); });
+        r.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); rerun(i, e.shiftKey); }
         });
         els.list.appendChild(r);
         return r;
@@ -1643,7 +1683,7 @@
       els.start.disabled = !qs.length;
     }
 
-    els.start.addEventListener('click', startAnswering);
+    els.start.addEventListener('click', () => startAnswering({ wholePage: true }));
 
     /* 开始答题：按钮直接调它，刷课在测验页也调它（auto=true 表示没人盯着，
        简答题策略「ask」不能在刷课时弹窗，按「保留跳过」处理）。 */
@@ -1653,7 +1693,12 @@
       const retry = auto && !!opts.retry;
       if (!HW.questions?.length) return false;
       if (!requireCurrentPage()) return false;
+      const from = Number.isInteger(opts?.fromIndex) ? opts.fromIndex : 0;
+      if (from < 0 || from >= HW.questions.length) return false;
+      const selected = HW.questions.slice(from, opts?.only ? from + 1 : undefined);
+      const force = opts?.force === true;
       const epoch = ++answerEpoch;
+      answerIndexes = selected.map((_, i) => from + i);
       stopRequested = false;
       const isCurrent = () => epoch === answerEpoch && !stopRequested;
       try {
@@ -1670,7 +1715,7 @@
         let subjMode = cfg.subjMode || 'ask';
         if (subjMode === 'ask' && auto) subjMode = 'keep';
         if (subjMode === 'ask') {
-          const n = HW.questions.filter((q) => q.meta.type === 'subjective' && substantive(HW.Extractor.currentAnswer(q))).length;
+          const n = force ? 0 : selected.filter((q) => q.meta.type === 'subjective' && substantive(HW.Extractor.currentAnswer(q))).length;
           if (n > 0) subjMode = await askSubjMode(n);
           if (!isCurrent()) return false;
           if (subjMode === null) {
@@ -1686,10 +1731,10 @@
         // 逐题决策（用户算法定稿）：写没写 → 没写直接写 → 写了比对对错 → 不对改写 → 对了跳过。
         // 页面答案只信硬证据；页面状态读不出来时一律视为"没写"（重写由 toggleSafeClick 保证不取消）。
         const questions = [];
-        for (const q of HW.questions) {
+        for (const q of selected) {
           if (!isCurrent()) return false;
-          const pageAnswer = HW.Extractor.currentAnswer(q); // 硬证据（input.checked / 学习类 / 文本值）
-          const cached = retry ? null : await cachedAnswer(q);
+          const pageAnswer = force ? '' : HW.Extractor.currentAnswer(q); // 硬证据（input.checked / 学习类 / 文本值）
+          const cached = retry || force ? null : await cachedAnswer(q);
           if (!isCurrent()) return false;
           let decision = 'ask'; // 没写（或读不出）→ 问引擎后填写
           let refAnswer = null;
@@ -1719,6 +1764,7 @@
           questions.push({
             ...q.meta,
             _retry: retry,
+            _refresh: force,
             _decision: decision,
             _pageAnswer: pageAnswer,
             _refAnswer: refAnswer,
@@ -1742,6 +1788,14 @@
           log('启动失败：' + (res?.error || '未知错误'));
           setBusy(false);
           return false;
+        }
+        /* 豆包桥接会把作业页和豆包分成两栏，面板浮在上面正好压住题干（用户 2026-10-28 要求）。
+           只有点顶部「开始」按钮（wholePage）才收起；左键单题、右键从本题往后、Shift+Enter
+           都不动面板——收起会让人以为卡住（用户 2026-10-28 明确，右键第 1 题也算）。 */
+        if (cfg.engine === 'bridge' && opts?.wholePage) {
+          autoCollapsed = true;
+          els.panel.classList.add('hidden');
+          log('面板已收起，可点左下角悬浮球展开');
         }
         return true;
       } catch (e) {
@@ -1866,31 +1920,28 @@
       els.stop.disabled = !busy;
     }
 
-    function setRow(i, status, tip) {
+    function setRow(i, status, tip, guessed = false) {
       const q = HW.questions?.[i];
       if (q) q._status = status;
+      if (q && ['filled', 'fixed', 'skipped'].includes(status)) q._guessed = guessed;
       if (q) q._error = status === 'failed' ? tip : '';
       if (q && status !== 'failed') q._answerPreview = '';
       const r = rows[i];
       if (!r) return;
       const st = r.querySelector('.st');
-      st.textContent = STATUS_TEXT[status] || '·';
+      st.textContent = guessed ? '猜选' : STATUS_TEXT[status] || '·';
       st.className = 'st s-' + status;
       st.dataset.tip = tip || status;
     }
 
-    async function rerun(i) {
+    async function rerun(i, fromHere = false) {
       if (detecting || autoRun || !els.stop.disabled) {
         log('整页答题尚未结束，请结束后再重问单题');
         return;
       }
-      if (!requireCurrentPage()) return;
-      const epoch = ++answerEpoch;
-      stopRequested = false;
-      setRow(i, 'asking');
-      log(`重问第 ${i + 1} 题…`);
-      const res = await send('HW_RERUN', { index: i, requestId: String(epoch) });
-      if (epoch === answerEpoch && !stopRequested && res && !res.ok) log(`重问失败：${res.error}`);
+      if (!HW.questions?.[i]) return;
+      return startAnswering({ fromIndex: i, only: !fromHere,
+        force: !fromHere && ['filled', 'fixed', 'failed', 'skipped'].includes(HW.questions[i]._status) });
     }
 
     chrome.runtime.onMessage.addListener((msg) => {
@@ -1902,10 +1953,11 @@
         if (stopRequested) return;
         // 轮次守卫：新一轮开始或换题后，上一轮的异步状态不再回写到新列表
         if (payload.requestId != null && payload.requestId !== String(answerEpoch)) return;
-        setRow(payload.index, payload.status, payload.error || payload.note || '');
-        if (payload.status === 'failed' && HW.questions?.[payload.index]) HW.questions[payload.index]._answerPreview = payload.answerPreview || '';
-        if (payload.status === 'failed') log(`第 ${payload.index + 1} 题获取答案失败：${payload.error}`);
-        if (payload.status === 'skipped' && !autoRun) log(`第 ${payload.index + 1} 题：${payload.note || '已作答，跳过'}`);
+        const i = answerIndexes[payload.index] ?? payload.index;
+        setRow(i, payload.status, payload.error || payload.note || '');
+        if (payload.status === 'failed' && HW.questions?.[i]) HW.questions[i]._answerPreview = payload.answerPreview || '';
+        if (payload.status === 'failed') log(`第 ${i + 1} 题获取答案失败：${payload.error}`);
+        if (payload.status === 'skipped' && !autoRun) log(`第 ${i + 1} 题：${payload.note || '已作答，跳过'}`);
       } else if (type === 'HW_ANSWER') {
         if (stopRequested) return; // 已停止：丢弃迟到的回答
         if (payload.requestId != null && payload.requestId !== String(answerEpoch)) return;
@@ -1917,7 +1969,7 @@
           return;
         }
         (async () => {
-          const i = payload.index;
+          const i = answerIndexes[payload.index] ?? payload.index;
           const epoch = answerEpoch;
           const q = HW.questions?.[i];
           const doc = autoDocument;
@@ -1927,11 +1979,13 @@
             if (!q || !isCurrent() || !requireCurrentPage()) return;
             // 最终比对：页面已写的答案与引擎/缓存答案一致 → 无需点击；不一致（或没写）→ 真实填写
             const live = HW.Extractor.currentAnswer(q);
+            const guessed = payload.fallback && /猜选/.test(payload.note || '');
             if (answersMatch(q.meta.type, live, payload.answer)) {
-              setRow(i, 'skipped', '答案：' + payload.answer + '（你原来的答案正确，保持不动）');
-              if (!autoRun) log(`第 ${i + 1} 题已写且答案正确，无需改写${payload.fromCache ? '（缓存命中）' : ''}`);
+              setRow(i, 'skipped', '答案：' + payload.answer + (guessed ? '｜' + payload.note : '（你原来的答案正确，保持不动）'), guessed);
+              if (guessed) log(`第 ${i + 1} 题保留原选项｜${payload.note}`);
+              else if (!autoRun) log(`第 ${i + 1} 题已写且答案正确，无需改写${payload.fromCache ? '（缓存命中）' : ''}`);
               if (!isCurrent()) return;
-              chrome.runtime.sendMessage({ type: 'HW_FILLED', payload: { index: i, fillToken: payload.fillToken, ok: true } });
+              chrome.runtime.sendMessage({ type: 'HW_FILLED', payload: { index: payload.index, fillToken: payload.fillToken, ok: true } });
               return;
             }
             // 缓存命中只负责"快速拿到答案"，填写永远真实执行：
@@ -1946,26 +2000,30 @@
               verified = HW.Filler.verify(q, payload.answer);
             }
             if (!isCurrent()) return;
-            setRow(i, verified === false ? 'failed' : payload.kind === 'rewrite' ? 'fixed' : 'filled', '答案：' + payload.answer);
-            rows[i] && (rows[i].dataset.tip = '答案：' + payload.answer);
+            const answerTip = '答案：' + payload.answer + (guessed ? '｜' + payload.note : '');
+            setRow(i, verified === false ? 'failed' : payload.kind === 'rewrite' ? 'fixed' : 'filled', answerTip, guessed && verified !== false);
+            rows[i] && (rows[i].dataset.tip = answerTip);
             const vTip = verified === 'unknown' ? '｜（页面不暴露选中状态，按点击成功处理）'
               : verified === false ? autoRun ? '｜校验未通过，本题留空' : '｜校验未通过，已暂停' : '';
             if (!autoRun || verified === false || payload.fallback) log(`第 ${i + 1} 题已填写${payload.fromCache ? '（缓存命中）' : ''}${payload.note ? '｜' + payload.note : ''}${vTip}`);
             chrome.runtime.sendMessage({
               type: 'HW_FILLED',
-              payload: { index: i, fillToken: payload.fillToken, ok: verified !== false, error: verified === false ? '填写校验未通过' : undefined },
+              payload: { index: payload.index, fillToken: payload.fillToken, ok: verified !== false, error: verified === false ? '填写校验未通过' : undefined },
             });
           } catch (e) {
             if (!isCurrent()) return;
             setRow(i, 'failed', String(e.message || e));
             log(`第 ${i + 1} 题填写失败：${e.message || e}`);
-            chrome.runtime.sendMessage({ type: 'HW_FILLED', payload: { index: i, fillToken: payload.fillToken, ok: false, error: String(e.message || e) } });
+            chrome.runtime.sendMessage({ type: 'HW_FILLED', payload: { index: payload.index, fillToken: payload.fillToken, ok: false, error: String(e.message || e) } });
           }
         })();
       } else if (type === 'HW_DONE') {
         if (detecting || stopRequested) return;
+        if (payload.requestId != null && payload.requestId !== String(answerEpoch)) return;
         stopRequested = false;
         setBusy(false);
+        /* 本轮结束（含暂停）就把自动收起的面板放回来：结果、失败原因和猜选提示都在面板上。 */
+        revealAutoCollapsed();
         if (payload.paused) {
           answerPauseReason = payload.paused;
           setSummary(payload.paused, true);
@@ -1978,10 +2036,19 @@
             setSummary(autoRun ? `本页填写 ${payload.filled ?? '?'} 题，${failed} 题留空；原因见异常记录`
               : `完成：填写 ${payload.filled ?? '?'} / 失败 ${failed}（点「失败」行可重答）`, true);
             els.panel.classList.remove('hidden');
+            autoCollapsed = false;
             if (!autoRun) log(`全部处理完毕，但有 ${failed} 题未成功（修复 Key 后点「开始」可整页重跑，已成功的题会命中缓存秒填）`);
           } else {
             setSummary(`完成：填写 ${payload.filled ?? payload.total ?? '?'}${skipped ? ` / 保留 ${skipped}` : ''}，请检查后自行提交`, false);
             if (!autoRun) log(`全部处理完毕（共 ${payload.total} 题），提交请自行操作`);
+          }
+          const guessed = [...new Set([
+            ...(payload.guessedIndexes || []).filter(Number.isInteger).map(index => (answerIndexes[index] ?? index) + 1),
+            ...(HW.questions || []).flatMap((q, index) => q._guessed ? [index + 1] : []),
+          ])].sort((a, b) => a - b);
+          if (!autoRun && guessed.length) {
+            els.guessbody.textContent = `本轮题目已处理完毕。本页有 ${guessed.length} 题为猜选：第 ${guessed.join('、')} 题。猜选答案未经确认，未存入答案缓存，请在提交前重点核对。`;
+            if (!els.guessmodal.open) els.guessmodal.showModal();
           }
         }
       } else if (type === 'HW_STOPPED') {
@@ -1989,6 +2056,8 @@
         answerPauseReason = '答题队列已停止';
         stopRequested = false;
         setBusy(false);
+        /* 队列停下（含风控/验证暂停）必须让人看见原因，别把面板留在收起状态。 */
+        revealAutoCollapsed();
         log('队列已停止');
       } else if (type === 'HW_WATCH_FINISHED') {
         setWatchLine('');
