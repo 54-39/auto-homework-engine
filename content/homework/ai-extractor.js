@@ -212,11 +212,15 @@
       if (snapshot.carriers?.some((el) => !el.isConnected)) return false;
       if (snapshot.scopeIds?.size) {
         // 只比较实际题目区域，页面其他位置的时钟等内容变化不使答案位置失效。
-        const stripRefs = (text) => text.replace(/ ref="e\d+"/g, '');
+        /* 只认元素身份：题目容器与输入控件必须还是原来那批 DOM 节点。
+           不再比 markup —— 填答案本身会加勾选类、插「已答」标记、给填空展开编辑器，
+           比内容会把「我们自己改的页面」误判成「页面被换」，于是整轮清空、后面全剩
+           （用户 2026-10-28 反复遇到）。真正换页/换题会连节点一起换掉，
+           而且上面的控件身份检查已经守住「选项被重绘」的情况。 */
         return [...snapshot.scopeIds].every((id) => {
           const ref = snapshot.refs.get(id);
           const next = ref && current.refs.get(current.ids.get(ref.el));
-          return !!next && next.el === ref.el && stripRefs(next.markup) === stripRefs(ref.markup);
+          return !!next && next.el === ref.el;
         });
       }
       return current.signature === snapshot.signature && [...snapshot.refs].every(([id, ref]) => current.refs.get(id)?.el === ref.el);

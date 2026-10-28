@@ -17,7 +17,10 @@ function fixture() {
     getConfig: async () => ({ engine: 'api' }), cacheKeyOf: async () => 'fixture',
     cached: async () => ({ answer: 'B' }), cacheSet: async () => {},
     askEngine: async () => { throw Error('fixture model failed'); },
-    AUTH_RE: /401/, RISKY_RE: /captcha/, notify() {},
+    /* 用与 service-worker.js 一致的风控/鉴权口径，避免夹具正则比真实逻辑松或紧。 */
+    AUTH_RE: /HTTP 40[13]|authentication|invalid[_ ]?api[_ ]?key|认证|鉴权/i,
+    RISKY_RE: /风控|安全验证|人机验证|验证码|人脸验证|需要登录|登录墙/, notify() {},
+    recordIssue: async issue => { issues.push('issue:' + issue.message); return true; },
     sendTab: (tabId, message) => { messages.push({ tabId, ...message }); return Promise.resolve(); },
     pauseRun: (tabId, reason) => { context.run.cancelled = true; issues.push(reason); },
   });
@@ -25,7 +28,7 @@ function fixture() {
   return { context, messages, issues, delays,
     answer: () => messages.filter(m => m.type === 'HW_ANSWER'),
     done: () => messages.filter(m => m.type === 'HW_DONE'),
-    ack: (message, ok = true, tabId = 7) => context.acknowledge({ index: message.payload.index, fillToken: message.payload.fillToken, ok }, tabId),
+    ack: (message, ok = true, tabId = 7, error) => context.acknowledge({ index: message.payload.index, fillToken: message.payload.fillToken, ok, error }, tabId),
   };
 }
 for (const auto of [true, false]) {
@@ -79,11 +82,23 @@ for (const decision of ['ask', 'rewrite']) {
   await wait(350);
   assert.equal(f.done().length, 0, '其他页面或旧答案回执解锁了当前填写');
   await f.ack(message, false);
-  await wait(80);
-  assert.equal(f.issues.length, 1);
-  assert.equal(f.done().length, 0);
+  await wait(450);
+  /* 2026-10-28 用户要求：单题填写失败不能把后面整批题扔掉，只跳过本题继续。 */
+  assert.equal(f.issues.length, 0, '普通填写失败不再暂停整轮');
+  assert.equal(f.done().length, 1);
+  assert.equal(f.done()[0].payload.failed, 1);
   assert.equal(f.answer().length, 1, '失败后自动重试了答案');
-  console.log('PASS 忽略跨页和过期回执，填写失败只暂停一次');
+  console.log('PASS 忽略跨页和过期回执，普通填写失败只跳过本题不拖停整轮');
+}
+{
+  const f = fixture();
+  await f.context.startRun([{ type: 'choice', _decision: 'ask' }], 7, 'https://mooc1.chaoxing.com/test');
+  await wait(30);
+  await f.ack(f.answer()[0], false, 7, '需要安全验证，请在页面完成');
+  await wait(80);
+  assert.equal(f.issues.length, 1, '验证类失败必须暂停整轮');
+  assert.equal(f.done().length, 0);
+  console.log('PASS 验证码/登录类填写失败仍然暂停整轮');
 }
 {
   const f = fixture();
@@ -114,7 +129,8 @@ for (const decision of ['ask', 'rewrite']) {
     return { answer: 'B' };
   };
   await f.context.startRun([{ type: 'choice', stem: '无法确认' }, { type: 'choice', stem: '后续题' }], 7, 'https://mooc1.chaoxing.com/test', true);
-  await wait(30);
+  /* 题间有 100ms 提速等待（见上一条用例），这里要等过它才能看到下一题的回执。 */
+  await wait(450);
   assert.equal(f.answer().length, 1);
   assert.equal(f.answer()[0].payload.index, 1, '单题无法确认导致后续题被漏掉');
   assert.equal(f.issues.length, 0);
@@ -146,7 +162,7 @@ for (const [type, candidate] of [['choice', null], ['multi', 'BD'], ['judge', nu
     assert.ok(['甲;乙','丙'].includes(values[0]) && ['丁','戊'].includes(values[1]));
   } else assert.ok(candidate ? first.payload.answer === candidate : (type === 'judge' ? ['对','错'] : ['B','D']).includes(first.payload.answer));
   assert.equal(cachedWrites, 0, '未确认答案被写入缓存');
-  await f.ack(first); await wait(100);
+  await f.ack(first); await wait(300);
   const next = f.answer()[1];
   assert.equal(next.payload.index, 1, '兜底后漏掉后续题');
   await f.ack(next); await wait(400);
@@ -162,9 +178,25 @@ for (const [type, candidate] of [['choice', null], ['multi', 'BD'], ['judge', nu
   f.context.askEngine = async () => { throw Object.assign(Error('复核冲突'), { code:'HW_ANSWER_UNAVAILABLE', candidateAnswer:'B' }); };
   await f.context.startRun([{type:'choice',options:[{key:'A'},{key:'B'}]}],7,'https://mooc1.chaoxing.com/test',false);
   await wait(30);
+  /* 2026-10-28 用户要求：复核与初答打架不能让整轮卡在这一题。
+     初答是模型自己给出的有效答案（不是随机猜选），人工模式也采用，但必须带「请核对」且不写缓存。 */
+  assert.equal(f.answer().length,1);
+  assert.equal(f.answer()[0].payload.answer,'B');
+  assert.equal(f.answer()[0].payload.fallback,true);
+  assert.match(f.answer()[0].payload.note,/请核对/);
+  assert.equal(f.issues.length,0,'复核冲突不该当成异常暂停整轮');
+  console.log('PASS 人工解题模式复核冲突时采用初答继续，标记待核对且不暂停');
+}
+{
+  const f = fixture();
+  f.context.cached = async () => null;
+  f.context.askEngine = async () => { throw Object.assign(Error('AI 未返回可用答案'), { code:'HW_ANSWER_UNAVAILABLE' }); };
+  await f.context.startRun([{type:'blank',stem:'无选项填空',blanks:2,slotOptions:[[],[]]}],7,'https://mooc1.chaoxing.com/test',false);
+  await wait(30);
+  /* 人工模式下确实没有可用答案（也没有可选项）：不编造文本，照实暂停等人处理。 */
   assert.equal(f.answer().length,0);
   assert.equal(f.issues.length,1);
-  console.log('PASS 人工解题模式不自动采用未确认答案或猜选');
+  console.log('PASS 人工模式没有任何可用答案时仍暂停，不编造填空内容');
 }
 {
   const f = fixture();

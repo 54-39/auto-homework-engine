@@ -497,7 +497,11 @@ async function fillAnswer(activeRun, index, payload) {
     sendTab(activeRun.tabId, { type: 'HW_STATUS', payload: { index, status: 'failed', error: item.error, requestId: activeRun.requestId } });
     await pauseRun(activeRun.tabId, item.error);
   }
-  return item.status === 'filled' || (activeRun.auto && item.status === 'failed' && !activeRun.cancelled);
+  /* 单个题填写失败（页面结构变化、选项点不动等）只跳过本题，不拖累后面整批：
+     暂停只留给回执超时（上面已 pauseRun）和用户主动停止。
+     用户 2026-10-28 反馈「后面总是剩题」，就是人工模式下一题失败把剩余队列整段丢掉了。 */
+  if (activeRun.cancelled || run !== activeRun) return false;
+  return item.status === 'filled' || item.status === 'failed';
 }
 
 async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
@@ -552,10 +556,18 @@ async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
         if (!(await fillAnswer(activeRun, i, { answer: ans.answer, fromCache, note: ans.note }))) return;
       } catch (e) {
         if (activeRun.cancelled || run !== activeRun) return;
+        /* 复核与初答打架时，初答是模型自己给出的有效答案，不是随机猜选：
+           任何模式都允许采用并继续，只在题行和日志里明确标「待核对」
+           （用户 2026-10-28 报的第 36 题多选 ABD/ABCD 就是卡在这里整轮暂停）。
+           随机猜选仍只对刷课与豆包手动开放，不扩展到 API 手动作业。 */
+        const unavailable = e.code === 'HW_ANSWER_UNAVAILABLE';
+        const guessAllowed = activeRun.auto || cfg.engine === 'bridge';
+        const recoverable = unavailable && (!!e.candidateAnswer || guessAllowed);
         item.status = 'failed';
         item.error = String(e.message || e);
         item.raw = e.answerPreview;
-        sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error, answerPreview: item.raw, requestId: activeRun.requestId } });
+        /* 能兜底的题不先报失败：紧接着就用初答/猜选填写，先红一下再变绿只会让人以为出错。 */
+        if (!recoverable) sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error, answerPreview: item.raw, requestId: activeRun.requestId } });
         // 风控/验证类错误：第一次就暂停队列，不去撞验证码
         if (cfg.engine === 'bridge' && RISKY_RE.test(item.error)) {
           return pauseRun(tabId, '豆包需要人工确认，队列已暂停：' + item.error);
@@ -564,7 +576,7 @@ async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
         if (AUTH_RE.test(item.error)) {
           return pauseRun(tabId, 'API 鉴权失败（Key 无效或与接口地址不匹配）。包月套餐（如火山 Coding Plan）必须选对应供应商预设、用 /api/coding 专用地址：' + item.error.slice(0, 110));
         }
-        if ((activeRun.auto || cfg.engine === 'bridge') && e.code === 'HW_ANSWER_UNAVAILABLE') {
+        if (recoverable) {
           const options = (item.q.options || []).map(option => option.key).filter(key => /^[A-H]$/.test(key));
           const slots = item.q.slotOptions || [];
           const pick = values => values[Math.floor(Math.random() * values.length)];
@@ -573,17 +585,27 @@ async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
             : item.q.type === 'blank' && slots.length === item.q.blanks && slots.length && slots.every(values => values.length)
               ? JSON.stringify(slots.map(pick)) : '');
           if (guess) {
-            const note = e.candidateAnswer ? '复核未确认，采用初答继续' : 'AI 无法作答，猜选兜底（未确认）';
+            const mismatch = /复核(不一致|冲突)/.test(item.error);
+            const note = e.candidateAnswer
+              ? (mismatch ? '复核不一致，采用初答（请核对）' : '复核未确认，采用初答继续')
+              : 'AI 无法作答，猜选兜底（未确认）';
             item.answer = { answer: guess, note };
             item.guessed = !e.candidateAnswer;
             if (cfg.engine === 'bridge') {
-              await recordIssue({ stage: '猜选兜底', message: note,
+              await recordIssue({ stage: mismatch ? '复核不一致' : '猜选兜底', message: note,
                 question: [item.q.stem, ...(item.q.options || []).map(option => `${option.key}. ${option.text}`)].join('\n'),
                 answer: guess, details: item.error + '\n复核返回：' + (item.raw || ''), url: activeRun.sourceUrl }, { tab: { id: tabId } })
                 .catch(error => sendTab(tabId, { type: 'HW_ISSUE_WRITE_FAILED', payload: { error: String(error.message || error) } }));
             }
             // 用户授权的刷课/豆包兜底均不写入可信答案缓存。
             if (!(await fillAnswer(activeRun, i, { answer: guess, note, fallback: true, answerPreview: item.raw }))) return;
+          } else if (activeRun.auto || cfg.engine === 'bridge') {
+            /* 无人值守且没有可用选项（如没有可选项的填空）：不编造文本，本题留空继续后面的题。 */
+            sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error, answerPreview: item.raw, requestId: activeRun.requestId } });
+          } else {
+            /* 人工模式没有可用的初答/选项：照实报失败并暂停，等人处理。 */
+            sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error, answerPreview: item.raw, requestId: activeRun.requestId } });
+            return pauseRun(tabId, item.error.slice(0, 140));
           }
         } else {
           // 非内容错误仍暂停，避免在页面或桥接异常时继续操作。
@@ -731,12 +753,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           it.status = 'filled';
           return sendResponse({ ok: true });
         }
-        // 填写失败：立即暂停（用户要求不重试）
+        // 填写失败：本题不再重试，但默认继续后面的题（用户 2026-10-28：后面总是剩题）
         it.status = 'failed';
         it.error = '填写失败：' + (payload.error || '页面未接受答案');
         if (run && !run.cancelled) {
           sendTab(run.tabId, { type: 'HW_STATUS', payload: { index: payload.index, status: 'failed', error: it.error, requestId: run.requestId } });
-          if (!run.auto) pauseRun(run.tabId, '填写失败，队列已暂停：' + it.error);
+          /* 只有必须人工介入的失败（验证码/人脸/登录墙/鉴权）才停整轮；
+             页面一时读不到状态、某个选项点不动，跳过本题继续，别把剩下的题全扔了。 */
+          if (RISKY_RE.test(it.error) || AUTH_RE.test(it.error)) pauseRun(run.tabId, '填写失败，队列已暂停：' + it.error);
         }
         sendResponse({ ok: true });
       } else if (type === 'HW_WATCH_ACCESS_REQUEST') {

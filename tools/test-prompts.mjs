@@ -53,7 +53,9 @@ const b2 = buildMessages({ type: 'blank', stem: 'P(A∩B)=___，P(A∪B)=___', b
 check('双空下发空数并要求数组逐空输出', b2[1].content.includes('共 2 个空') && b2[1].content.includes('2 个值，一个空一个元素'));
 const b0 = buildMessages({ type: 'blank', stem: '1+1=____' });
 const automatic = buildMessages({ type:'choice', stem:'信息不足的题目', options:[{key:'B',text:'乙'}] }, {bestEffort:true});
-check('仅刷课提示词要求尽力给出最可能答案，保留选项范围', automatic[1].content.includes('尽力给出最可能的答案') && automatic[1].content.includes('B. 乙') && !automatic[1].content.includes('无法确定答案时输出'));
+/* 提示词在 1.0.4 收紧成「最可能正确的有效选项」；断言跟着当前措辞走，意图不变：
+   必须逼出答案、保留题面选项范围、不许拿「无法确定」当借口。 */
+check('仅刷课提示词要求尽力给出最可能答案，保留选项范围', automatic[1].content.includes('最可能正确') && automatic[1].content.includes('不能输出空数组') && automatic[1].content.includes('B. 乙') && !automatic[1].content.includes('无法确定答案时输出'));
 check('空数未知时不下发、不误报单空', !b0[1].content.includes('共 0 个空') && !b0[1].content.includes('只有 1 个空') && b0[1].content.includes('一个空一个元素'));
 check('填空题仍禁止解释', b1[0].content.includes('不输出任何解释'));
 const blank = parseAnswer({ type: 'blank' }, '  答案A\n\n答案B  ');

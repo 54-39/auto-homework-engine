@@ -706,14 +706,31 @@
     const requireCurrentPage = () => {
       if (autoRun) return true; // 无人值守填写中，签名变化是自己点出来的，不算页面被换
       if (HW.AIDetection.isCurrent(detectionSnapshot)) return true;
+      /* 运行中结构变了：绝大多数是刚才填答案改的 DOM（勾选态、已答标记、填空展开编辑器）。
+         以前这里直接 invalidateDetection，把整轮清空、剩下的题全不答（用户 2026-10-28
+         反复遇到「后面总是剩题」）。现在改成热重读：重新读题目、保留已答与猜选标记，
+         只让当前这一次操作失败，队列继续往后走。真正换页由 isCurrent 的元素身份判定挡住。 */
       if (!els.stop.disabled) {
-        log('答题中断：题目结构发生变化，队列已暂停，请重新检测后继续');
-        reportIssue('答题中断', '题目结构发生变化，当前答题队列已暂停');
+        const before = (HW.questions || []).map((q) => ({ status: q._status, guessed: q._guessed }));
+        detectionSnapshot = null;
+        const reread = nativeDetection ? readPageQuestions() : false;
+        if (reread && HW.questions.length === before.length) {
+          HW.questions.forEach((q, idx) => { q._status = before[idx].status; q._guessed = before[idx].guessed; });
+          rows.forEach((r, idx) => {
+            const prev = before[idx];
+            if (prev?.status) setRow(idx, prev.status, r.dataset.tip || '', !!prev.guessed);
+          });
+        }
+        log('页面结构变化，已重新读取题目，继续后面的题');
+        return false;
       }
       invalidateDetection('页面已变化，请重新检测题目');
       if (nativeDetection) readPageQuestions();
       return false;
     };
+    /* 刚填过答案时页面签名会变：requireCurrentPage 第一次会顺带重读一遍，
+       这里立刻再判一次，避免「开始」白点一下没反应（用户 2026-10-28 报的剩题场景）。 */
+    const ensureCurrentPage = () => requireCurrentPage() || requireCurrentPage();
     /* 刷课自己点选项就会改动控件的选中状态，页面签名随之变化，于是页面守卫会
        把自己判成「页面已变化」并把题目清空（真实页面 2026-10-20 就是这样卡住的）。
        无人值守期间（autoRun）跳过这套守卫，换节时由 watch.js 重新检测。 */
@@ -1692,7 +1709,7 @@
       const auto = !!(opts && opts.auto);
       const retry = auto && !!opts.retry;
       if (!HW.questions?.length) return false;
-      if (!requireCurrentPage()) return false;
+      if (!ensureCurrentPage()) return false;
       const from = Number.isInteger(opts?.fromIndex) ? opts.fromIndex : 0;
       if (from < 0 || from >= HW.questions.length) return false;
       const selected = HW.questions.slice(from, opts?.only ? from + 1 : undefined);
@@ -1779,7 +1796,7 @@
             (rewriteCount ? `，写错 ${rewriteCount} 题将改写` : '') +
             '；只填写不提交）',
         );
-        if (!requireCurrentPage()) return false;
+        if (!ensureCurrentPage()) return false;
         if (!isCurrent()) return false;
         answerPauseReason = '';
         const res = await send('HW_START', { questions, auto, requestId: String(epoch) });
@@ -1976,7 +1993,13 @@
           const isCurrent = () => !stopRequested && epoch === answerEpoch && HW.questions?.[i] === q &&
             (!autoRun || !HW.Watch?.quizDocument || HW.Watch.quizDocument() === doc);
           try {
-            if (!q || !isCurrent() || !requireCurrentPage()) return;
+            if (!q || !isCurrent()) return;
+            if (!requireCurrentPage()) {
+              /* 结构变了（多数是刚才填答案改的 DOM）：立刻回执失败让队列跳过本题继续，
+                 不要沉默——那会让后台干等 30 秒回执超时，把整轮拖停、后面全剩（用户 2026-10-28）。 */
+              chrome.runtime.sendMessage({ type: 'HW_FILLED', payload: { index: payload.index, fillToken: payload.fillToken, ok: false, error: '页面结构已变化，本题跳过' } });
+              return;
+            }
             // 最终比对：页面已写的答案与引擎/缓存答案一致 → 无需点击；不一致（或没写）→ 真实填写
             const live = HW.Extractor.currentAnswer(q);
             const guessed = payload.fallback && /猜选/.test(payload.note || '');
@@ -2000,7 +2023,8 @@
               verified = HW.Filler.verify(q, payload.answer);
             }
             if (!isCurrent()) return;
-            const answerTip = '答案：' + payload.answer + (guessed ? '｜' + payload.note : '');
+            /* 备注一律进题行提示：复核不一致采用初答时，靠这句话提示用户核对。 */
+            const answerTip = '答案：' + payload.answer + (payload.note ? '｜' + payload.note : '');
             setRow(i, verified === false ? 'failed' : payload.kind === 'rewrite' ? 'fixed' : 'filled', answerTip, guessed && verified !== false);
             rows[i] && (rows[i].dataset.tip = answerTip);
             const vTip = verified === 'unknown' ? '｜（页面不暴露选中状态，按点击成功处理）'
