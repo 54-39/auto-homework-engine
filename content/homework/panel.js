@@ -19,9 +19,9 @@
     /* 球心闪电：以前是 Unicode ⚡，Windows 上按彩色 emoji 渲染（偏黄、还带渐变），
        改成内联 SVG 用 currentColor 填纯白（用户 2026-10-23 要求白色闪电）。 */
     .fab .boltsvg{display:block;width:24px;height:24px;fill:currentColor;color:#fff;pointer-events:none;user-select:none;-webkit-user-select:none}
-    .panel{--hw-panel-width:320px;--hw-panel-ratio:2;--hw-panel-space-x:calc(100vw - 32px);--hw-panel-space-y:calc(100vh - 108px);
-      --hw-panel-fit:min(var(--hw-panel-width),var(--hw-panel-space-x),calc(var(--hw-panel-space-y) / var(--hw-panel-ratio)));
-      position:fixed;right:24px;bottom:96px;width:var(--hw-panel-fit);height:calc(var(--hw-panel-fit) * var(--hw-panel-ratio));min-height:0;overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:8px;padding:14px;
+    .panel{--hw-panel-width:350px;--hw-panel-ratio:2.2;--hw-panel-space-x:calc(100vw - 32px);--hw-panel-space-y:calc(100vh - 108px);
+      --hw-panel-fit:min(var(--hw-panel-width),var(--hw-panel-space-x),max(300px,calc(var(--hw-panel-space-y) / var(--hw-panel-ratio))));
+      position:fixed;right:24px;bottom:96px;width:var(--hw-panel-fit);height:min(calc(var(--hw-panel-fit) * var(--hw-panel-ratio)),var(--hw-panel-space-y));min-height:0;overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:8px;padding:10px;
       border-radius:14px;z-index:2147483646;color:#111827;
       background:
         radial-gradient(circle 300px,rgba(37,99,235,.10),rgba(37,99,235,0) 70%) right -40px top -40px / 600px 600px no-repeat,
@@ -31,9 +31,7 @@
     .hidden{display:none!important}
     .tip{position:fixed;z-index:2147483647;max-width:230px;padding:6px 9px;border-radius:8px;background:#fff;border:1px solid #E3E8EF;color:#374151;font-size:11px;line-height:1.5;white-space:pre-wrap;
       box-shadow:0 10px 24px -8px rgba(15,23,42,.22),0 2px 6px -2px rgba(15,23,42,.08);pointer-events:none}
-    /* 外框宽高共用同一尺寸：页面缩放或视口变化时保持比例，内容过多在内部滚动。 */
-    .panel.apiopen,.panel.watchmode{--hw-panel-width:360px}
-    .panel.bridgemode .list{height:clamp(170px,29vh,240px)}
+    /* 普通模式共用参考图比例；小窗口保留控件宽度，内容过多在内部滚动。 */
     .panel.watchmode .apitoggle,.panel.watchmode .apisec{display:none}
     header{display:flex;flex-wrap:wrap;align-items:center;gap:6px;cursor:move;user-select:none;touch-action:none;flex:none;min-height:22px}
     header b{font-size:15px;font-weight:700;color:#111827}
@@ -166,7 +164,7 @@
     .summary .smsg{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .summary.warn{background:#FEF2F2;color:#DC2626;font-weight:600}
     .summary .shint{margin-left:auto;font-size:10.5px;color:#9AA1A9;flex:none;font-weight:400}
-    .list{flex:none;height:clamp(120px,20vh,170px);overflow:auto;border:1px solid #CCD2D9;background:#fff;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:4px}
+    .list{flex:1.6 1 170px;min-height:120px;overflow:auto;border:1px solid #CCD2D9;background:#fff;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:4px}
     .item{display:flex;gap:8px;align-items:center;padding:0 6px;min-height:30px;cursor:pointer;flex:none;border-radius:4px}
     .item[role="button"]:focus-visible{outline:1px solid #64748B;outline-offset:-2px}
     .item:hover{background:#F5F8FF}
@@ -189,13 +187,13 @@
     .item .st.s-fixed{color:#7C3AED}
     .item .st.s-skipped{color:#059669}
     .item .st.s-failed{color:#DC2626}
-    .logwrap{display:flex;flex-direction:column;gap:2px;flex:1 0 96px;min-height:96px}
+    .logwrap{display:flex;flex-direction:column;gap:2px;flex:1 1 160px;min-height:96px;max-height:min(180px,calc(var(--hw-panel-space-y) * .3))}
     .loghd{display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:500;color:#374151;flex:none}
     .issuewarn{flex:none;padding:8px;border-radius:6px;background:#FEF2F2;color:#B91C1C;font-size:11px;line-height:1.6;overflow-wrap:anywhere}
     .log{font-size:10.5px;color:#7C848C;flex:1 1 0;min-height:60px;overflow:auto;line-height:1.6;white-space:pre-wrap}
     .panel.expanded{--hw-panel-width:640px;--hw-panel-ratio:1.25;--hw-panel-space-x:94vw;--hw-panel-space-y:92vh;left:50%!important;top:3vh!important;transform:translateX(-50%)}
     .panel.expanded .item{min-height:34px}
-    @media (max-height:600px){.panel{--hw-panel-space-y:calc(100vh - 32px)}.watchview{flex:none}.logwrap{flex:none}.log{max-height:96px}}
+    @media (max-height:600px){.panel{--hw-panel-space-y:calc(100vh - 108px);--hw-panel-fit:min(var(--hw-panel-width),var(--hw-panel-space-x));height:min(calc(var(--hw-panel-fit) * var(--hw-panel-ratio)),var(--hw-panel-space-y))}.list{flex:none;height:120px}.watchview{flex:none}.logwrap{flex:none}.log{max-height:96px}}
     .modal{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:2147483647;display:flex;align-items:center;justify-content:center}
     .mbox{background:#fff;border:1px solid #CCD2D9;border-radius:12px;padding:16px;width:300px;font-size:12px;line-height:1.7;color:#1f2328;box-shadow:0 16px 36px -8px rgba(15,23,42,.2)}
     .mbox b{font-size:13px;display:block;margin-bottom:6px}
@@ -1183,7 +1181,7 @@
       /* offsetWidth/Height 是取整值，面板实际高度常带小数（681.14），用整数算上限会底边溢出 0.14px；
          这里按实际矩形向下取整，保证面板整块都在视口内。 */
       const box = target.getBoundingClientRect();
-      const maxX = Math.floor(window.innerWidth - (box.width || target.offsetWidth));
+      const maxX = Math.floor(document.documentElement.clientWidth - (box.width || target.offsetWidth) - 4);
       const maxY = Math.floor(window.innerHeight - (box.height || target.offsetHeight));
       target.style.left = Math.max(4, Math.min(x, Math.max(4, maxX))) + 'px';
       target.style.top = Math.max(4, Math.min(y, Math.max(4, maxY))) + 'px';

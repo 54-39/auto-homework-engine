@@ -38,6 +38,11 @@ assert.throws(() => parseAnswer({ ...qSync, options: [qSync.options[1], { key: '
 /* multi：完整文字反查，顺序无关 */
 assert.deepEqual(parseAnswer(qMulti, '{"answers":["4","2"]}'), 'AC');
 assert.deepEqual(parseAnswer(qMulti, '{"answers":["2","4"]}'), 'AC', '保序但内部排序输出');
+const qComma = { type: 'multi', stem: '选择对应选项', options: [
+  { key: 'A', text: 'A. 经济掠夺,以战养战' }, { key: 'B', text: 'B. 制造惨案，屠杀中国人民，蹂躏中国妇女' },
+] };
+assert.equal(parseAnswer(qComma, '{"answers":["经济掠夺，以战养战","制造惨案,屠杀中国人民,蹂躏中国妇女"]}'), 'AB', '中文与英文逗号不导致有效选项失配');
+assert.throws(() => parseAnswer(qComma, '{"answers":["题面不存在的文字"]}'), /AI 答案/, '统一逗号不放宽到题外选项');
 /* judge */
 assert.deepEqual(parseAnswer(qJudge, '{"answers":["正确"]}'), '对');
 assert.deepEqual(parseAnswer(qJudge, '{"answers":["错误"]}'), '错');

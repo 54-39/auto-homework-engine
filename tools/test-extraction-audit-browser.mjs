@@ -5,6 +5,7 @@ import path from 'node:path';
 import http from 'node:http';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {parseAnswer} from '../background/engines/engine.js';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const sourceRoot=process.env.EXTRACTION_SOURCE_ROOT?path.resolve(process.env.EXTRACTION_SOURCE_ROOT):root;
 const output=path.join(root,'.tmp-extraction-audit-tests');fs.mkdirSync(output,{recursive:true});
@@ -63,6 +64,28 @@ try{
   await setup('<input type="hidden" id="markDataStr" data=\'{"token":"SYNTHETIC_AUTH_PAYLOAD_94"}\'><span class="num_option" data="true">对</span><div data="SYNTHETIC_OPAQUE_PAYLOAD_94">题目正文</div>');
   const result=await evaluate(`(()=>{const s=HW.Diagnostics.capture(),h=s.documents[0].html;return{auth:h.includes('SYNTHETIC_AUTH_PAYLOAD_94'),opaque:h.includes('SYNTHETIC_OPAQUE_PAYLOAD_94'),truth:h.includes('data="true"'),body:h.includes('题目正文')};})()`);
   assert.equal(result.auth,false);assert.equal(result.opaque,false);assert.equal(result.truth,true);assert.equal(result.body,true);
+ });
+ await check('章节测验样式选项保留多选题型，真实JSON回复可填写并精确回读',async()=>{
+  const cases=[
+   {stem:'4. [多选题] 为什么日本要侵略中国？',options:['侵略者的本性','日本国内危机','英美经济危机','中国内部问题'],answers:['侵略者的本性','日本国内危机','中国内部问题'],expected:'ABD'},
+   {stem:'5. [多选题] 日军侵华主要有哪些滔天罪行？',options:['军事侵略与占领','制造惨案,屠杀中国人民,蹂躏中国妇女','实施细菌战和毒气战','经济掠夺,以战养战','对沦陷区实行殖民统治'],answers:['军事侵略与占领','制造惨案，屠杀中国人民，蹂躏中国妇女','实施细菌战和毒气战','经济掠夺，以战养战','对沦陷区实行殖民统治'],expected:'ABCDE'},
+   {stem:'8. [多选题] 中华民族形成了以爱国主义为核心的伟大民族精神。',options:['爱国主义','团结统一','爱好和平','勤劳勇敢','自强不息'],answers:['团结统一','爱好和平','勤劳勇敢','自强不息'],expected:'BCDE'},
+  ];
+  const markup=(item,type='multiple-choice')=>`<div class="question-item ${type}"><p class="question-name">${item.stem}</p><ul class="option-list">${item.options.map((text,i)=>`<li><span class="option-letter">${'ABCDE'[i]}</span> <p class="option-result">${text}</p></li>`).join('')}</ul></div>`;
+  await setup(cases.map(item=>markup(item)).join('')+markup({stem:'6. [单选题] 国民党主要在哪个战场抗战？',options:['正面战场','敌后战场']},'single-choice'));
+  await evaluate(fs.readFileSync(path.join(sourceRoot,'content/homework/ai-extractor.js'),'utf8'));
+  const questions=await evaluate(`window.quiz=HW.Extractor.extract();quiz.map(q=>q.meta)`);
+  assert.deepEqual(questions.map(q=>q.type),['multi','multi','multi','choice']);
+  const answers=cases.map((item,i)=>parseAnswer(questions[i],JSON.stringify({answers:item.answers||item.options})));
+  assert.deepEqual(answers,cases.map(item=>item.expected));
+  await evaluate(`sessionStorage.removeItem('hwSelClass:'+location.host);quiz[0].el.labels[2].clickEl.classList.add('active');document.querySelectorAll('.option-list > li').forEach(row=>row.addEventListener('click',()=>{const single=row.closest('.single-choice');if(single)single.querySelectorAll('li').forEach(el=>el.classList.remove('active'));row.classList.toggle('active')}))`);
+  assert.equal(await evaluate('HW.Extractor.currentAnswer(quiz[0])'),'C');
+  assert.equal(await evaluate('HW.Filler.verify(quiz[1],"ABCDE")'),false,'可读但未选中的样式选项不能当作状态未知');
+  for(let i=0;i<answers.length;i++){
+   const state=await evaluate(`(async()=>{const q=quiz[${i}],answer=${JSON.stringify(answers[i])};await HW.Filler.fill(q,answer);await HW.Filler.fill(q,answer);return {selected:q.el.labels.filter(l=>l.clickEl.classList.contains('active')).map(l=>l.key).join(''),current:HW.Extractor.currentAnswer(q),verified:HW.Filler.verify(q,answer)};})()`);
+   assert.deepEqual(state,{selected:answers[i],current:answers[i],verified:true});
+  }
+  assert.throws(()=>parseAnswer(questions[3],'{"answers":["正面战场","敌后战场"]}'),/AI 答案/,'单选题仍拒绝多个答案');
  });
  fs.writeFileSync(path.join(output,process.env.EXTRACTION_SOURCE_ROOT?'baseline-results.json':'results.json'),JSON.stringify(results,null,2));assert.ok(results.every(r=>r.ok),'提取/填写审查回归未全部通过');console.log(results.length+' extraction audit browser groups passed (offline).');
 }finally{

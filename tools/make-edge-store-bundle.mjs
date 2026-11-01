@@ -25,7 +25,10 @@ function replaceOnce(text, before, after, label) {
   return text.slice(0, at) + after + text.slice(at + before.length);
 }
 function copyDir(name) {
-  fs.cpSync(path.join(ROOT, name), path.join(stage, name), { recursive: true });
+  fs.cpSync(path.join(ROOT, name), path.join(stage, name), {
+    recursive: true,
+    filter: (source) => source !== path.join(ROOT, '_locales', '_locales'),
+  });
 }
 
 try {
@@ -124,7 +127,19 @@ try {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   if (fs.existsSync(outPath)) fs.rmSync(outPath, { force: true });
   const quote = (value) => `'${value.replace(/'/g, "''")}'`;
-  const zipCommand = `Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::CreateFromDirectory(${quote(stage)}, ${quote(outPath)}, [System.IO.Compression.CompressionLevel]::Optimal, $false)`;
+  const zipCommand = `
+    $ErrorActionPreference = 'Stop'
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $stagePath = ${quote(stage)}
+    $archive = [System.IO.Compression.ZipFile]::Open(${quote(outPath)}, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+      Get-ChildItem -LiteralPath $stagePath -Recurse -File | ForEach-Object {
+        $entryName = $_.FullName.Substring($stagePath.Length + 1).Replace([char]92, [char]47)
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $_.FullName, $entryName, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+      }
+    } finally { $archive.Dispose() }
+  `;
   execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', zipCommand], { stdio: 'inherit' });
   console.log(`Edge 商店包已生成：${outPath}`);
   console.log(`版本：${version}；大小：${fs.statSync(outPath).size} bytes`);

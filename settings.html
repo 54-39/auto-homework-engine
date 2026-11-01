@@ -56,6 +56,9 @@
   .issue-list small{display:block;margin:4px 0;color:var(--text-2);font-variant-numeric:tabular-nums}
   .issue-list pre{margin:10px 0 0;font:12px/1.7 system-ui,'Microsoft YaHei',sans-serif;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text-2)}
   .diag-heading{margin:24px 0 10px;font-size:15px;font-weight:600}
+  .diag-steps{margin:0 0 12px;padding-left:20px;color:var(--text-2)}
+  .diag-steps li+li{margin-top:6px}
+  .diag-feedback a{color:var(--accent);text-underline-offset:3px;overflow-wrap:anywhere}
   #issueMsg:empty{display:none}
   .issue-pages{display:flex;gap:8px;align-items:center;margin-top:12px}
   .issue-pages[hidden]{display:none}
@@ -315,6 +318,16 @@
         <p class="check"><label><input type="checkbox" id="diagnosticsEnabled" disabled> 记录诊断</label></p>
         <p class="hint">默认关闭。开启后才记录异常与页面现场；关闭后不再新增，已有记录仍可查看和导出。</p>
         <div class="msg" id="diagnosticsMsg" role="status" aria-live="polite"></div>
+        <div class="diag-feedback" aria-labelledby="diagFeedbackHeading">
+          <h3 class="diag-heading" id="diagFeedbackHeading">题目问题反馈</h3>
+          <ol class="diag-steps">
+            <li>先勾选上方「记录诊断」，再回到出错的作业页面。</li>
+            <li>对做错或填写异常的题目重新作答一遍，让问题再次出现。</li>
+            <li>回到这里，点击「导出异常记录」，将导出的 JSON 文件作为附件发送至 <a href="mailto:477158632@qq.com">477158632@qq.com</a>，并说明哪道题出错、预期答案是什么。</li>
+            <li>最好同时附上题目截图，包含完整题干、选项、插件填写的答案，以及平台显示的正确答案（如有）。截图请自行添加到邮件附件。</li>
+          </ol>
+          <p class="hint">发送前请检查文件和截图，遮挡姓名、学号、手机号、密码、API Key 等个人或敏感信息。诊断在本机记录，是否发送由你决定。</p>
+        </div>
         <p class="count" id="issueCount" role="status" aria-live="polite">正在读取异常记录…</p>
         <div class="actions">
           <button type="button" id="issueExport">导出异常记录</button>

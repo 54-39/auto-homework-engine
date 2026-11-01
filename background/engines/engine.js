@@ -49,6 +49,7 @@ function jsonToAnswer(q, items) {
   /* 比较用的规范化：统一 LaTeX 与 Unicode 写法，再去掉 $、转义反斜杠和全部空白。
      题干/选项里的公式保留成 $\{1,2\}$ / $A \cup B$，模型通常回 "{1,2}" / "A ∪ B"，不统一就永远对不上。 */
   const cmp = (s) => norm(String(s || ''))
+    .replace(/，/g, ',')
     .replace(/\\([{}()%$&#_])/g, '$1')
     .replace(/\\(?:left|right|quad|qquad)\b/g, '')
     .replace(/\\(?:,|;|!)/g, '')

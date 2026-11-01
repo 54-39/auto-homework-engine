@@ -206,7 +206,10 @@
           // 超星题型编码（隐藏 answertype input）：0 单选 1 多选 2 填空 3 判断 4 简答——官方值优先于猜测
           const typeCode = (block.querySelector('input[type=hidden][name^="answertype"]') || {}).value;
           const typeByCode = { 0: 'choice', 1: 'multi', 3: 'judge' };
-          const type = isJudge ? 'judge' : typeByCode[typeCode] || 'choice';
+          const typeText = norm(block.getAttribute('typename') || block.querySelector('.question-name .grey-text')?.textContent).replace(/[\[\]【】]/g, '');
+          const typeByMarkup = block.matches('.multiple-choice') ? 'multi' : block.matches('.single-choice') ? 'choice'
+            : { '多选题': 'multi', '单选题': 'choice', '判断题': 'judge' }[typeText];
+          const type = isJudge ? 'judge' : typeByCode[typeCode] || typeByMarkup || 'choice';
           let stem = '';
           /* 超星题干在 .Zy_TItle/.mark_name 里：走 textOf 才能把公式图和混淆字体一起还原，
              纯 range.toString() 会丢掉公式、留下乱码字形。 */
@@ -318,6 +321,7 @@
   }
   function labelState(l) {
     if (l.clickEl?.hasAttribute('aria-checked')) return l.clickEl.getAttribute('aria-checked') === 'true';
+    if (l.clickEl?.matches('.question-item.single-choice .option-list > li,.question-item.multiple-choice .option-list > li')) return l.clickEl.classList.contains('active');
     return !!(l.input && l.input.checked) || learnedHit(l.clickEl) || learnedHit(l.input && l.input.closest('label'));
   }
 

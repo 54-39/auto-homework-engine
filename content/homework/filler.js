@@ -45,6 +45,7 @@
   }
   function stateOf(l) {
     if (l.clickEl?.hasAttribute('aria-checked')) return l.clickEl.getAttribute('aria-checked') === 'true';
+    if (l.clickEl?.matches('.question-item.single-choice .option-list > li,.question-item.multiple-choice .option-list > li')) return l.clickEl.classList.contains('active');
     return !!(l.input && l.input.checked) || looksSelected(l.clickEl) || looksSelected(l.input && l.input.closest('label'));
   }
   /* 学习：对比点击前后选项 class，把"正确答案选项新出现的类"记为该站点的选中标记 */
@@ -93,9 +94,9 @@
     if (wantChecked !== isSel) {
       if (input && clickEl === input) {
         input.click(); // 原生 input：radio 重复点击不会取消、checkbox 由 wantChecked 精确控制
-      } else {
+      } else if (wantChecked) {
         toggleSafeClick(clickEl);
-      }
+      } else clickEl.click();
     }
     if (input && wantChecked && !input.checked) {
       input.checked = true; // 兜底：个别框架拦截了 click 事件
@@ -396,7 +397,8 @@
       if (type === 'choice' || type === 'multi') {
         const wants = lettersOf(ans);
         const states = q.el.labels.map((l) => stateOf(l));
-        const canRead = !!learnedSelClass() || q.el.labels.some((l) => l.input || l.clickEl?.hasAttribute('aria-checked'));
+        const canRead = !!learnedSelClass() || q.el.labels.some((l) => l.input || l.clickEl?.hasAttribute('aria-checked') ||
+          l.clickEl?.matches('.question-item.single-choice .option-list > li,.question-item.multiple-choice .option-list > li'));
         if (!canRead && !states.some(Boolean)) return 'unknown';
         return q.el.labels.every((l, i) => states[i] === wants.includes(l.key));
       }
@@ -404,7 +406,8 @@
         const looksFalse = /错|误|×|✘|false/i.test(ans);
         const target = q.el.labels.find((l) => (looksFalse ? JUDGE_FALSE : JUDGE_TRUE).test(plainLabel(l.text)));
         if (!target) return 'unknown';
-        const canRead = !!learnedSelClass() || q.el.labels.some((l) => l.input || l.clickEl?.hasAttribute('aria-checked'));
+        const canRead = !!learnedSelClass() || q.el.labels.some((l) => l.input || l.clickEl?.hasAttribute('aria-checked') ||
+          l.clickEl?.matches('.question-item.single-choice .option-list > li,.question-item.multiple-choice .option-list > li'));
         const anySel = q.el.labels.some((l) => stateOf(l));
         if (!canRead && !anySel) return 'unknown';
         return stateOf(target);
