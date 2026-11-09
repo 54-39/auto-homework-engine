@@ -74,7 +74,7 @@ async function checks() {
   });
   await check('手动接口和豆包间隔输入框统一圆角标签，聚焦无外圈', async () => {
     $('apiDetails').open = true;
-    for (const id of ['apiKey', 'model', 'baseURL', 'delayMin', 'delayMax']) {
+    for (const id of ['apiKey', 'baseURL', 'delayMin', 'delayMax']) {
       select('engine', id.startsWith('delay') ? 'bridge' : 'api');
       const input = $(id), label = document.querySelector(`label[for="${id}"]`);
       input.focus(); await wait(220);
@@ -83,7 +83,22 @@ async function checks() {
       ok(parseFloat(style.borderTopLeftRadius) >= input.clientHeight / 2, id + ' 圆角不一致');
       ok(label.getBoundingClientRect().bottom <= input.getBoundingClientRect().top + 1, id + ' 标签未浮起');
     }
+    const trig = $('model-trigger');
+    ok(trig && parseFloat(getComputedStyle(trig).borderTopLeftRadius) >= trig.clientHeight / 2, '模型下拉两端圆弧');
     select('engine', 'api'); $('apiDetails').open = false; document.activeElement.blur();
+  });
+  await check('模型下拉按接口地址所属服务商给出，不串服务商', async () => {
+    $('apiDetails').open = true; select('provider', 'openai');
+    const labels = () => [...$('model').options].map(o => o.textContent);
+    ok(!$('model-trigger').disabled, '模型下拉加载后应可用');
+    $('baseURL').value = 'https://api.deepseek.com/v1'; $('baseURL').dispatchEvent(new Event('change'));
+    ok(labels().includes('deepseek-chat') && !labels().includes('glm-4-flash'), 'DeepSeek 地址出现了别家模型');
+    ok(labels().join(',') === 'deepseek-flash,deepseek-chat,deepseek-reasoner', 'DeepSeek 下拉应为 flash、chat、reasoner 三项');
+    $('baseURL').value = 'https://open.bigmodel.cn/api/paas/v4'; $('baseURL').dispatchEvent(new Event('change'));
+    ok(!labels().includes('deepseek-chat') && labels().includes('glm-4-flash'), '换智谱后仍列 DeepSeek 模型');
+    ok($('model').value === 'glm-4-flash');
+    $('baseURL').value = 'https://api.deepseek.com/v1'; $('baseURL').dispatchEvent(new Event('change'));
+    $('apiDetails').open = false;
   });
   await check('设置复选框使用一致的中性色，禁用下拉保持禁用外观', async () => {
     for (const input of document.querySelectorAll('input[type="checkbox"]')) {
@@ -147,7 +162,7 @@ async function checks() {
   });
   await check('明确展开自定义接口时临时Key尊重手动配置，拒绝域名权限不会写配置', async () => {
     $('apiDetails').open = true; select('provider', 'openai');
-    $('baseURL').value = 'https://custom.example/v1'; $('model').value = 'custom-model'; $('apiKey').value = 'fixture-custom-7abc';
+    $('baseURL').value = 'https://custom.example/v1'; select('model', '__custom'); $('modelCustom').value = 'custom-model'; $('apiKey').value = 'fixture-custom-7abc';
     window.testDenyPermission = true; await click('tempKey');
     ok(testConfig.api.apiKey === 'fixture-new-9key' && $('keyMsg').classList.contains('err'));
     window.testDenyPermission = false; await click('tempKey');
@@ -157,16 +172,16 @@ async function checks() {
     await click('test'); ok($('testMsg').classList.contains('ok'));
     window.testFailure = 'TEST_API'; await click('test'); ok($('testMsg').classList.contains('err') && !$('test').disabled); window.testFailure = null;
   });
-  await check('普通设置保存二次判断和简答策略，保留当前Key且不将输入框新Key悄悄入库', async () => {
-    $('verify2').checked = false; $('subjMode').value = 'keep'; $('apiKey').value = 'fixture-not-saved';
+  await check('普通设置保存简答策略，保留当前Key且不将输入框新Key悄悄入库', async () => {
+    ok(!$('verify2')); $('subjMode').value = 'keep'; $('apiKey').value = 'fixture-not-saved';
     await click('save');
     const payload = testCalls.findLast(x => x.type === 'SET_CONFIG').payload;
-    ok(!('apiKey' in payload.api) && !testConfig.verify2 && testConfig.subjMode === 'keep');
+    ok(!('apiKey' in payload.api) && !('verify2' in payload) && testConfig.subjMode === 'keep');
     ok(testConfig.api.apiKey === 'fixture-custom-7abc' && testKeys.length === 2 && $('msg').textContent.includes('新粘贴'));
     $('apiKey').value = '';
   });
   await check('豆包配置按引擎出现，间隔范围有校验且正常保存', async () => {
-    select('engine', 'bridge'); ok($('apiFields').hidden && !$('bridgeFields').hidden && $('verify2').disabled);
+    select('engine', 'bridge'); ok($('apiFields').hidden && !$('bridgeFields').hidden);
     $('delayMin').value = '5000'; $('delayMax').value = '3000'; await click('save'); ok($('msg').classList.contains('err'));
     ok(!$('newChat'), '不应再显示每题新开对话开关');
     $('delayMax').value = '9000'; await click('save');

@@ -10,10 +10,13 @@ let receive;
 const logs = [], writes = [], issues = [], messages = [];
 const context = vm.createContext({
   autoRun: true, autoDocument: null, answerEpoch: 1, stopRequested: false, detecting: false, queueInfo: null,
+  answerIndexes: [], rewriteConfirm: true, rewritePending: new Map(),
   log: text => logs.push(text), reportIssue: (...args) => issues.push(args),
   setRow() {}, setBusy() {}, setSummary() {}, setWatchLine() {}, refreshQueueInfo() {},
   requireCurrentPage: () => true, answersMatch: () => false,
-  rows: [{ dataset: {} }], els: { panel: { classList: { remove() {} } } },
+  revealAutoCollapsed() {}, showIssueFailure() {},
+  rows: [{ dataset: {} }], els: { panel: { classList: { remove() {} } },
+    guessbody: { textContent: '' }, guessmodal: { open: false, showModal() { this.open = true; } } },
   HW: { questions: [{ meta: { type: 'choice', stem: '测试题目' } }], Extractor: { currentAnswer: () => null },
     Filler: { fill: async () => writes.push('filled'), verify: () => true } },
   chrome: { runtime: { onMessage: { addListener: fn => { receive = fn; } }, sendMessage: msg => { messages.push(msg); return Promise.resolve({ ok: true }); } } },

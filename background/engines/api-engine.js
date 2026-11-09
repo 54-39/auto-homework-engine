@@ -2,7 +2,8 @@
    - openai：POST {base}/chat/completions（OpenAI 兼容，DeepSeek/智谱/Kimi/火山/通义 等）
    - anthropic：POST {base}/v1/messages（Claude 系协议，火山 Coding Plan / Z.ai）
    - 自动探测：粘贴 Key 后并行尝试已知接口，谁先通过鉴权用谁（结果按 Key 尾号记住） */
-import { buildMessages, parseAnswer, buildMultiVerify, buildJudgeVerify, parseJudgeVerify } from './engine.js';
+import { buildMessages, parseAnswer } from './engine.js';
+import { attachImages, buildBatchMessages, parseBatchAnswers } from './batch.js';
 
 export function sanitizeKey(k) {
   return String(k || '').replace(/[^\x21-\x7E]/g, '').trim();
@@ -25,7 +26,7 @@ function keyKind(k) {
 const TIMEOUT = 120000;
 
 const OPENAI_PRESETS = [
-  { baseURL: 'https://api.deepseek.com/v1', models: ['deepseek-chat'] },
+  { baseURL: 'https://api.deepseek.com/v1', models: ['deepseek-flash', 'deepseek-chat', 'deepseek-reasoner'] },
   { baseURL: 'https://ark.cn-beijing.volces.com/api/coding/v3', models: ['doubao-seed-code', 'kimi-k2-thinking', 'deepseek-v3-2', 'glm-4-7', 'doubao-seed-2-0-code'] },
   { baseURL: 'https://ark.cn-beijing.volces.com/api/v3', models: ['doubao-seed-1-6-flash-250815'] },
   { baseURL: 'https://open.bigmodel.cn/api/paas/v4', models: ['glm-4-flash'] },
@@ -37,7 +38,7 @@ const ANTHROPIC_PRESETS = [
   { baseURL: 'https://api.z.ai/api/anthropic', models: ['glm-4.6'] },
 ];
 
-async function chatOpenAI(cfg, messages, maxTokens) {
+async function chatOpenAI(cfg, messages, maxTokens, trace) {
   const url = String(cfg.baseURL || '').replace(/\/+$/, '') + '/chat/completions';
   const key = sanitizeKey(cfg.apiKey);
   if (!key) throw new Error('API Key 清理后为空（可能全是中文/全角字符），请重新复制粘贴');
@@ -72,8 +73,12 @@ async function chatOpenAI(cfg, messages, maxTokens) {
         throw err;
       }
       const data = await res.json();
-      const content = data?.choices?.[0]?.message?.content;
+      const message = data?.choices?.[0]?.message;
+      const content = message?.content;
       if (!content) throw new Error('接口返回内容为空');
+      /* 推理模型（deepseek-reasoner 等）把思考过程放在 reasoning_content；
+         普通模型没有该字段，trace 保持空。 */
+      if (trace) trace.reasoning = String(message?.reasoning_content || message?.reasoning || '');
       return content;
     } finally {
       clearTimeout(timer);
@@ -180,42 +185,27 @@ function maxTokensFor(q) {
   return q.writing ? 4096 : q.type === 'subjective' ? 2048 : 1024;
 }
 
-async function callIface(cfg, messages, maxTokens) {
+async function callIface(cfg, messages, maxTokens, trace) {
   if (cfg.iface === 'anthropic') {
     const [sys, ...rest] = messages;
-    return await chatAnthropic(cfg, rest, maxTokens, sys.content);
+    const mapped = rest.map(message => Array.isArray(message.content) ? { ...message, content: message.content.map(part =>
+      part.type === 'image_url' ? { type: 'image', source: { type: 'base64', media_type: part.image_url.url.slice(5, part.image_url.url.indexOf(';')), data: part.image_url.url.slice(part.image_url.url.indexOf(',') + 1) } } : part) } : message);
+    return await chatAnthropic(cfg, mapped, maxTokens, sys.content);
   }
-  return await chatOpenAI(cfg, messages, maxTokens);
+  return await chatOpenAI(cfg, messages, maxTokens, trace);
 }
 
 async function run(q, endpoint, maxTokens, opts = {}) {
-  const msgs = buildMessages(q, { bestEffort: opts.auto === true });
+  const msgs = attachImages(buildMessages(q, { bestEffort: opts.auto === true }), q._images);
   const cfg = { ...endpoint, apiKey: sanitizeKey(endpoint.apiKey) };
-  let content = await callIface(cfg, msgs, maxTokens);
+  const trace = {};
+  const content = await callIface(cfg, msgs, maxTokens, trace);
   let answer;
   try { answer = parseAnswer(q, content); }
   catch (e) { e.answerPreview = content; e.code = 'HW_ANSWER_UNAVAILABLE'; throw e; }
-  let note = '';
-  /* 返回未确认原因与初答，刷课可采用初答或猜选兜底；人工解题保持失败即停。 */
-  if (['multi', 'judge'].includes(q.type) && answer && opts.verify2 !== false) {
-    let verification = '';
-    let received = false;
-    try {
-      const messages = q.type === 'multi' ? buildMultiVerify(q, answer) : buildJudgeVerify(q, answer);
-      verification = await callIface(cfg, messages, 1024);
-      received = true;
-      const checked = q.type === 'judge' ? parseJudgeVerify(verification) : parseAnswer(q, verification);
-      if (!checked) throw new Error('复核未给出明确答案');
-      if (checked !== answer) throw new Error(`复核不一致（初答 ${answer} / 复核 ${checked}）`);
-      note = (q.type === 'multi' ? '多选' : '判断题') + '已二次复核确认';
-    } catch (error) {
-      error.answerPreview = '初答：' + content + '\n复核：' + verification;
-      error.candidateAnswer = answer;
-      if (received || opts.auto === true && ![401, 403].includes(error.status)) error.code = 'HW_ANSWER_UNAVAILABLE';
-      throw error;
-    }
-  }
-  return { answer, raw: content, note: note || undefined };
+  /* 单次作答直接采用：同一道题再问一遍模型必然给相同答案，复核没有区分度
+     （用户 2026-11-09 要求去掉）。 */
+  return { answer, raw: content, verified: true, note: 'AI 单次作答，请核对', reasoning: trace.reasoning || '' };
 }
 
 async function withEndpoint(cfg, task) {
@@ -230,7 +220,7 @@ async function withEndpoint(cfg, task) {
   }
 
   // 自动：优先用记住的组合；失效（401/403/404）则重新探测一次
-  const saved = await loadEndpoint(tail);
+  let saved = await loadEndpoint(tail);
   let endpoint = saved || (await detectEndpoint(apiKey, cfg.iface === 'anthropic' ? 'anthropic' : cfg.iface === 'openai' ? 'openai' : undefined));
   if (!saved) await saveEndpoint(tail, endpoint);
   try {
@@ -250,6 +240,15 @@ async function withEndpoint(cfg, task) {
 
 export function answerWithAPI(q, cfg, opts = {}) {
   return withEndpoint(cfg, (endpoint) => run(q, endpoint, maxTokensFor(q), opts));
+}
+
+export function answerBatchWithAPI(items, cfg) {
+  const messages = buildBatchMessages(items);
+  return withEndpoint(cfg, async endpoint => {
+    const trace = {};
+    const raw = await callIface(endpoint, messages, 4096, trace);
+    return { answers: parseBatchAnswers(items, raw), raw, reasoning: trace.reasoning || '' };
+  });
 }
 
 export function requestWithAPI(messages, cfg) {

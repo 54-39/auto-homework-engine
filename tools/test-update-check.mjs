@@ -27,7 +27,8 @@ globalThis.chrome = {
       remove: async (ks) => ks.forEach((k) => delete store[k]),
     },
   },
-  tabs: { query: async () => [], update: async () => {}, sendMessage: async () => {}, create: async (o) => { opened.push(o); } },
+  tabs: { query: async () => [], update: async () => {}, sendMessage: async () => {}, create: async (o) => { opened.push(o); },
+    onUpdated: { addListener: () => {} }, onRemoved: { addListener: () => {} } },
   notifications: { create: () => {}, onClicked: { addListener: () => {} } },
   windows: { update: async () => {} },
 };

@@ -8,7 +8,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),output=path.join(root,'.tmp-formula-encoding');
 fs.mkdirSync(output,{recursive:true});const profile=fs.mkdtempSync(path.join(output,'edge-')),pause=ms=>new Promise(r=>setTimeout(r,ms));
 const sourceFile=process.env.FORMULA_SOURCE_HTML;
-const scripts=['adapters/chaoxing.js','dropdown.js','diagnostics.js','extractor.js','ai-extractor.js','filler.js','../course/watch.js','panel.js'].map(p=>fs.readFileSync(path.join(root,'content/homework',p),'utf8')).join('\n;\n');
+const scripts=['adapters/chaoxing.js','dropdown.js','diagnostics.js','extractor.js','ai-extractor.js','question-images.js','filler.js','../course/watch.js','panel.js'].map(p=>fs.readFileSync(path.join(root,'content/homework',p),'utf8')).join('\n;\n');
 function boot(){
  window.calls=[];window.listeners=[];window.modelPages=[];
  window.chrome={runtime:{onMessage:{addListener:f=>listeners.push(f)},sendMessage:async m=>{

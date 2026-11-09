@@ -51,50 +51,6 @@
     .apitoggle{border:0;background:none;cursor:pointer;font-size:11.5px;color:#374151;font-weight:500;padding:2px 0;text-align:left;flex:none;align-self:flex-start}
     .apitoggle:hover{color:#111827}
     .apisec{display:flex;flex-direction:column;gap:8px;flex:none}
-    /* 二次判断开关＝用户给的组件（switch/slider/title/ball/icon 五个元素、动效全不动）。
-       按用户指定改的颜色：关态轨道浅灰 #D9DEE7，开态轨道**透明＝直接露出面板背景**
-       （开态原为淡浅蓝 #DCE9FB；2026-10-15 用户圈住开态轨道、在 A/B/C 里选定 A「改成和背景一样的颜色」）。
-       ON/OFF 文字随之改深灰 #313033，否则白字在两个浅底上都看不见。
-       球选中时**没有光晕**（用户：「球形外不要带蓝色的光晕」，原来那圈
-       outline:6px rgba(147,197,253,.55) 已删，box-shadow 保持 none）。
-       icon 里是站点原版那颗播放三角 SVG（用户 2026-10-15：「闪电图标改回三角图标，和网站的一样」，
-       并抱怨原来那个 ⚡ 文字能被拖选 → icon 加 user-select:none;pointer-events:none）。
-       icon 用 top/left 50% 与球心重合（用户：「把圆形和三角形的中心重合就行了」）——站点原版的 58%/53%
-       会让三角偏在球心右下 3.08px，转起来是绕球心画小圈；居中后就是原地自转一圈。
-       尺寸只动了长度：高度、球径、字号全部保持组件原基准（font-size:14px、高 2.6em=36.39px、球 36px），
-       width 由 9em 收到 8em（126px→112px）——用户先嫌长，等比缩到 11px 后又改口「不要等比例缩小，
-       让它变短一点点，符合审美」，所以只收长度、不缩球。
-       ⚠ 再要改长度就只改 .switch 的 width：选中时的 left 是 calc(100% - 35px)，会自动跟着贴到右端（左右各溢 1px）。
-       ⚠ 绝对不要加 prefers-reduced-motion 关过渡的规则：用户机器 Windows「动画效果」是关的（SPI_GETCLIENTAREAANIMATION=0），
-       Edge 因此常报 reduce，加了那条整个滑动+旋转动画会直接消失——用户已因此报过一次「没有旋转动画」。 */
-    .v2row{display:flex;align-items:center;gap:8px;flex:none}
-    .v2text{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
-    .v2t{font-size:12px;color:#374151;font-weight:500}
-    .v2h{font-size:11px;color:#9AA1A9}
-    .switch{font-size:14px;position:relative;display:inline-block;width:8em;height:2.6em;flex:none}
-    /* 真 checkbox 只隐形、不移出键盘：组件原来的 display:none 会让开关没法 Tab/Space 操作 */
-    .switch input{position:absolute;top:0;left:0;width:1px;height:1px;opacity:0;margin:0;pointer-events:none}
-    .switch .slider{position:absolute;top:0;left:0;right:0;bottom:0;background-color:#D9DEE7;transition:all .4s;border-radius:30px;cursor:pointer}
-    /* 开态＝和面板背景一模一样（用户 2026-10-15 m08565 选 A）。
-       ⚠ 这里**不能写死任何一个背景色值**：面板背景是渐变（见 .panel 的 background 三条），
-       开关在竖排里随位置不同而不同（实测同一横行上左端 #F7F9FE、右端 #FFFFFF）。
-       所以开态用 background-color:transparent —— 轨道自身不上色，露出底下真正的面板背景，
-       这才是字面意义上的「和背景一样的颜色」，且面板背景以后怎么改都不会再对不上。
-       白球保持纯白：实测背景是 #F6F8FE~#FFFFFF，球与背景仍有约 1.03~1.10 的亮度差，
-       加上球投影和深灰三角，开态的球依然清晰可辨。 */
-    .switch input:checked+.slider{background-color:transparent}
-    .switch input:focus-visible+.slider{outline:2px solid #64748B;outline-offset:2px}
-    /* 文字深灰：轨道改浅灰/淡浅蓝之后，白字对比度只有 1.35/1.22，等于看不见（用户 2026-10-15 报过看不清） */
-    .switch .slider .title{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-weight:600;color:#313033;white-space:nowrap;transition:all .4s;user-select:none}
-    .switch .slider .ball{position:absolute;top:0;left:-1px;width:36px;height:36px;border-radius:50%;background-color:#fff;transition:.4s}
-    /* 图标＝站点原版播放三角（SVG 自带 width/height=25，与站点逐字一致）。不给选、不接鼠标：用户抱怨过 ⚡ 能被拖选。
-       top/left 50% ＝ 与球心重合（用户 2026-10-15：「把圆形和三角形的中心重合就行了」），不再是站点的 58%/53% */
-    .switch .slider .ball .icon{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#313033;font-size:12px;line-height:0;user-select:none;-webkit-user-select:none;pointer-events:none}
-    .switch .slider .ball .icon svg{display:block}
-    .switch input:checked+.slider .title{left:40%}
-    /* ⚠ 球里不能再用 em：面板顶部那条 *{font:12px/1.5 …} 是直接命中每个元素的规则，优先级高于继承，
-       所以 .ball 的 font-size 会被它压成 12px（不是 .switch 的 14px），em 在这里会算错。球固定 36px，用 px 最稳。 */
-    .switch input:checked+.slider .ball{left:calc(100% - 35px);transform:rotate(360deg);outline:none;box-shadow:none}
     .keyrow{display:flex;gap:8px;align-items:center;flex:none;padding-top:14px} /* 顶部留白：浮起后的标签占这里，写死以免聚焦时布局跳 */
     .inputGroup{flex:1;min-width:0;position:relative}
     .inputGroup input{width:100%;height:36px;padding:0 14px;outline:none;caret-color:#2563EB;border:2px solid rgb(200,200,200);border-radius:999px;background:#fff;color:#111827;font-size:12px;transition:border-color .18s ease,box-shadow .18s ease}
@@ -227,16 +183,16 @@
     const y = normAns(t, b);
     return !!x && !!y && x === y;
   };
-  /* 读答案缓存（与后台同规则：题干哈希为键），供"写对跳过/写错改写"判断 */
-  async function cachedAnswer(q) {
+  /* 读答案缓存（与后台同规则：题干+模型为键），供"写对跳过/写错改写"判断 */
+  async function cachedAnswer(q, images = [], salt = 'auto') {
     try {
       const enc = new TextEncoder().encode(
-        JSON.stringify({ v: 2, t: q.meta.type, s: q.meta.stem, o: (q.meta.options || []).map((x) => x.text), b: q.meta.blanks || 0, d: q.meta.slotOptions || [] }),
+        JSON.stringify({ v: 4, m: salt, t: q.meta.type, s: q.meta.stem, o: (q.meta.options || []).map((x) => x.text), b: q.meta.blanks || 0, d: q.meta.slotOptions || [], images }),
       );
       const buf = await crypto.subtle.digest('SHA-256', enc);
       const key = 'c:' + [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 24);
       const o = await chrome.storage.local.get(key);
-      return o[key] ? o[key].answer : null;
+      return o[key]?.verified === true ? o[key].answer : null;
     } catch {
       return null;
     }
@@ -282,16 +238,6 @@
         <div class="updline hidden" data-tip="点击「更新」启动更新事务；下载、验证与回滚状态请在设置页查看，成功后作业页面需 F5"></div>
         <button class="apitoggle hidden">接口 与 API Key</button>
         <div class="apisec hidden">
-          <div class="v2row">
-            <div class="v2text">
-              <span class="v2t">选择题 / 判断题 二次判断</span>
-              <span class="v2h">更稳，但每题多一次 AI 调用</span>
-            </div>
-            <label class="switch" data-tip="开启后：多选与判断题先答一遍，再让 AI 复查一遍；关掉每题省一次调用">
-              <input class="v2input" type="checkbox">
-              <span class="slider"><span class="title">OFF</span><span class="ball"><span class="icon"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="25" height="25" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 18V6l8 6-8 6Z"></path></svg></span></span></span>
-            </label>
-          </div>
           <div class="keyrow">
             <div class="inputGroup">
               <input class="keyinput" id="hw-keyinput" type="password" placeholder=" " required>
@@ -367,7 +313,7 @@
     const els = {
       fab: $('.fab'), panel: $('.panel'), badge: $('.badge'), header: $('header'), settingsbtn: $('.settingsbtn'), collapse: $('.btn-collapse'), expandbtn: $('.expandbtn'),
       keyinput: $('.keyinput'), keylabel: $('.keylabel'), savekey: $('.savekey'), clearkey: $('.clearkey'),
-      keywarn: $('.keywarn'), v2input: $('.v2input'), v2title: $('.switch .title'),
+      keywarn: $('.keywarn'),
       apiToggle: $('.apitoggle'), apisec: $('.apisec'),
       modal: $('.keymodal'), msave: $('.msave'), mtemp: $('.mtemp'), mcancel: $('.mcancel'),
       subjmodal: $('.subjmodal'), subjbody: $('.subjbody'), subjcancel: $('.subjcancel'), subjkeep: $('.subjkeep'), subjrewrite: $('.subjrewrite'),
@@ -613,6 +559,9 @@
     };
     let answerEpoch = 0;
     let answerIndexes = [];
+    /* 单题重问的待确认答案：新答案与页面已填不同时先只提示，再点一次重问才覆盖。 */
+    let rewritePending = new Map();
+    let rewriteConfirm = true; // 设置页「重问时先确认」；关掉后重问直接覆盖
     let detectionSnapshot = null;
     /* 上一次「页面读取」失败的真实原因：刷课日志只转发一句「没识别成功」，
        真正的原因（字体还原不了／题目结构不认识）会丢在面板摘要里，
@@ -729,6 +678,11 @@
     /* 刚填过答案时页面签名会变：requireCurrentPage 第一次会顺带重读一遍，
        这里立刻再判一次，避免「开始」白点一下没反应（用户 2026-10-28 报的剩题场景）。 */
     const ensureCurrentPage = () => requireCurrentPage() || requireCurrentPage();
+    /* 已提交的作业查看页（/work/view，或答题页上出现「我的答案/正确答案」）：题目是只读的，
+       不能作答也不能补识。以前这里照常列出「可处理 N 题」，用户会以为还能写。 */
+    const isReviewPage = () => /\/work\/view\b/i.test(location.pathname) ||
+      (/\/work\//i.test(location.pathname) && !!document.querySelector('.mark_answer,.Py_answer'));
+    HW.isReviewPage = isReviewPage; // 测试切片里没有这段定义，调用处用可选链
     /* 刷课自己点选项就会改动控件的选中状态，页面签名随之变化，于是页面守卫会
        把自己判成「页面已变化」并把题目清空（真实页面 2026-10-20 就是这样卡住的）。
        无人值守期间（autoRun）跳过这套守卫，换节时由 watch.js 重新检测。 */
@@ -1366,23 +1320,7 @@
       hasSavedApiKey = !!key;
       els.keylabel.textContent = key ? `使用中：尾号 ${key.slice(-4)}` : '粘贴 API Key';
       updateKeyWarning();
-      /* 二次判断开关回显（与设置页那个勾选框共用 config.verify2） */
-      setVerify2(cfg?.verify2 !== false);
     };
-    function setVerify2(on) {
-      els.v2input.checked = !!on;
-      els.v2title.textContent = on ? 'ON' : 'OFF';
-    }
-    /* 开关立刻生效、不弹确认：出错就把开关拨回去，别显示与后台不一致的状态 */
-    els.v2input.addEventListener('change', async () => {
-      const on = els.v2input.checked;
-      setVerify2(on);
-      const r = await send('SET_CONFIG', { verify2: on });
-      if (!r?.ok) {
-        setVerify2(!on);
-        log('二次判断开关保存失败：' + (r?.error || '未知错误'));
-      } else log(on ? '已开启二次判断（多选/判断题每题多一次 AI 调用）' : '已关闭二次判断（多选/判断题只答一次）');
-    });
     els.keyinput.addEventListener('input', updateKeyWarning);
     const doSaveKey = async (raw, remember) => {
       const clean = String(raw || '').replace(/[^\x21-\x7E]/g, '').trim();
@@ -1520,6 +1458,10 @@
         detectionSnapshot = snapshot;
         renderDetected(bound.questions, bound.pending, '页面读取');
         watchPage(snapshot);
+        if (HW.isReviewPage?.()) {
+          els.start.disabled = true;
+          setSummary('当前是作业查看页（已提交），题目只读，不能作答', true);
+        }
         setBusy(false);
         return true;
       } catch (e) {
@@ -1540,6 +1482,10 @@
     /* 只有用户点击「检测题目」才调用 AI 识题。 */
     async function detectQuestions() {
       if (detecting || !els.stop.disabled) return false;
+      if (HW.isReviewPage?.()) {
+        log('当前是作业查看页（已提交），题目只读，不能作答或补识；请回到作答页');
+        return false;
+      }
       if (HW.CXAdapter?.discussion(document)) return readPageQuestions();
       const nativeQuestions = autoRun ? HW.questions || [] : [];
       const nativeSnapshot = detectionSnapshot;
@@ -1707,6 +1653,10 @@
       const auto = !!(opts && opts.auto);
       const retry = auto && !!opts.retry;
       if (!HW.questions?.length) return false;
+      if (HW.isReviewPage?.()) {
+        log('当前是作业查看页（已提交），题目只读，不能作答；请回到作答页再开始');
+        return false;
+      }
       if (!ensureCurrentPage()) return false;
       const from = Number.isInteger(opts?.fromIndex) ? opts.fromIndex : 0;
       if (from < 0 || from >= HW.questions.length) return false;
@@ -1714,10 +1664,12 @@
       const force = opts?.force === true;
       const epoch = ++answerEpoch;
       answerIndexes = selected.map((_, i) => from + i);
+      rewritePending.clear();
       stopRequested = false;
       const isCurrent = () => epoch === answerEpoch && !stopRequested;
       try {
         const cfg = (await send('GET_CONFIG'))?.config || {};
+        rewriteConfirm = cfg.rewriteConfirm !== false;
         if (!isCurrent()) return false;
         if (cfg.engine === 'api' && !cfg.api?.apiKey) {
           els.panel.classList.remove('hidden');
@@ -1748,8 +1700,21 @@
         const questions = [];
         for (const q of selected) {
           if (!isCurrent()) return false;
+          let images = [], imageError = '';
+          try {
+            images = await HW.QuestionImages.collect(q, async src => {
+              const result = await send('HW_READ_QUESTION_IMAGE', { src });
+              if (!result?.ok) throw new Error(result?.error || '题图读取失败');
+              return result.data;
+            }, async bounds => {
+              const result = await send('HW_CAPTURE_QUESTION_IMAGE', bounds);
+              if (!result?.ok) throw new Error(result?.error || '题图截图失败');
+              return result.data;
+            });
+          } catch (e) { imageError = String(e.message || e); }
+          if (!isCurrent()) return false;
           const pageAnswer = force ? '' : HW.Extractor.currentAnswer(q); // 硬证据（input.checked / 学习类 / 文本值）
-          const cached = retry || force ? null : await cachedAnswer(q);
+          const cached = retry || force || imageError ? null : await cachedAnswer(q, images, cfg.engine === 'bridge' ? 'bridge' : (cfg.api?.model || 'auto'));
           if (!isCurrent()) return false;
           let decision = 'ask'; // 没写（或读不出）→ 问引擎后填写
           let refAnswer = null;
@@ -1768,7 +1733,7 @@
                 decision = 'ask'; // 太短：视为没写
               }
             } else if (cached) {
-              if (answersMatch(q.meta.type, pageAnswer, cached)) decision = 'skip'; // 写了且正确
+              if (answersMatch(q.meta.type, pageAnswer, cached)) { decision = 'skip'; skipNote = '页面答案与 AI 回答一致，请核对'; }
               else {
                 decision = 'rewrite'; // 写了但不对 → 用参考答案改写
                 refAnswer = cached;
@@ -1778,6 +1743,8 @@
           }
           questions.push({
             ...q.meta,
+            _images: images,
+            _imageError: imageError,
             _retry: retry,
             _refresh: force,
             _decision: decision,
@@ -1790,8 +1757,8 @@
         const rewriteCount = questions.filter((q) => q._decision === 'rewrite').length;
         if (!autoRun) log(
           `开始答题（引擎：${engineName()}，共 ${questions.length} 题` +
-            (skipCount ? `，已写且正确 ${skipCount} 题跳过` : '') +
-            (rewriteCount ? `，写错 ${rewriteCount} 题将改写` : '') +
+            (skipCount ? `，与参考答案一致 ${skipCount} 题跳过` : '') +
+            (rewriteCount ? `，与参考答案不同 ${rewriteCount} 题将改写` : '') +
             '；只填写不提交）',
         );
         if (!ensureCurrentPage()) return false;
@@ -1962,6 +1929,7 @@
     chrome.runtime.onMessage.addListener((msg) => {
       const { type, payload = {} } = msg || {};
       if (type === 'HW_ISSUE_WRITE_FAILED') { showIssueFailure(payload.error || '存储失败'); return; }
+      if (type === 'HW_CAPTURE_READY') { if (HW.questions?.length) log('当前页面截图权限已启用，可重新开始答题'); return; }
       if (type === 'HW_DETECT_PROGRESS') {
         if (detecting && payload.requestId === detectionRequest) setSummary(`AI 正在识别 ${payload.current}/${payload.total} 批…`, false);
       } else if (type === 'HW_STATUS') {
@@ -2002,17 +1970,27 @@
             const live = HW.Extractor.currentAnswer(q);
             const guessed = payload.fallback && /猜选/.test(payload.note || '');
             if (answersMatch(q.meta.type, live, payload.answer)) {
-              setRow(i, 'skipped', '答案：' + payload.answer + (guessed ? '｜' + payload.note : '（你原来的答案正确，保持不动）'), guessed);
+              setRow(i, 'skipped', '答案：' + payload.answer + (guessed ? '｜' + payload.note : '（与 AI 参考答案一致，保持不动）'), guessed);
               if (guessed) log(`第 ${i + 1} 题保留原选项｜${payload.note}`);
-              else if (!autoRun) log(`第 ${i + 1} 题已写且答案正确，无需改写${payload.fromCache ? '（缓存命中）' : ''}`);
+              else if (!autoRun) log(`第 ${i + 1} 题已写且与 AI 参考答案一致，无需改写${payload.fromCache ? '（缓存命中）' : ''}`);
               if (!isCurrent()) return;
               chrome.runtime.sendMessage({ type: 'HW_FILLED', payload: { index: payload.index, fillToken: payload.fillToken, ok: true } });
               return;
             }
+            /* 单题重问不立即覆盖已填答案：换模型重问时，新答案与页面已有答案不同只提示，
+               再点一次重问才采用（避免错误的 API 答案覆盖正确的豆包答案，2026-11-09）。 */
+            if (rewriteConfirm && payload.forceAsk && String(live || '').trim() && rewritePending.get(i) !== payload.answer) {
+              rewritePending.set(i, payload.answer);
+              setRow(i, 'skipped', `原 ${live} ｜ AI 新答案 ${payload.answer}（未覆盖，再点重问采用）`, false);
+              log(`第 ${i + 1} 题 AI 新答案「${payload.answer}」与已填「${live}」不同，未覆盖；再点一次重问将采用 AI 答案`);
+              if (!isCurrent()) return;
+              chrome.runtime.sendMessage({ type: 'HW_FILLED', payload: { index: payload.index, fillToken: payload.fillToken, ok: true } });
+              return;
+            }
+            rewritePending.delete(i);
             // 缓存命中只负责"快速拿到答案"，填写永远真实执行：
             // 已选中的选项由 clickOption 的状态保护自动跳过，不会重复点击/取消。
-            await HW.Filler.fill(q, payload.answer);
-            if (!isCurrent()) return;
+            await HW.Filler.fill(q, payload.answer);            if (!isCurrent()) return;
             // 状态载体可能异步更新（超星点击后延迟写状态/标记）：等待式校验（最多约 3 秒）
             let verified = HW.Filler.verify(q, payload.answer);
             for (let w = 0; w < 12 && verified === false; w++) {
@@ -2028,6 +2006,10 @@
             const vTip = verified === 'unknown' ? '｜（页面不暴露选中状态，按点击成功处理）'
               : verified === false ? autoRun ? '｜校验未通过，本题留空' : '｜校验未通过，已暂停' : '';
             if (!autoRun || verified === false || payload.fallback) log(`第 ${i + 1} 题已填写${payload.fromCache ? '（缓存命中）' : ''}${payload.note ? '｜' + payload.note : ''}${vTip}`);
+            if (!autoRun && payload.reasoning) {
+              const think = String(payload.reasoning).replace(/\s+/g, ' ').trim();
+              log(`第 ${i + 1} 题思考过程：${think.length > 400 ? think.slice(0, 400) + '…' : think}`);
+            }
             chrome.runtime.sendMessage({
               type: 'HW_FILLED',
               payload: { index: payload.index, fillToken: payload.fillToken, ok: verified !== false, error: verified === false ? '填写校验未通过' : undefined },

@@ -23,6 +23,10 @@ for (const q of [qChoice, qMulti, qJudge, qBlank]) {
 /* choice */
 assert.deepEqual(parseAnswer(qChoice, '{"answers":["2"]}'), 'A');
 assert.deepEqual(parseAnswer(qChoice, '```json\n{"answers":["3"]}\n```'), 'B');
+const qFraction = { type: 'choice', stem: '选分数', options: [{ key: 'A', text: '$\\frac{1}{20}$' }, { key: 'B', text: '$\\frac{1}{5}$' }] };
+assert.equal(parseAnswer(qFraction, '{"answers":["1/5"]}'), 'B');
+assert.throws(() => parseAnswer(qFraction, '{"answers":["1/4"]}'), /AI 答案/);
+assert.throws(() => parseAnswer(qFraction, '{"answers":["11/20"]}'), /AI 答案/);
 assert.throws(() => parseAnswer(qChoice, '{"answers":["2","3"]}'), /AI 答案/);
 assert.equal(parseAnswer(qChoice, '瞎写的'), '', '不明确的答案不能猜选项');
 /* 完整选项优先：同步通信不能同时命中半同步通信。 */
@@ -35,6 +39,14 @@ assert.equal(parseAnswer(qSync, '{"answers":["半同步通信"]}'), 'D');
 assert.equal(parseAnswer({ ...qSync, type: 'multi' }, '{"answers":["同步通信","半同步通信"]}'), 'BD');
 assert.throws(() => parseAnswer(qSync, '{"answers":["步通信"]}'), /AI 答案/, '只有片段且命中多个选项仍应停止');
 assert.throws(() => parseAnswer({ ...qSync, options: [qSync.options[1], { key: 'D', text: 'D 同步通信' }] }, '{"answers":["同步通信"]}'), /AI 答案/, '完全相同的多个选项不能猜');
+/* 模型把选项字母一起写进答案（豆包实测 "A. A 胡锦涛"）：剥离前缀后短选项也要命中。 */
+const qShort = { type: 'choice', stem: '以谁为主要代表', options: [
+  { key: 'A', text: 'A 胡锦涛' }, { key: 'B', text: 'B 邓小平' }, { key: 'C', text: 'C 江泽民' }, { key: 'D', text: 'D 习近平' },
+] };
+assert.equal(parseAnswer(qShort, '{"answers":["A. A 胡锦涛"]}'), 'A');
+assert.equal(parseAnswer(qShort, '{"answers":["A 胡锦涛"]}'), 'A');
+assert.equal(parseAnswer(qShort, '{"answers":["胡锦涛"]}'), 'A');
+assert.throws(() => parseAnswer(qShort, '{"answers":["A. 周总理"]}'), /AI 答案/, '剥前缀不能放宽到题外文字');
 /* multi：完整文字反查，顺序无关 */
 assert.deepEqual(parseAnswer(qMulti, '{"answers":["4","2"]}'), 'AC');
 assert.deepEqual(parseAnswer(qMulti, '{"answers":["2","4"]}'), 'AC', '保序但内部排序输出');
@@ -43,9 +55,17 @@ const qComma = { type: 'multi', stem: '选择对应选项', options: [
 ] };
 assert.equal(parseAnswer(qComma, '{"answers":["经济掠夺，以战养战","制造惨案,屠杀中国人民,蹂躏中国妇女"]}'), 'AB', '中文与英文逗号不导致有效选项失配');
 assert.throws(() => parseAnswer(qComma, '{"answers":["题面不存在的文字"]}'), /AI 答案/, '统一逗号不放宽到题外选项');
+/* 模型在 JSON 里写 LaTeX（\leq 不是合法 JSON 转义）：补转义后仍能匹配选项。 */
+const qLeq = { type: 'choice', stem: '分布函数在 x=3 处的值', options: [
+  { key: 'A', text: '$P(X = 3)$' }, { key: 'B', text: '$P(X \\leq 3)$' },
+  { key: 'C', text: '$P(X > 3)$' }, { key: 'D', text: '1 - P(X < 3)' },
+] };
+assert.equal(parseAnswer(qLeq, '{"answers":["B P(X \\leq 3)"]}'), 'B');
 /* judge */
 assert.deepEqual(parseAnswer(qJudge, '{"answers":["正确"]}'), '对');
 assert.deepEqual(parseAnswer(qJudge, '{"answers":["错误"]}'), '错');
+assert.deepEqual(parseAnswer(qJudge, '{"answers":["T. 对"]}'), '对', '判断答案带字母前缀仍可解析');
+assert.deepEqual(parseAnswer(qJudge, '{"answers":["F. 错"]}'), '错');
 assert.throws(() => parseAnswer(qJudge, '{"answers":["maybe"]}'), /AI 答案/);
 /* blank */
 assert.deepEqual(parseAnswer(qBlank, '{"answers":["2","4"]}'), '2;4');

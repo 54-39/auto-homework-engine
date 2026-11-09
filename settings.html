@@ -136,6 +136,11 @@
   .app-form .input-field input:focus~label,.app-form .input-field input:not(:placeholder-shown)~label{top:var(--input-top);transform:translateY(-100%) scale(.9);transform-origin:left bottom}
   .app-form .input-field input:focus~label{color:#374151}
   .app-form .input-field input:focus{border-color:#64748b;outline:none;box-shadow:none}
+  .app-form .input-field .dd.settings-select .ddtrig{height:38px;padding:0 14px;border:2px solid #c8c8c8;border-radius:999px;background:var(--surface);font-size:13px}
+  .app-form .input-field .dd.settings-select .ddtrig:hover{border-color:#9ba7b7}
+  .app-form .input-field .dd.settings-select .ddtrig:focus-visible{border-color:#64748b;box-shadow:none}
+  .app-form .input-field .dd.settings-select .ddtrig:disabled{background:var(--ghost);border-color:#c8c8c8}
+  .app-form .input-field .dd.settings-select+label{top:var(--input-top);transform:translateY(-100%) scale(.9);transform-origin:left bottom;color:#374151}
   .app-form .check{margin:10px 0}
   .app-form .app-note{margin:6px 0 0;color:var(--text-2);font-size:12px;overflow-wrap:anywhere}
   .app-form .app-risk{margin:14px 0 0;color:var(--text-2);font-size:12px}
@@ -207,7 +212,7 @@
                 </select>
               </div>
             </div>
-            <label class="check"><input id="verify2" type="checkbox">选择题 / 判断题二次判断（更稳，每题多一次 AI 调用）</label>
+            <label class="check"><input type="checkbox" id="rewriteConfirm" checked> 单题重问时先确认：新答案与页面已填不同时只提示，再点一次重问才覆盖</label>
 
             <fieldset id="apiFields">
               <legend>接口与 API Key</legend>
@@ -243,7 +248,9 @@
                     <label for="provider">接口类型</label>
                     <select id="provider"><option value="auto">自动识别（推荐）</option><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic Messages</option></select>
                   </div>
-                  <div class="app-field"><div class="input-field"><input id="model" placeholder="deepseek-chat" spellcheck="false"><label for="model">模型名 / 接入点</label></div></div>
+                  <div class="app-field"><div class="input-field"><select id="model"><option value="deepseek-flash">deepseek-flash</option></select><label for="model">模型名 / 接入点</label></div></div>
+                <p class="app-note" id="modelHint"></p>
+                <div class="app-field" id="modelCustomField" hidden><div class="input-field"><input id="modelCustom" placeholder=" " spellcheck="false"><label for="modelCustom">自定义模型名</label></div></div>
                 </div>
                 <div class="app-field"><div class="input-field"><input id="baseURL" type="url" placeholder="https://api.deepseek.com/v1" spellcheck="false"><label for="baseURL">接口地址 baseURL</label></div></div>
                 <p class="app-note" id="providerHint"></p>

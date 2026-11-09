@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 
 const sw = fs.readFileSync(new URL('../background/service-worker.js', import.meta.url), 'utf8');
-const code = sw.slice(sw.indexOf('function cacheKeyOf(q)'), sw.indexOf('async function rerunOne('));
+const code = sw.slice(sw.indexOf('function cacheKeyOf('), sw.indexOf('async function rerunOne('));
 const q = { type: 'choice', stem: '泊松分布参数', options: ['1.5', '2', '2.5', '3'].map((text, i) => ({ key: 'ABCD'[i], text })) };
 async function runCase({ engine = 'bridge', auto = false, error, question = q }) {
   const sent = [], cached = [], issues = [], asked = [];
@@ -20,6 +20,10 @@ async function runCase({ engine = 'bridge', auto = false, error, question = q })
     RISKY_RE: /风控|安全验证|验证码|需要登录/, AUTH_RE: /HTTP 40[13]/,
     pauseRun: async (id, reason) => { ctx.run.cancelled = true; sent.push({ type: 'HW_DONE', payload: { paused: reason } }); },
   });
+  ctx.startBatchQueue = items => ({ get: id => {
+    const item = items.find(entry => entry.id === id);
+    return item ? Promise.resolve().then(() => ctx.askEngine({ engine }, item.question)).then(result => ({ ...result, verified: true })).catch(error => ({ error })) : undefined;
+  } });
   vm.runInContext(code, ctx);
   await ctx.startRun([question, { ...q, stem: '下一题' }], 7, 'https://mooc1-api.chaoxing.com/work', auto, 'round');
   for (let i = 0; i < 100 && !sent.some(m => m.type === 'HW_DONE'); i++) await new Promise(r => setTimeout(r, 5));

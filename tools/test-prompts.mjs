@@ -82,8 +82,8 @@ check('复核解析：跑题回答返回空（保持初答）', parseJudgeVerify
 /* —— api-engine 写作题 token 预算（源码断言，避免为它搭 chrome 桩）—— */
 const src = readFileSync(new URL('../background/engines/api-engine.js', import.meta.url), 'utf8');
 check('写作题 max_tokens 4096', src.includes('q.writing ? 4096'));
-check('API 引擎对判断题跑复核', src.includes("['multi', 'judge'].includes(q.type) && answer && opts.verify2 !== false") && src.includes('buildJudgeVerify(q, answer)'));
-check('API 引擎多选复核受 verify2 开关控制', src.includes("['multi', 'judge'].includes(q.type)") && src.includes('verify2 !== false'));
-check('复核开关默认开启（verify2: true）', readFileSync(new URL('../background/service-worker.js', import.meta.url), 'utf8').includes('verify2: true, // 多选/判断题二次复核开关'));
+check('API 引擎单次作答，不再重复请求复核', !src.includes('buildJudgeVerify(q, answer)') && !src.includes('verify2 !== false'));
+check('API 引擎客观题也只问一次', !src.includes("['choice', 'multi', 'judge'].includes(q.type)"));
+check('后台不再受旧复核开关影响', !readFileSync(new URL('../background/service-worker.js', import.meta.url), 'utf8').includes('cfg.verify2'));
 
 process.exit(bad ? 1 : 0);

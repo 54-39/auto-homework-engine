@@ -466,10 +466,10 @@ async function browserChecks() {
     ok(Math.max(...color) - Math.min(...color) < 40, '刷课勾选态仍是蓝色');
     setExternalConfig({ engine: 'api', panelMode: 'homework' });
   });
-  await check('主面板保留 Key 和二次判断，低频项移入设置且首次保存仍提示风险', async () => {
+  await check('主面板保留 Key 并移除二次判断开关，首次保存仍提示风险', async () => {
     ok(!ui.querySelector('.engineslot, .keylist, .issuebtn'), '引擎、已保存 Key 列表或异常记录仍占据主面板');
     await until(() => ui.querySelector('.apisec').getBoundingClientRect().height > 0);
-    ok(ui.querySelector('.keyinput') && ui.querySelector('.v2input'), '常用 API 操作被移出面板');
+    ok(ui.querySelector('.keyinput') && !ui.querySelector('.v2input'), 'Key 操作丢失或旧开关仍显示');
     ui.querySelector('.settingsbtn').click();
     await until(() => testMessages.some(m => m.type === 'OPEN_SETTINGS' && m.payload?.section === 'app'));
     ok(ui.querySelector('.modeslot .ddtrig'), '模式入口丢失');
@@ -767,13 +767,13 @@ async function browserChecks() {
     ok(parseFloat(getComputedStyle(input).borderTopLeftRadius) >= input.clientHeight / 2);
     input.blur();
   });
-  await check('应用设置的引擎、Key 和二次判断即时回显，换 Key 不清除已识别题目', async () => {
+  await check('应用设置的引擎和 Key 即时回显，换 Key 不清除已识别题目', async () => {
     await setDetectionUI('mixed');
     const questions = [...HW.questions];
     ok(questions.length > 0, '缺少已识别题目，无法验证换 Key 的影响');
     try {
       setExternalConfig({ api: { apiKey: '' }, verify2: false });
-      await until(() => ui.querySelector('.keylabel').textContent === '粘贴 API Key' && !ui.querySelector('.v2input').checked);
+      await until(() => ui.querySelector('.keylabel').textContent === '粘贴 API Key');
       ok(ui.querySelector('.keywarn').getBoundingClientRect().height > 0, '无 Key 时缺少准备提示');
       const drawer = ui.querySelector('.apitoggle');
       drawer.click(); await wait(30);
@@ -782,7 +782,7 @@ async function browserChecks() {
       ok(ui.querySelector('.keywarn a').href === 'https://platform.deepseek.com/api_keys');
       drawer.click(); await wait(30);
       setExternalConfig({ api: { apiKey: 'replacement-3eb1' }, verify2: true });
-      await until(() => ui.querySelector('.keylabel').textContent.includes('3eb1') && ui.querySelector('.v2input').checked);
+      await until(() => ui.querySelector('.keylabel').textContent.includes('3eb1'));
       ok(ui.querySelector('.keywarn').getBoundingClientRect().height === 0, '已启用 Key 后仍显示未配置提示');
       ok(HW.questions.length === questions.length && HW.questions.every((q, i) => q === questions[i]), '换 Key 清除了已有题目');
       setExternalConfig({ panelMode: 'watch' });
@@ -795,7 +795,7 @@ async function browserChecks() {
       ok(ui.querySelector('.apisec').getBoundingClientRect().height === 0, '豆包引擎仍显示 API 配置');
       setExternalConfig({ engine: 'api', panelMode: 'homework', api: { apiKey: 'fixture-only' } });
       await until(() => ui.querySelector('.badge').textContent === 'API' && ui.querySelector('.moderow').getBoundingClientRect().height > 0);
-      ok(ui.querySelector('.keylabel').textContent.includes('only') && ui.querySelector('.v2input').checked);
+      ok(ui.querySelector('.keylabel').textContent.includes('only') && !ui.querySelector('.v2input'));
       ok(ui.querySelector('.btnrow').getBoundingClientRect().height > 0);
     } finally {
       setExternalConfig({ engine: 'api', panelMode: 'homework', api: { apiKey: 'fixture-only' } });
@@ -1132,7 +1132,7 @@ const fixture = `<!doctype html><meta charset="utf-8"><title>AI 识题模拟作�
 <iframe id="nested" srcdoc="<section id='frameQuestion'><h3>嵌入页面的问答题</h3><textarea id='frameText'></textarea></section>"></iframe>
 <section id="sort"><h3>拖动完成排序</h3><button>甲</button><button>乙</button></section><input type="password" value="SECRET_PASSWORD"><input name="apiKey" value="SECRET_TOKEN">
 </main><script>(${fixtureBoot.toString()})();</script>`;
-const sources = ['adapters/chaoxing.js', 'dropdown.js', 'diagnostics.js', 'extractor.js', 'ai-extractor.js', 'filler.js', '../course/watch.js', 'panel.js']
+const sources = ['adapters/chaoxing.js', 'dropdown.js', 'diagnostics.js', 'extractor.js', 'ai-extractor.js', 'question-images.js', 'filler.js', '../course/watch.js', 'panel.js']
   .map((p) => {
     const code=fs.readFileSync(path.join(root, 'content/homework', p), 'utf8');
     return p==='../course/watch.js'?code.replace('  HW.Watch = {','  HW.Watch = { _completionTest: { runQuizzes, setOn(value) { on=value; } },'):code;

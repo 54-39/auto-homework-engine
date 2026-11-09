@@ -7,6 +7,21 @@ const IFACES = {
 const $ = id => document.getElementById(id);
 let config = {};
 
+/* 模型候选按接口地址所属服务商给出：DeepSeek 地址只有 deepseek-chat，
+   换到别家的地址就不再出现 DeepSeek 的模型。地址未填写或不在已知服务商时给占位项。 */
+const MODEL_PRESETS = [
+  { match: /^https?:\/\/api\.deepseek\.com(?:\/|$)/i, models: ['deepseek-flash', 'deepseek-chat', 'deepseek-reasoner'] },
+  { match: /^https?:\/\/ark\.cn-beijing\.volces\.com\/api\/coding(?:\/|$)/i, models: ['doubao-seed-code', 'kimi-k2-thinking', 'deepseek-v3-2', 'glm-4-7', 'doubao-seed-2-0-code'] },
+  { match: /^https?:\/\/ark\.cn-beijing\.volces\.com\/api\/v3(?:\/|$)/i, models: ['doubao-seed-1-6-flash-250815'] },
+  { match: /^https?:\/\/open\.bigmodel\.cn(?:\/|$)/i, models: ['glm-4-flash', 'glm-4.6'] },
+  { match: /^https?:\/\/api\.moonshot\.cn(?:\/|$)/i, models: ['moonshot-v1-8k'] },
+  { match: /^https?:\/\/api\.z\.ai(?:\/|$)/i, models: ['glm-4.6'] },
+];
+const modelsFor = baseURL => {
+  const url = String(baseURL || '').trim();
+  return url ? (MODEL_PRESETS.find(p => p.match.test(url))?.models || []) : [];
+};
+
 const out = (id, text, kind = '') => {
   $(id).textContent = text;
   $(id).className = 'msg' + (kind ? ' ' + kind : '');
@@ -15,20 +30,51 @@ const send = async (type, payload) => {
   try { return await chrome.runtime.sendMessage({ type, payload }); }
   catch (e) { return { ok: false, error: e.message || String(e) }; }
 };
-const apiFields = () => ({ iface: $('provider').value, baseURL: $('baseURL').value.trim(), model: $('model').value.trim() });
+const CUSTOM_MODEL = '__custom';
+const apiFields = () => ({
+  iface: $('provider').value,
+  baseURL: $('baseURL').value.trim(),
+  model: $('model').value === CUSTOM_MODEL ? $('modelCustom').value.trim() : $('model').value.trim(),
+});
 const cleanKey = () => $('apiKey').value.replace(/[^\x21-\x7E]/g, '').trim();
+/* keep 只在属于当前服务商时保留；未知服务商才给「自定义…」，已知服务商只列自己的模型。 */
+const refreshModelOptions = (baseURL, keep) => {
+  const models = modelsFor(baseURL);
+  const picked = keep && keep !== CUSTOM_MODEL ? keep : '';
+  const list = [...models];
+  if (picked && !list.includes(picked)) list.push(picked);
+  if (!models.length) { list.push(''); list.push(CUSTOM_MODEL); } // 占位 + 自定义
+  const select = $('model');
+  select.replaceChildren(...list.map(m => m === CUSTOM_MODEL ? new Option('自定义…', CUSTOM_MODEL) : m === '' ? new Option('填写接口地址后选择', '') : new Option(m, m)));
+  select.value = picked || models[0] || '';
+  window.HW?.SettingsControls?.enhance(select);
+  syncCustomField();
+  showModelNote(select.value);
+};
+const syncCustomField = () => { $('modelCustomField').hidden = $('model').value !== CUSTOM_MODEL; };
+/* 三个 DeepSeek 模型的差别写在下拉下方，换模型即更新。 */
+const MODEL_NOTES = {
+  'deepseek-flash': 'flash：速度最快、价格最低；复杂计算和长材料容易出错。适合选择、判断等常识题。',
+  'deepseek-chat': 'chat：速度与准确度均衡；比 flash 贵，复杂推理不如 reasoner。适合大多数常规题。',
+  'deepseek-reasoner': 'reasoner：先思考再作答，难题和计算题最准，面板会显示思考过程；速度最慢，思考 token 也计费，价格最高。适合数学和多步推理题。',
+};
+const showModelNote = value => {
+  const el = $('modelHint');
+  el.textContent = value === CUSTOM_MODEL ? '自定义：按服务商文档填写模型名。' : (MODEL_NOTES[value] || '');
+  el.hidden = !el.textContent;
+};
 const showEngine = () => {
   const api = $('engine').value === 'api';
   $('apiFields').hidden = !api;
   $('apiFields').disabled = !api;
   $('bridgeFields').hidden = api;
   $('bridgeFields').disabled = api;
-  $('verify2').disabled = !api;
 };
 const showAPI = api => {
   $('provider').value = IFACES[api.iface] ? api.iface : (api.baseURL ? 'openai' : 'auto');
   $('baseURL').value = api.baseURL || '';
-  $('model').value = api.model || '';
+  $('modelCustom').value = api.model && !modelsFor(api.baseURL).includes(api.model) ? api.model : '';
+  refreshModelOptions(api.baseURL || '', api.model || '');
   $('providerHint').textContent = IFACES[$('provider').value].hint;
 };
 
@@ -118,6 +164,12 @@ async function saveKey(remember, acknowledge = false) {
 }
 
 $('engine').addEventListener('change', showEngine);
+$('baseURL').addEventListener('change', () => {
+  const url = $('baseURL').value;
+  const keep = $('model').value;
+  refreshModelOptions(url, keep !== CUSTOM_MODEL && modelsFor(url).includes(keep) ? keep : '');
+});
+$('model').addEventListener('change', () => { syncCustomField(); showModelNote($('model').value); });
 $('provider').addEventListener('change', () => showAPI({ iface: $('provider').value, ...IFACES[$('provider').value] }));
 $('saveKey').addEventListener('click', () => {
   if (!cleanKey()) { out('keyMsg', '请先粘贴 API Key', 'err'); $('apiKey').focus(); return; }
@@ -145,7 +197,7 @@ $('appForm').addEventListener('submit', async event => {
   if ($('engine').value === 'api' && api.baseURL && !(await requestAPIHostPermission(api.baseURL, 'msg'))) return;
   $('appFields').disabled = true;
   out('msg', '正在保存设置…');
-  const payload = { engine: $('engine').value, subjMode: $('subjMode').value, verify2: $('verify2').checked, api, bridge };
+  const payload = { engine: $('engine').value, subjMode: $('subjMode').value, rewriteConfirm: $('rewriteConfirm').checked, api, bridge };
   const result = await send('SET_CONFIG', payload);
   $('appFields').disabled = false;
   if (result?.ok) {
@@ -169,7 +221,7 @@ $('test').addEventListener('click', async () => {
   if (!(await refreshKeys())) { out('msg', '设置读取失败，请刷新页面后重试', 'err'); return; }
   $('engine').value = config.engine || 'api';
   $('subjMode').value = config.subjMode || 'ask';
-  $('verify2').checked = config.verify2 !== false;
+  $('rewriteConfirm').checked = config.rewriteConfirm !== false;
   showAPI(config.api || {});
   $('delayMin').value = config.bridge?.delayMin ?? 3000;
   $('delayMax').value = config.bridge?.delayMax ?? 8000;

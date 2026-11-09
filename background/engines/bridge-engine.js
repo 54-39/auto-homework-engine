@@ -1,10 +1,12 @@
 /* 豆包网页桥接引擎：自动打开/复用豆包标签页，把题目转发给页内桥接脚本，
    拿回回答文本后经 parseAnswer 归一化。使用豆包网页聊天额度，耗时取决于网页生成。 */
 import { buildMessages, parseAnswer } from './engine.js';
+import { attachImages, buildBatchMessages, parseBatchAnswers } from './batch.js';
 
 const DOUBAO_URL = 'https://www.doubao.com/chat/';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let preferredTabId = null;
+let lockedTabId = null;
 
 export async function openBridgeSplit(sourceTabId) {
   if (typeof chrome.tabs.createSplit !== 'function') {
@@ -15,6 +17,7 @@ export async function openBridgeSplit(sourceTabId) {
   const paired = tabs.find(t => source.splitViewId >= 0 && t.splitViewId === source.splitViewId);
   if (paired) {
     preferredTabId = paired.id;
+    lockedTabId = paired.id;
     await chrome.tabs.update(source.id, { active: true });
     return { tabId: paired.id, reused: true };
   }
@@ -34,11 +37,19 @@ export async function openBridgeSplit(sourceTabId) {
   await chrome.tabs.createSplit([source.id, target.id]);
   preferredTabId = target.id;
   await chrome.tabs.update(source.id, { active: true });
+  lockedTabId = target.id; // 本轮提问与回执都固定在这个会话页
   return { tabId: target.id, reused: tabs.some(t => t.id === target.id) };
 }
 
 export async function openBridgeView(sourceTabId, cfg) {
   tidyDone = false; // 每轮开始重新允许一次「收侧栏」
+  lockedTabId = null; // 新一轮重新选会话页
+  /* 豆包自己可能又开一个空白会话页；本轮只保留一个目标页，
+     否则分屏选择与桥接回执会落到不同标签（2026-11-06 实测）。 */
+  const allTabs = await chrome.tabs.query({ url: '*://*.doubao.com/*' });
+  const keep = allTabs.find(t => t.id === preferredTabId) || allTabs[0];
+  for (const t of allTabs) if (t.id !== keep?.id) await chrome.tabs.remove(t.id).catch(() => {});
+  preferredTabId = keep?.id ?? null;
   if (cfg?.viewMode !== 'window' && typeof chrome.tabs.createSplit === 'function') {
     return { ...await openBridgeSplit(sourceTabId), mode: 'split' };
   }
@@ -60,12 +71,19 @@ export async function openBridgeView(sourceTabId, cfg) {
     ? { tabId: target.id, type: 'normal', focused: false }
     : { url: DOUBAO_URL, type: 'normal', focused: false });
   preferredTabId = target?.id ?? window.tabs[0].id;
+  lockedTabId = preferredTabId; // 避免后续新建的豆包页把请求和回执拆开
   return { tabId: preferredTabId, reused: !!target, mode: 'window' };
 }
 
 async function ensureBridge() {
+  /* 一轮里再出现新的豆包标签页时必须无视：请求和回复都只能走同一个会话页，
+     否则会「消息似乎未发出」却实际把题发到了另一页（2026-11-06 实测）。 */
+  if (lockedTabId != null) {
+    return { tabId: lockedTabId, send: message => chrome.tabs.sendMessage(lockedTabId, message, { frameId: 0 }) };
+  }
   const tabs = await chrome.tabs.query({ url: '*://*.doubao.com/*' });
   const tab = tabs.find(t => t.id === preferredTabId) || tabs[0] || await chrome.tabs.create({ url: DOUBAO_URL, active: false });
+  lockedTabId = tab.id;
   return { tabId: tab.id, send: message => chrome.tabs.sendMessage(tab.id, message, { frameId: 0 }) };
 }
 
@@ -146,7 +164,7 @@ async function collapseDoubaoSidebar(tabId) {
   return 'failed';
 }
 
-async function askOnce(prompt) {
+async function askOnce(prompt, images = []) {
   const target = await ensureBridge();
   const ready = await pingReady(target);
   if (!ready.ok) {
@@ -166,7 +184,7 @@ async function askOnce(prompt) {
   }
   const send = target.send({
     type: 'BRIDGE_ASK',
-    payload: { prompt, newChat: false },
+    payload: { prompt, images, newChat: false },
   });
   let timer;
   const timeout = new Promise((_, rej) => {
@@ -186,16 +204,26 @@ async function askOnce(prompt) {
 export async function requestWithBridge(messages) {
   if (busy) throw new Error('豆包正在处理上一条请求，请等待完成后重试');
   busy = true;
-  const prompt = messages.map((m) => m.content).join('\n\n');
   try {
-    return await askOnce(prompt);
+    const images = [];
+    const prompt = messages.map(m => Array.isArray(m.content) ? m.content.map(part => {
+      if (part.type === 'text') return part.text;
+      if (part.type === 'image_url') { images.push(part.image_url.url); return `【图片 ${images.length}，对应前面的题目】`; }
+      throw new Error('豆包消息包含不支持的内容');
+    }).join('\n') : m.content).join('\n\n');
+    return await askOnce(prompt, images);
   } finally {
     busy = false;
   }
 }
 
+export async function answerBatchWithBridge(items) {
+  const result = await requestWithBridge(buildBatchMessages(items));
+  return { answers: parseBatchAnswers(items, result.raw), raw: result.raw };
+}
+
 export async function answerWithBridge(q) {
-  const messages = buildMessages(q);
+  const messages = attachImages(buildMessages(q), q._images);
   const result = await requestWithBridge(messages);
   try {
     const answer = parseAnswer(q, result.raw);
@@ -204,8 +232,8 @@ export async function answerWithBridge(q) {
   } catch (error) {
     if (!['choice', 'multi', 'judge', 'blank'].includes(q.type)) throw error;
     // 仅在已收到但无法采用的答案后复核一次；登录、验证和会话切换错误不走这里。
-    const review = await requestWithBridge([...buildMessages(q, { bestEffort: true }), { role: 'user', content:
-      '这是同一道题的唯一一次复核，上次的空答案不能照抄。请重新列式计算，把候选选项逐项代入验证；检查单位、题目精度、选项有效数字和合理近似。对于选择、判断题，必须从题面现有选项中给出最可能的有效答案，不要再次输出空数组。即使没有精确匹配，也选择最接近且有题意依据的一项；不要编造选项。只输出原要求的 JSON 和选项完整文字。' }]);
+    const review = await requestWithBridge(attachImages([...buildMessages(q, { bestEffort: true }), { role: 'user', content:
+      '这是同一道题的唯一一次复核，上次的空答案不能照抄。请重新列式计算，把候选选项逐项代入验证；检查单位、题目精度、选项有效数字和合理近似。对于选择、判断题，必须从题面现有选项中给出最可能的有效答案，不要再次输出空数组。即使没有精确匹配，也选择最接近且有题意依据的一项；不要编造选项。只输出原要求的 JSON 和选项完整文字。' }], q._images));
     try {
       const answer = parseAnswer(q, review.raw);
       if (!answer) throw new Error('AI 未返回可用答案');

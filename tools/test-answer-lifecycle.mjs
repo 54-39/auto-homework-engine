@@ -15,7 +15,7 @@ function fixture() {
   const context = vm.createContext({
     run: null, Date, crypto: { randomUUID }, setTimeout: (fn, ms) => { delays.push(ms); return setTimeout(fn, ms); },
     getConfig: async () => ({ engine: 'api' }), cacheKeyOf: async () => 'fixture',
-    cached: async () => ({ answer: 'B' }), cacheSet: async () => {},
+    cached: async () => ({ answer: 'B', verified: true }), cacheSet: async () => {},
     askEngine: async () => { throw Error('fixture model failed'); },
     /* 用与 service-worker.js 一致的风控/鉴权口径，避免夹具正则比真实逻辑松或紧。 */
     AUTH_RE: /HTTP 40[13]|authentication|invalid[_ ]?api[_ ]?key|认证|鉴权/i,
@@ -24,6 +24,10 @@ function fixture() {
     sendTab: (tabId, message) => { messages.push({ tabId, ...message }); return Promise.resolve(); },
     pauseRun: (tabId, reason) => { context.run.cancelled = true; issues.push(reason); },
   });
+  context.startBatchQueue = items => ({ get: id => {
+    const item = items.find(entry => entry.id === id);
+    return item ? Promise.resolve().then(() => context.askEngine({ engine: 'api' }, item.question)).then(result => ({ ...result, verified: true })).catch(error => ({ error })) : undefined;
+  } });
   vm.runInContext(queue + '\nasync function acknowledge(payload, tabId) { const sendResponse = value => value; ' + ack + '\n}', context);
   return { context, messages, issues, delays,
     answer: () => messages.filter(m => m.type === 'HW_ANSWER'),
@@ -38,7 +42,7 @@ for (const auto of [true, false]) {
   assert.equal(f.answer().length, 1);
   assert.ok(!f.delays.includes(auto ? 100 : 300), '填写尚未回执就开始题间倒计时');
   await f.ack(f.answer()[0]);
-  await wait(20);
+  for (let i = 0; i < 50 && !f.delays.includes(auto ? 100 : 300); i++) await wait(10);
   assert.ok(f.delays.includes(auto ? 100 : 300), '题间停顿未采用对应模式的时长');
   await wait(400);
   assert.equal(f.answer().length, 2, '缩短等待后漏掉了下一题');

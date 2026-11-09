@@ -23,7 +23,7 @@ const response = answers => ({ ok: true, text: JSON.stringify({ answers }) });
   const prompts = fixture([response([]), response(['2.5'])]);
   assert.equal((await answerWithBridge(q)).answer, 'C');
   assert.equal(prompts.length, 2);
-  assert.ok(prompts[1].includes(q.stem) && prompts[1].includes('D. 3'));
+  assert.ok(prompts[1].includes('泊松分布') && prompts[1].includes('P(λ)') && prompts[1].includes('D. 3'), '复核提示仍带完整题目（公式转 Unicode）');
   assert.match(prompts[1], /近似/);
   assert.ok(!prompts[1].includes('无法确定答案时输出'), '复核提示仍强制要求空数组');
   assert.match(prompts[1], /逐项代入/);

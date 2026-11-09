@@ -78,8 +78,39 @@
     throw new Error('问题未能写入豆包输入框');
   }
 
+  function sendButton() {
+    return [...document.querySelectorAll('button[data-testid="chat_input_send_button"]')].find(vis);
+  }
+
+  /* 新版豆包只在输入框有内容时才挂载发送按钮；空输入时按钮根本不在 DOM。
+     写入问题后先等按钮出现，并顺手确认输入仍在本题文本上，避免上一轮残留状态。 */
+  async function waitSendReady(text) {
+    const ready = () => {
+      const btn = sendButton();
+      const editor = findEditor();
+      return btn && !btn.disabled && editor && squash(editorText(editor)) === squash(text);
+    };
+    if (await waitUntil(ready, 3000)) return;
+    const editor = findEditor();
+    if (editor && squash(editorText(editor)) === squash(text)) {
+      /* React 偶尔漏掉一次 input 通知：补一个末尾字符再删掉，不改动题目内容。 */
+      editor.focus();
+      if (editor.tagName === 'TEXTAREA') {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(editor, text + ' ');
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ' ' }));
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(editor, text);
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      } else {
+        document.execCommand('insertText', false, ' ');
+        document.execCommand('delete', false, null);
+      }
+      if (await waitUntil(ready, 3000)) return;
+    }
+    throw new Error('豆包发送按钮不可用，请检查页面或稍后重试');
+  }
+
   function clickSend() {
-    const btn = [...document.querySelectorAll('button[data-testid="chat_input_send_button"]')].find(vis);
+    const btn = sendButton();
     if (!btn) throw new Error('找不到发送按钮');
     if (btn.disabled) throw new Error('发送按钮不可用（输入未生效？）');
     btn.click();
@@ -115,8 +146,60 @@
     return true;
   }
 
-  /* 沿用会话：确认本题的新消息发出后，只读其后的新回复，避免取到历史答案。 */
-  async function askOne(prompt) {
+  /* 上传题目图片：新版豆包不再把 file input 挂在输入框祖先链里，
+     先全文档找可用的 file input，找不到就把图片作为粘贴数据交给编辑器
+     （ProseMirror/Tiptap 都支持粘贴图片）。返回是否确认上传成功。 */
+  async function attachImages(editor, images) {
+    if (!images.length) return true;
+    const files = images.map((value, i) => {
+      const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/i.exec(value);
+      if (!match) throw new Error('题目图片数据无效');
+      const binary = atob(match[2]);
+      const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+      return new File([bytes], `question-${i + 1}.${match[1].split('/')[1]}`, { type: match[1] });
+    });
+    const zone = editor.closest('[data-testid="chat_input_input"]')?.parentElement?.parentElement || editor.parentElement;
+    const previews = () => [...document.querySelectorAll('img[src^="blob:"],img[src^="data:image/"],[data-testid*="attachment"] img,[data-testid*="upload"] img')].filter(vis);
+    if ([...zone.querySelectorAll('img[src^="blob:"],img[src^="data:image/"]')].filter(vis).length) throw new Error('豆包输入区已有附件，请先处理后再继续');
+    const seen = new Set(previews());
+    const added = n => () => previews().filter(img => !seen.has(img) && img.complete && img.naturalWidth > 0).length >= n;
+    const makeTransfer = () => {
+      const transfer = new DataTransfer();
+      for (const file of files) transfer.items.add(file);
+      return transfer;
+    };
+    const input = [...document.querySelectorAll('input[type="file"]')].filter(vis).find(i => files.length === 1 || i.multiple);
+    if (input) {
+      input.files = makeTransfer().files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      if (await waitUntil(added(images.length), 12000)) return true;
+    }
+    editor.focus();
+    editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData: makeTransfer(), bubbles: true, cancelable: true }));
+    return await waitUntil(added(images.length), 20000);
+  }
+
+  /* 豆包把回复里的公式（P(X\leq3})渲染成 KaTeX 节点，直接读 textContent 会丢掉
+     公式片段，JSON 里只剩 "B P(X"。按 DOM 顺序拼接，公式节点取 annotation 的 LaTeX 原文。 */
+  function replyText(el) {
+    const content = el?.querySelector('[data-testid="message_text_content"]') || el;
+    if (!content) return '';
+    const out = [];
+    const walk = node => {
+      if (node.nodeType === 3) { out.push(node.data); return; }
+      if (node.nodeType !== 1) return;
+      if (node.matches?.('.katex')) {
+        const ann = node.querySelector('annotation[encoding="application/x-tex"]');
+        out.push(ann ? ann.textContent : (node.textContent || ''));
+        return;
+      }
+      for (const child of node.childNodes) walk(child);
+    };
+    walk(content);
+    return out.join('').trim();
+  }
+
+  async function askOne(prompt, images = []) {
     checkPageNotices();
     const editor = findEditor();
     if (!editor) throw new Error('豆包输入框未就绪');
@@ -128,10 +211,8 @@
     const findSent = () => messageNodes('send_message').find(el => sentText(el).includes(requestId));
 
     await setInput(requestPrompt);
-    if (!(await waitUntil(() => {
-      const btn = [...document.querySelectorAll('button[data-testid="chat_input_send_button"]')].find(vis);
-      return btn && !btn.disabled;
-    }, 3000))) throw new Error('豆包发送按钮不可用，请检查页面或稍后重试');
+    await attachImages(findEditor(), images);
+    await waitSendReady(requestPrompt);
     checkPageNotices();
     clickSend();
 
@@ -145,6 +226,8 @@
       await waitForChange(1000);
     }
     if (!sent) throw new Error('消息似乎未发出，已暂停；请在豆包页面确认后重试');
+    /* 上传附件已在发送前确认（attachImages）；发送后的气泡不一定把图片渲染成 img
+       （可能是背景图/缩略图），这里不再据此判失败，避免整轮停住。 */
 
     // 等回答：只认发送后"新出现"的 receive_message（元素身份），文本稳定 2 秒视为生成完成
     const t0 = Date.now();
@@ -155,8 +238,25 @@
       checkPageNotices();
       const currentSent = findSent();
       if (!currentSent) {
-        if (!missingSince) missingSince = Date.now();
-        if (Date.now() - missingSince >= 2000) throw new Error('豆包对话已切换，已暂停本题；请确认当前对话后重新点击开始');
+        /* 长会话里旧发送气泡会被页面回收，但本题的新回复仍会出现。
+           只认本次新出现的完整批量 JSON；解析器会再校验题号与数量，不会串题。 */
+        const orphan = messageNodes('receive_message').filter(el => !seenRecv.has(el));
+        if (orphan.length) {
+          missingSince = 0;
+          const last = orphan[orphan.length - 1];
+          const txt = replyText(last);
+          const done = /^\s*\{[\s\S]*"results"[\s\S]*\}\s*$/.test(txt);
+          if (txt && done && txt === lastText) {
+            if (!stableSince) stableSince = Date.now();
+            if (Date.now() - stableSince > 2000) return txt;
+          } else {
+            lastText = done ? txt : '';
+            stableSince = 0;
+          }
+        } else {
+          if (!missingSince) missingSince = Date.now();
+          if (Date.now() - missingSince >= 2000) throw new Error('豆包对话已切换，已暂停本题；请确认当前对话后重新点击开始');
+        }
         await waitForChange(250);
         continue;
       }
@@ -167,12 +267,20 @@
       );
       if (fresh.length) {
         const last = fresh[fresh.length - 1];
-        const txt = ((last.querySelector('[data-testid="message_text_content"]') || last).textContent || '').trim();
-        if (txt && txt === lastText) {
+        const content = last.querySelector('[data-testid="message_text_content"]');
+        const txt = replyText(last);
+        /* 豆包生成时先出「搜索 N 个关键词，参考 M 篇资料」气泡，正文节点还没挂上：
+           那不是答案，继续等正文；稳定的空节点同理。 */
+        const searching = !content
+          ? (/^(?:搜索|正在搜索|参考|已阅读|深度思考|思考中)/.test(txt) || !txt)
+          : /^(?:搜索\s*\d+\s*个关键词|正在搜索|参考\s*\d+\s*篇资料)$/.test(txt);
+        /* 生成中的 JSON 会先出现 `{"results":` 这类半截文本；必须等完整闭合。 */
+        const incomplete = /^\s*\{/.test(txt) && !/\}\s*$/.test(txt);
+        if (txt && !searching && !incomplete && txt === lastText) {
           if (!stableSince) stableSince = Date.now();
           if (Date.now() - stableSince > 2000) return txt;
         } else {
-          lastText = txt;
+          lastText = searching || incomplete ? '' : txt;
           stableSince = 0;
         }
       }
@@ -198,8 +306,8 @@
       return;
     }
     if (msg?.type === 'BRIDGE_ASK') {
-      const { prompt } = msg.payload || {};
-      askOne(String(prompt || ''))
+      const { prompt, images = [] } = msg.payload || {};
+      askOne(String(prompt || ''), images)
         .then((text) => sendResponse({ ok: true, text }))
         .catch((e) => sendResponse({ ok: false, error: String(e.message || e) }));
       return true; // 异步回传

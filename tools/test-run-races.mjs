@@ -12,9 +12,10 @@ const runOf=(name='old',tabId=7)=>({tabId,sourceUrl:name,cancelled:false,items:[
 function fixture(){
  const messages=[],cache=[];let asks=0;
  const context=vm.createContext({run:null,Date,crypto:{randomUUID},setTimeout,
-  getConfig:async()=>({engine:'api'}),cacheKeyOf:async q=>q.stem,cached:async()=>({answer:'B'}),cacheSet:async(...args)=>cache.push(args),
-  askEngine:async()=>{asks++;return{answer:'A'};},AUTH_RE:/401/,RISKY_RE:/captcha/,notify(){},pauseRun(){throw Error('unexpected pause');},
+  getConfig:async()=>({engine:'api'}),cacheKeyOf:async q=>q.stem,cached:async()=>({answer:'B',verified:true}),cacheSet:async(...args)=>cache.push(args),
+  askEngine:async()=>{asks++;return{answer:'A',verified:true};},AUTH_RE:/401/,RISKY_RE:/captcha/,notify(){},pauseRun(){throw Error('unexpected pause');},
   sendTab:(tabId,message)=>{messages.push({tabId,...message});return Promise.resolve();},detectingTabs:new Map()});
+ context.startBatchQueue=items=>({get:id=>{const item=items.find(entry=>entry.id===id);return item?Promise.resolve().then(()=>context.askEngine({engine:'api'},item.question)).catch(error=>({error})):undefined;}});
  vm.runInContext(code+'\nfunction stop(tabId){const sendResponse=value=>value;'+stopCode+'\n}',context);
  return{context,messages,cache,asks:()=>asks};
 }

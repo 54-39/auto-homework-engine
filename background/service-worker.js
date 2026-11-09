@@ -1,22 +1,25 @@
 /* 后台 Service Worker：引擎路由、题目队列、答案缓存、与作业页消息中转、热重载、自动更新检查 */
-import { answerWithAPI, testAPI, sanitizeKey, detectEndpoint, requestWithAPI } from './engines/api-engine.js';
-import { answerWithBridge, requestWithBridge, openBridgeView } from './engines/bridge-engine.js';
+import { answerWithAPI, answerBatchWithAPI, testAPI, sanitizeKey, detectEndpoint, requestWithAPI } from './engines/api-engine.js';
+import { startBatchQueue } from './engines/batch-queue.js';
+import { answerWithBridge, answerBatchWithBridge, requestWithBridge, openBridgeView } from './engines/bridge-engine.js';
 import { detectQuestions } from './engines/detection-engine.js';
 import { hashKey, compareVersions, isMajorUpdate } from './engines/engine.js';
 import { appendIssue, readIssuePage, clearIssueHistory } from './issue-history.js';
+import { readQuestionImage } from './engines/image-data.js';
+import { captureQuestionImage } from './engines/screenshot.js';
 
 const DEFAULT_CONFIG = {
   engine: 'api', // api | bridge
   api: { iface: 'auto', baseURL: '', model: '', apiKey: '' },
   bridge: { newChat: false, delayMin: 3000, delayMax: 8000, viewMode: 'split' },
   subjMode: 'ask', // 简答题策略：ask=每次弹窗询问 | keep=保留跳过 | rewrite=清空重写
-  verify2: true, // 多选/判断题二次复核开关（API 引擎）：关掉每题少一次 AI 调用
   watchRate: 'auto', // 刷课倍速：'auto' 跟播放器菜单最高档 | '1'/'1.25'/'1.5'/'2' 固定档
   watchSections: 0, // 每门课从第一节起连续处理几节（0 = 整门课程）；设置页可改，面板不再写死 4
   watchMuted: true, // 保持原有刷课默认静音；面板可取消
   autoUpdate: true, // 后台定时检查，空闲时自动装新版（刷课中不打断）；设置页可关
   panelMode: 'homework', // API 面板：写题 / 刷课
   diagnosticsEnabled: false, // 用户打开诊断记录开关后才采集和写入新异常
+  rewriteConfirm: true, // 单题重问时新答案与页面已填不同，先提示再点一次才覆盖
 };
 
 let run = null; // { tabId, cancelled, items: [{ q, status, answer, error }] }
@@ -236,16 +239,18 @@ async function detectPage(payload, sender) {
 
 /* 暂停当前队列（风控/多次失败共用），发通知 + 面板红字 */
 function pauseRun(tabId, reason) {
-  if (run) run.cancelled = true;
-  const item = run?.items.find(i => i.status === 'failed');
+  const pausedRun = run;
+  if (pausedRun) pausedRun.cancelled = true;
+  pausedRun?.batchQueue?.stop();
+  const item = pausedRun?.items.find(i => i.status === 'failed');
   const question = item?.q && [item.q.stem, ...(item.q.options || []).map(option => `${option.key}. ${option.text}`)].join('\n');
-  recordIssue({ stage: '答题失败', message: item?.error || reason, question, answer: item?.raw || item?.answer?.answer, url: run?.sourceUrl }, { tab: { id: tabId } })
+  recordIssue({ stage: '答题失败', message: item?.error || reason, question, answer: item?.raw || item?.answer?.answer, url: pausedRun?.sourceUrl }, { tab: { id: tabId }, frameId: pausedRun?.frameId })
     .catch(e => {
-      sendTab(tabId, { type: 'HW_ISSUE_WRITE_FAILED', payload: { error: String(e.message || e) } });
+      sendTab(tabId, { type: 'HW_ISSUE_WRITE_FAILED', payload: { error: String(e.message || e) } }, pausedRun?.frameId);
       notify('异常记录写入失败，已停止答题：' + String(e.message || e).slice(0, 100));
     });
-  notify('已暂停：' + reason.slice(0, 90), run?.engine === 'bridge');
-  return sendTab(tabId, { type: 'HW_DONE', payload: { paused: reason, requestId: run?.requestId } });
+  notify('已暂停：' + reason.slice(0, 90), pausedRun?.engine === 'bridge');
+  return sendTab(tabId, { type: 'HW_DONE', payload: { paused: reason, requestId: pausedRun?.requestId } }, pausedRun?.frameId);
 }
 
 function deepMerge(base, patch) {
@@ -260,10 +265,11 @@ async function getConfig() {
   return deepMerge(structuredClone(DEFAULT_CONFIG), config || {});
 }
 
-function sendTab(tabId, msg) {
+function sendTab(tabId, msg, frameId) {
   if (tabId == null) return Promise.resolve();
-  return chrome.tabs.sendMessage(tabId, msg).catch(() => {});
+  return (frameId == null ? chrome.tabs.sendMessage(tabId, msg) : chrome.tabs.sendMessage(tabId, msg, { frameId })).catch(() => {});
 }
+chrome.action?.onClicked?.addListener(tab => sendTab(tab.id, { type: 'HW_CAPTURE_READY' }));
 
 /* —— 系统通知：风控验证/队列暂停/完成提醒。点击通知跳转到豆包标签页 —— */
 const RISKY_RE = /风控|安全验证|人机验证|验证码|人脸验证|需要登录|登录墙/;
@@ -339,7 +345,7 @@ async function checkUpdate(force, cacheOnly) {
 
 async function askEngine(cfg, q, auto = false) {
   if (cfg.engine === 'bridge') return answerWithBridge(q, cfg.bridge);
-  return answerWithAPI(q, cfg.api, { verify2: cfg.verify2 !== false, auto });
+  return answerWithAPI(q, cfg.api, { auto });
 }
 
 const UPDATE_HOST = `com.homeworkhelper.autoupdate.${chrome.runtime.id}`;
@@ -470,8 +476,9 @@ function diagUpdateHost() {
     : { ok: false, stage: 'connect', error: r?.error || '宿主返回异常' });
 }
 
-function cacheKeyOf(q) {
-  return hashKey(JSON.stringify({ v: 2, t: q.type, s: q.stem, o: (q.options || []).map((x) => x.text), b: q.blanks || 0, d: q.slotOptions || [] }));
+/* 缓存键带模型标识：换模型后不再复用旧模型留下的答案（v4 顺带作废旧缓存）。 */
+function cacheKeyOf(q, salt = 'auto') {
+  return hashKey(JSON.stringify({ v: 4, m: salt, t: q.type, s: q.stem, o: (q.options || []).map((x) => x.text), b: q.blanks || 0, d: q.slotOptions || [], images: q._images || [] }));
 }
 async function cached(key) {
   const o = await chrome.storage.local.get('c:' + key);
@@ -485,7 +492,7 @@ async function fillAnswer(activeRun, index, payload) {
   const item = activeRun.items[index];
   item.fillToken = crypto.randomUUID();
   item.status = 'answered';
-  sendTab(activeRun.tabId, { type: 'HW_ANSWER', payload: { ...payload, index, fillToken: item.fillToken, requestId: activeRun.requestId } });
+  sendTab(activeRun.tabId, { type: 'HW_ANSWER', payload: { ...payload, index, fillToken: item.fillToken, requestId: activeRun.requestId } }, activeRun.frameId);
   const deadline = Date.now() + 30000;
   while (item.status === 'answered' && !activeRun.cancelled && run === activeRun && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 50));
@@ -494,7 +501,7 @@ async function fillAnswer(activeRun, index, payload) {
   if (item.status === 'answered') {
     item.status = 'failed';
     item.error = '页面填写回执超时，已停止；请刷新页面（F5）后核对';
-    sendTab(activeRun.tabId, { type: 'HW_STATUS', payload: { index, status: 'failed', error: item.error, requestId: activeRun.requestId } });
+    sendTab(activeRun.tabId, { type: 'HW_STATUS', payload: { index, status: 'failed', error: item.error, requestId: activeRun.requestId } }, activeRun.frameId);
     await pauseRun(activeRun.tabId, item.error);
   }
   /* 单个题填写失败（页面结构变化、选项点不动等）只跳过本题，不拖累后面整批：
@@ -504,9 +511,9 @@ async function fillAnswer(activeRun, index, payload) {
   return item.status === 'filled' || item.status === 'failed';
 }
 
-async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
-  if (run) run.cancelled = true;
-  const activeRun = { tabId, sourceUrl, requestId, engine: null, auto: false, cancelled: false,
+async function startRun(questions, tabId, sourceUrl, auto = false, requestId, frameId) {
+  if (run) { run.cancelled = true; run.batchQueue?.stop(); }
+  const activeRun = { tabId, sourceUrl, requestId, frameId, engine: null, auto: false, cancelled: false,
     items: questions.map((q) => ({ q, status: 'queued', answer: null, error: null })) };
   run = activeRun;
   const cfg = await getConfig();
@@ -521,6 +528,24 @@ async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
     }
     if (activeRun.cancelled || run !== activeRun) return { ok: false, error: '本次答题已取消' };
   }
+  const candidates = ['api', 'bridge'].includes(cfg.engine) ? activeRun.items.flatMap((item, index) =>
+    item.q._decision !== 'skip' && item.q._decision !== 'rewrite' && !item.q._imageError &&
+    ['choice', 'multi', 'judge', 'blank'].includes(item.q.type)
+      ? [{ id: String(index), question: item.q, images: item.q._images || [] }] : []) : [];
+  const cacheEntries = await Promise.all(candidates.map(async item => {
+    if (item.question._refresh || (activeRun.auto && item.question._retry)) return [item.id, null];
+    try {
+      const answer = await cached(await cacheKeyOf(item.question, (cfg.engine === 'bridge' ? 'bridge' : (cfg.api?.model || 'auto'))));
+      return [item.id, answer?.verified === true && !/采用初答|先刷完|复核不一致|复核失败/.test(answer.note || '') ? answer : null];
+    } catch { return [item.id, null]; }
+  }));
+  if (activeRun.cancelled || run !== activeRun) return { ok: false, error: '本次答题已取消' };
+  const preparedCache = new Map(cacheEntries);
+  const batchItems = candidates.filter(item => !preparedCache.get(item.id));
+  const batchQueue = batchItems.length ? startBatchQueue(batchItems,
+    batch => cfg.engine === 'bridge' ? answerBatchWithBridge(batch) : answerBatchWithAPI(batch, cfg.api),
+    () => !activeRun.cancelled && run === activeRun, cfg.engine === 'bridge' ? 1 : 2) : null;
+  activeRun.batchQueue = batchQueue;
   (async () => {
     for (let i = 0; i < activeRun.items.length; i++) {
       if (activeRun.cancelled || run !== activeRun) return;
@@ -528,32 +553,36 @@ async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
       // 面板逐题决策：skip=已写且正确（跳过） / rewrite=写错（用参考答案改写） / ask=问引擎
       if (item.q._decision === 'skip') {
         item.status = 'skipped';
-        const sn = item.q._skipNote || `已写且正确（页面: ${item.q._pageAnswer || '空'}），跳过`;
-        sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'skipped', note: sn, requestId: activeRun.requestId } });
+        const sn = item.q._skipNote || `页面答案与参考答案一致（页面: ${item.q._pageAnswer || '空'}），请核对`;
+        sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'skipped', note: sn, requestId: activeRun.requestId } }, activeRun.frameId);
         continue;
       }
       if (item.q._decision === 'rewrite') {
         item.answer = { answer: item.q._refAnswer, note: '改写' };
-        if (!(await fillAnswer(activeRun, i, { answer: item.q._refAnswer, kind: 'rewrite', note: `写错了已改写（页面原答案: ${item.q._pageAnswer || '空'}）` }))) return;
+        if (!(await fillAnswer(activeRun, i, { answer: item.q._refAnswer, kind: 'rewrite', note: `已按参考答案改写，请核对（页面原答案: ${item.q._pageAnswer || '空'}）` }))) return;
         continue;
       }
       item.status = 'asking';
-      sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'asking', requestId: activeRun.requestId } });
+      sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'asking', requestId: activeRun.requestId } }, activeRun.frameId);
       try {
-        const key = await cacheKeyOf(item.q);
-        let ans = item.q._refresh || (activeRun.auto && item.q._retry) ? null : await cached(key);
-        if (ans && /采用初答|先刷完|复核不一致|复核失败/.test(ans.note || '')) ans = null;
+        if (item.q._imageError) throw new Error('题目图片无法读取：' + item.q._imageError);
+        const key = await cacheKeyOf(item.q, (cfg.engine === 'bridge' ? 'bridge' : (cfg.api?.model || 'auto')));
+        let ans = item.q._refresh || (activeRun.auto && item.q._retry) ? null :
+          preparedCache.has(String(i)) ? preparedCache.get(String(i)) : await cached(key);
+        if (ans && (ans.verified !== true || /采用初答|先刷完|复核不一致|复核失败/.test(ans.note || ''))) ans = null;
         if (activeRun.cancelled || run !== activeRun) return;
         const fromCache = !!ans;
         if (!ans) {
-          const r = await askEngine(cfg, item.q, activeRun.auto);
+          const batched = batchQueue && await batchQueue.get(String(i));
+          if (batched?.error) throw batched.error;
+          const r = batched || await askEngine(cfg, item.q, activeRun.auto);
           if (activeRun.cancelled || run !== activeRun) return;
-          ans = { answer: r.answer, note: r.note || null };
-          await cacheSet(key, ans);
+          ans = { answer: r.answer, note: r.note || null, verified: r.verified === true, reasoning: r.reasoning || '' };
+          if (ans.verified) await cacheSet(key, ans);
         }
         if (activeRun.cancelled || run !== activeRun) return;
         item.answer = ans;
-        if (!(await fillAnswer(activeRun, i, { answer: ans.answer, fromCache, note: ans.note }))) return;
+        if (!(await fillAnswer(activeRun, i, { answer: ans.answer, fromCache, note: ans.note, reasoning: ans.reasoning || '' }))) return;
       } catch (e) {
         if (activeRun.cancelled || run !== activeRun) return;
         /* 复核与初答打架时，初答是模型自己给出的有效答案，不是随机猜选：
@@ -567,7 +596,7 @@ async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
         item.error = String(e.message || e);
         item.raw = e.answerPreview;
         /* 能兜底的题不先报失败：紧接着就用初答/猜选填写，先红一下再变绿只会让人以为出错。 */
-        if (!recoverable) sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error, answerPreview: item.raw, requestId: activeRun.requestId } });
+        if (!recoverable) sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error, answerPreview: item.raw, requestId: activeRun.requestId } }, activeRun.frameId);
         // 风控/验证类错误：第一次就暂停队列，不去撞验证码
         if (cfg.engine === 'bridge' && RISKY_RE.test(item.error)) {
           return pauseRun(tabId, '豆包需要人工确认，队列已暂停：' + item.error);
@@ -595,16 +624,16 @@ async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
               await recordIssue({ stage: mismatch ? '复核不一致' : '猜选兜底', message: note,
                 question: [item.q.stem, ...(item.q.options || []).map(option => `${option.key}. ${option.text}`)].join('\n'),
                 answer: guess, details: item.error + '\n复核返回：' + (item.raw || ''), url: activeRun.sourceUrl }, { tab: { id: tabId } })
-                .catch(error => sendTab(tabId, { type: 'HW_ISSUE_WRITE_FAILED', payload: { error: String(error.message || error) } }));
+                .catch(error => sendTab(tabId, { type: 'HW_ISSUE_WRITE_FAILED', payload: { error: String(error.message || error) } }, activeRun.frameId));
             }
             // 用户授权的刷课/豆包兜底均不写入可信答案缓存。
             if (!(await fillAnswer(activeRun, i, { answer: guess, note, fallback: true, answerPreview: item.raw }))) return;
           } else if (activeRun.auto || cfg.engine === 'bridge') {
             /* 无人值守且没有可用选项（如没有可选项的填空）：不编造文本，本题留空继续后面的题。 */
-            sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error, answerPreview: item.raw, requestId: activeRun.requestId } });
+            sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error, answerPreview: item.raw, requestId: activeRun.requestId } }, activeRun.frameId);
           } else {
             /* 人工模式没有可用的初答/选项：照实报失败并暂停，等人处理。 */
-            sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error, answerPreview: item.raw, requestId: activeRun.requestId } });
+            sendTab(tabId, { type: 'HW_STATUS', payload: { index: i, status: 'failed', error: item.error, answerPreview: item.raw, requestId: activeRun.requestId } }, activeRun.frameId);
             return pauseRun(tabId, item.error.slice(0, 140));
           }
         } else {
@@ -627,15 +656,15 @@ async function startRun(questions, tabId, sourceUrl, auto = false, requestId) {
     const skipped = activeRun.items.filter((it) => it.status === 'skipped').length;
     const guessedIndexes = activeRun.items.flatMap((it, index) => it.guessed && it.status === 'filled' ? [index] : []);
     notify(failed ? `答题完成：填写 ${filled}、跳过 ${skipped}、失败 ${failed} 题` : `处理完成：填写 ${filled}、跳过 ${skipped}，请检查后手动提交`);
-    sendTab(tabId, { type: 'HW_DONE', payload: { total: activeRun.items.length, filled, failed, skipped, guessedIndexes, requestId: activeRun.requestId } });
+    sendTab(tabId, { type: 'HW_DONE', payload: { total: activeRun.items.length, filled, failed, skipped, guessedIndexes, requestId: activeRun.requestId } }, activeRun.frameId);
   })();
   return { ok: true, count: questions.length, engine: cfg.engine };
 }
 
-async function rerunOne(index, tabId, requestId) {
+async function rerunOne(index, tabId, requestId, frameId) {
   const activeRun = run;
   const item = activeRun?.tabId === tabId ? activeRun.items[index] : null;
-  if (!item || activeRun.cancelled) return { ok: false, error: '题目不存在或已停止，请重新检测' };
+  if (!item || activeRun.cancelled || (activeRun.frameId != null && frameId != null && activeRun.frameId !== frameId)) return { ok: false, error: '题目不存在或已停止，请重新检测' };
   const token = item.fillToken = crypto.randomUUID();
   const current = () => run === activeRun && !activeRun.cancelled && item.fillToken === token;
   const stale = () => ({ ok: false, error: '页面题目已失效，请重新检测' });
@@ -643,26 +672,32 @@ async function rerunOne(index, tabId, requestId) {
   if (!current()) return stale();
   item.status = 'asking';
   item.error = null;
-  sendTab(tabId, { type: 'HW_STATUS', payload: { index, status: 'asking', requestId } });
+  sendTab(tabId, { type: 'HW_STATUS', payload: { index, status: 'asking', requestId } }, activeRun.frameId);
   try {
-    const r = await askEngine(cfg, item.q);
+    if (item.q._imageError) throw new Error('题目图片无法读取：' + item.q._imageError);
+    const canBatch = ['choice', 'multi', 'judge', 'blank'].includes(item.q.type);
+    const qid = String(index);
+    const queued = canBatch ? startBatchQueue([{ id: qid, question: item.q, images: item.q._images || [] }],
+      batch => cfg.engine === 'bridge' ? answerBatchWithBridge(batch) : answerBatchWithAPI(batch, cfg.api), current, 1) : null;
+    const r = queued ? await queued.get(qid) : await askEngine(cfg, item.q);
+    if (r?.error) throw r.error;
     if (!current()) return stale();
     item.answer = r.answer;
-    // 手动重答视为最新权威答案：覆盖旧缓存（包括之前的错误答案）
-    if (r.answer) {
-      const key = await cacheKeyOf(item.q);
+    // 单次作答与补答的答案可写入缓存；猜选不视为可信答案。
+    if (r.answer && r.verified === true) {
+      const key = await cacheKeyOf(item.q, (cfg.engine === 'bridge' ? 'bridge' : (cfg.api?.model || 'auto')));
       if (!current()) return stale();
-      await cacheSet(key, { answer: r.answer, note: r.note || null });
+      await cacheSet(key, { answer: r.answer, note: r.note || null, verified: true });
     }
     if (!current()) return stale();
     item.status = 'answered';
-    sendTab(tabId, { type: 'HW_ANSWER', payload: { index, fillToken: item.fillToken, requestId, answer: r.answer, kind: 'rewrite', note: r.note } });
+    sendTab(tabId, { type: 'HW_ANSWER', payload: { index, fillToken: item.fillToken, requestId, answer: r.answer, kind: 'rewrite', note: r.note, forceAsk: true } }, activeRun.frameId);
     return { ok: true };
   } catch (e) {
     if (!current()) return stale();
     item.status = 'failed';
     item.error = String(e.message || e);
-    sendTab(tabId, { type: 'HW_STATUS', payload: { index, status: 'failed', error: item.error, requestId } });
+    sendTab(tabId, { type: 'HW_STATUS', payload: { index, status: 'failed', error: item.error, requestId } }, activeRun.frameId);
     return { ok: false, error: item.error };
   }
 }
@@ -690,7 +725,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const payload = msg?.payload || {};
     const tabId = sender?.tab?.id;
     try {
-      if (type === 'HW_FONT_MAP') {
+      if (type === 'HW_CAPTURE_QUESTION_IMAGE') {
+        sendResponse({ ok: true, data: await captureQuestionImage(sender, payload) });
+      } else if (type === 'HW_READ_QUESTION_IMAGE') {
+        const here = new URL(sender.url || 'about:blank');
+        if (!/(^|\.)chaoxing\.com$/i.test(here.hostname) || !/^https?:$/.test(here.protocol)) throw new Error('无效的题图读取请求');
+        sendResponse({ ok: true, data: await readQuestionImage(payload.src) });
+      } else if (type === 'HW_FONT_MAP') {
         const here = new URL(sender.url || 'about:blank');
         if (!/(^|\.)chaoxing\.com$/.test(here.hostname) || !Array.isArray(payload.hashes) ||
             payload.hashes.length > 65535 || payload.hashes.some(hash => !/^[a-f0-9]{64}$/.test(hash))) throw new Error('无效的页面字体请求');
@@ -745,10 +786,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await openSettings(section);
         sendResponse({ ok: true });
       } else if (type === 'HW_START') {
-        sendResponse(await startRun(payload.questions || [], tabId, sender.url || sender.tab?.url, payload.auto === true, payload.requestId));
+        sendResponse(await startRun(payload.questions || [], tabId, sender.url || sender.tab?.url, payload.auto === true, payload.requestId, sender.frameId));
       } else if (type === 'HW_FILLED') {
         const it = run?.items[payload.index];
-        if (!it || it.status !== 'answered' || run.tabId !== tabId || (it.fillToken && payload.fillToken !== it.fillToken) || run.cancelled) return sendResponse({ ok: true });
+        if (!it || it.status !== 'answered' || run.tabId !== tabId || (run.frameId != null && sender.frameId !== run.frameId) || (it.fillToken && payload.fillToken !== it.fillToken) || run.cancelled) return sendResponse({ ok: true });
         if (payload.ok) {
           it.status = 'filled';
           return sendResponse({ ok: true });
@@ -757,7 +798,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         it.status = 'failed';
         it.error = '填写失败：' + (payload.error || '页面未接受答案');
         if (run && !run.cancelled) {
-          sendTab(run.tabId, { type: 'HW_STATUS', payload: { index: payload.index, status: 'failed', error: it.error, requestId: run.requestId } });
+          sendTab(run.tabId, { type: 'HW_STATUS', payload: { index: payload.index, status: 'failed', error: it.error, requestId: run.requestId } }, run.frameId);
           /* 只有必须人工介入的失败（验证码/人脸/登录墙/鉴权）才停整轮；
              页面一时读不到状态、某个选项点不动，跳过本题继续，别把剩下的题全扔了。 */
           if (RISKY_RE.test(it.error) || AUTH_RE.test(it.error)) pauseRun(run.tabId, '填写失败，队列已暂停：' + it.error);
@@ -1026,12 +1067,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         sendResponse({ ok: true, list });
       } else if (type === 'HW_STOP') {
-        if (run?.tabId === tabId) run.cancelled = true;
+        if (run?.tabId === tabId) { run.cancelled = true; run.batchQueue?.stop(); }
         const detection = detectingTabs.get(tabId);
         if (detection) detection.cancelled = true;
         sendResponse({ ok: true });
       } else if (type === 'HW_RERUN') {
-        sendResponse(await rerunOne(payload.index, tabId, payload.requestId));
+        sendResponse(await rerunOne(payload.index, tabId, payload.requestId, sender.frameId));
       } else if (type === 'TEST_API') {
         sendResponse({ ok: true, reply: await testAPI(payload.api) });
       } else if (type === 'CACHE_CLEAR') {

@@ -58,7 +58,7 @@ try {
     "['app', 'mem', 'watch', 'diag', 'upd'].includes(payload.section)",
     "['app', 'mem', 'watch', 'diag'].includes(payload.section)", 'updater settings route');
   sw = removeBetween(sw, '/* —— 更新检查：', 'async function askEngine(', 'service worker update checker');
-  sw = removeBetween(sw, 'const UPDATE_HOST =', 'function cacheKeyOf(q) {', 'native updater');
+  sw = removeBetween(sw, 'const UPDATE_HOST =', 'function cacheKeyOf(', 'native updater');
   sw = replaceOnce(sw,
     "      } else if (type === 'CHECK_UPDATE') {\n        sendResponse(await checkUpdate(payload.force, payload.cacheOnly));\n      } else if (type === 'HW_RUN_UPDATE') {\n        sendResponse(await runUpdateViaHost());\n      } else if (type === 'DIAG_UPDATE_HOST') {\n        /* 安装完成自检：只 ping 宿主，不启动更新 */\n        sendResponse(await diagUpdateHost());\n      } else if (type === 'UPDATE_PAGE_READY') {\n        sendResponse(await confirmUpdatePage(payload.transactionId, sender));\n      } else if (type === 'OPEN_SETTINGS') {",
     "      } else if (type === 'OPEN_SETTINGS') {", 'service worker updater message handlers');

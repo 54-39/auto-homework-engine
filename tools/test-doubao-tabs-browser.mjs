@@ -58,7 +58,7 @@ const server = http.createServer(async (req, res) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
 for (const dir of ['background/engines', 'content/doubao']) fs.mkdirSync(path.join(stage, dir), { recursive: true });
-for (const file of ['background/engines/engine.js', 'background/engines/bridge-engine.js', 'content/doubao/doubao-bridge.js'])
+for (const file of ['background/engines/engine.js', 'background/engines/arithmetic.js', 'background/engines/batch.js', 'background/engines/bridge-engine.js', 'content/doubao/doubao-bridge.js'])
   fs.copyFileSync(path.join(root, file), path.join(stage, file));
 if (!publicPage) {
   const engine = path.join(stage, 'background/engines/bridge-engine.js');

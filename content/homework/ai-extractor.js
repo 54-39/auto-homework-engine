@@ -264,12 +264,12 @@
         const contentAreas = discussion
           ? [discussion, discussion.closest('.topicDetail_head')?.parentElement?.querySelector('.richText')].filter(Boolean)
           : [container];
-        if (contentAreas.some(area => [...area.querySelectorAll('img')].some(img => snapshot.ids.has(img) && !imageText(img)))) throw new Error('题型已识别，但题干或选项含有未读取的图片，请核对图片内容');
+        if (!HW.QuestionImages && contentAreas.some(area => [...area.querySelectorAll('img')].some(img => snapshot.ids.has(img) && !imageText(img)))) throw new Error('题型已识别，但题干或选项含有未读取的图片，请核对图片内容');
         if ([...container.querySelectorAll('input[type="file"],[draggable="true"],select[multiple]')].some(el => snapshot.ids.has(el) && !(discussion && el.matches('input[type="file"]') && el.closest('.topicDetail_editContainer')))) throw new Error('题目包含上传、拖拽或多选下拉控件，尚不能可靠填写');
         const context = (item.contextIds || []).map((id) => {
           const el = snapshot.refs.get(id)?.el;
           if (!el || el.matches('input,textarea,select,iframe,[contenteditable]') || el.querySelector('input,textarea,select,iframe,[contenteditable]')) throw new Error('共享材料区域不存在或混入了答题控件');
-          if ([...el.querySelectorAll('img')].some((img) => snapshot.ids.has(img) && !imageText(img))) throw new Error('共享材料包含尚未读取的图片内容');
+          if (!HW.QuestionImages && [...el.querySelectorAll('img')].some((img) => snapshot.ids.has(img) && !imageText(img))) throw new Error('共享材料包含尚未读取的图片内容');
           return textOf(el);
         }).filter(Boolean).filter((text) => !norm(item.stem).includes(text)).join('\n');
         const stem = context ? context + '\n' + item.stem : item.stem;
@@ -367,7 +367,7 @@
             slotOptions: item.type === 'blank' ? fields.map((el) => el.tagName === 'SELECT'
               ? [...el.options].filter((o) => !o.disabled && o.value !== '').map((o) => norm(o.textContent))
               : (sharedOptions(el) || []).map((o) => o.text)) : [] },
-          el: { inputs, labels, stateInput, fields: item.type === 'blank' ? fields : [], iframes: item.type === 'blank' ? iframes : [], iframe: item.type === 'subjective' ? iframes[0] : null },
+          el: { root: container, inputs, labels, stateInput, contexts: (item.contextIds || []).map(id => snapshot.refs.get(id)?.el).filter(Boolean), fields: item.type === 'blank' ? fields : [], iframes: item.type === 'blank' ? iframes : [], iframe: item.type === 'subjective' ? iframes[0] : null },
           _targetIds: targetIds,
         };
         ready.set(key, q);
