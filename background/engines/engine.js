@@ -119,28 +119,28 @@ function jsonToAnswer(q, items) {
     }
     for (let i = 0; i < wanted.length; i++) {
       const w = wanted[i];
-      // 完整文字先匹配，避免“同步通信”又命中“半同步通信”。
-      const exact = options.filter(o => w && w === o.text);
-      let matches = exact.length ? exact : /^\d+\/\d+$/.test(w) ? [] : options.filter(o =>
-        o.text && o.text.length >= 4 && (w.includes(o.text) || o.text.includes(w)));
-      /* 模型常把选项字母一起写进答案（"A. A 胡锦涛"、"C. C 和平与发展"）：
-         原式匹配失败时逐层剥掉字母前缀再比一次，短选项（"胡锦涛"）也能命中。
-         剥离在原始答案上做（cmp 已去掉空格），且只认「字母 + 点/空白」前缀，
+      /* 模型常把选项字母一起写进答案（"A. 192.168.10.1"、"C. C 和平与发展"）：
+         先剥掉字母前缀再精确匹配，然后才做子串匹配。顺序反过来时，D("192.168.10")
+         是 A("192.168.10.1") 的子串，两项同时命中会被判成歧义整题作废
+         （2026-11-11 IPv4 地址题异常记录）。剥离只认「字母 + 点/空白」前缀，
          A∪B、H2O 这类内容不会被误剥。 */
-      if (!matches.length) {
-        let rv = String(items[i] ?? '').trim();
-        for (let n = 0; n < 3; n++) {
-          const next = rv.replace(/^[A-Ha-h](?:[.、．:：)）]+\s*|\s+)/, '');
-          if (next === rv) break;
-          rv = next;
-        }
-        const v = cmp(rv);
-        if (v && v !== w) {
-          const exact2 = options.filter(o => v === o.text);
-          matches = exact2.length ? exact2 : options.filter(o =>
-            o.text && o.text.length >= 2 && (v.includes(o.text) || o.text.includes(v)));
-          if (matches.length > 1) matches = [];
-        }
+      let rv = String(items[i] ?? '').trim();
+      for (let n = 0; n < 3; n++) {
+        const next = rv.replace(/^[A-Ha-h](?:[.、．:：)）]+\s*|\s+)/, '');
+        if (next === rv) break;
+        rv = next;
+      }
+      const v = cmp(rv);
+      const stripped = v && v !== w ? v : '';
+      // 完整文字先匹配，避免“同步通信”又命中“半同步通信”。
+      let matches = options.filter(o => (w && w === o.text) || (stripped && stripped === o.text));
+      if (!matches.length && !/^\d+\/\d+$/.test(w)) {
+        const base = stripped || w;
+        matches = options.filter(o => o.text && o.text.length >= 4 && base && (base.includes(o.text) || o.text.includes(base)));
+      }
+      if (!matches.length && stripped) {
+        matches = options.filter(o => o.text && o.text.length >= 2 && (stripped.includes(o.text) || o.text.includes(stripped)));
+        if (matches.length > 1) matches = [];
       }
       // 模型直接回选项字母（"A" / "B"）时按字母取，不再要求文字一致。
       if (!matches.length) {

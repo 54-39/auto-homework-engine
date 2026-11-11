@@ -429,6 +429,7 @@ async function browserChecks() {
     <section class="questionLi" typename="多选题" id="question902"><h3 class="mark_name">原生多选无需检测</h3><label class="answerBg"><span class="num_option">A</span><span class="answer_p">甲</span></label><label class="answerBg"><span class="num_option">B</span><span class="answer_p">乙</span></label></section>
     <section class="questionLi" typename="判断题" id="question903"><h3 class="mark_name">原生判断无需检测</h3><label class="answerBg"><span class="num_option" data="true">A</span></label><label class="answerBg"><span class="num_option" data="false">B</span></label></section>
     <section class="questionLi" typename="填空题" id="question904"><h3 class="mark_name">原生填空无需检测____</h3><input type="text" name="unused" hidden><textarea id="nativeBlank"></textarea></section>
+    <section class="questionLi" typename="填空题" id="question907"><h3 class="mark_name">原生长题干填空${'甲'.repeat(300)}尾部小问________</h3><input type="text" name="unused" hidden><textarea id="nativeLongBlank"></textarea></section>
     <section class="questionLi" typename="简答题" id="question905"><h3 class="mark_name">原生简答无需检测</h3><textarea></textarea></section>
     <section class="questionLi" typename="陌生题型" id="question906"><h3 class="mark_name">未知题型不可默认成单选</h3><label class="answerBg"><span class="num_option">A</span>甲</label><label class="answerBg"><span class="num_option">B</span>乙</label></section>`;
   document.querySelector('main').append(nativeFixture);
@@ -484,8 +485,10 @@ async function browserChecks() {
   await check('打开即显示学习通原生五类题目，无 Key、无 AI 请求且不自动答题', async () => {
     await until(() => HW.questions.some(q => q.meta.stem.includes('原生单选')));
     const native = HW.questions.filter(q => q.meta.stem.startsWith('原生'));
-    ok(native.length === 5, JSON.stringify(native.map(q => q.meta)));
-    ok(native.map(q => q.meta.type).join() === 'choice,multi,judge,blank,subjective');
+    ok(native.length === 6, JSON.stringify(native.map(q => q.meta)));
+    ok(native.map(q => q.meta.type).join() === 'choice,multi,judge,blank,blank,subjective');
+    const longStem = native.find(q => q.meta.stem.includes('原生长题干填空'));
+    ok(longStem && longStem.meta.stem.includes('尾部小问'), '长题干被截断，后面的小问没有进入题干');
     ok(!ui.querySelector('.start').disabled);
     ok(!testCalls.includes('HW_DETECT_QUESTIONS') && !testCalls.includes('HW_START'));
     ok(ui.querySelectorAll('.pending').length > 0, '未知题型消失或被默认为单选');

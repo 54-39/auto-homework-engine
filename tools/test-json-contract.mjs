@@ -29,6 +29,12 @@ assert.throws(() => parseAnswer(qFraction, '{"answers":["1/4"]}'), /AI 答案/);
 assert.throws(() => parseAnswer(qFraction, '{"answers":["11/20"]}'), /AI 答案/);
 assert.throws(() => parseAnswer(qChoice, '{"answers":["2","3"]}'), /AI 答案/);
 assert.equal(parseAnswer(qChoice, '瞎写的'), '', '不明确的答案不能猜选项');
+/* 选项文字自带字母前缀且互为子串：剥前缀后精确匹配，不能把 D 当成 A 的候选 */
+const qIp = { type: 'choice', stem: 'IPv4 地址表示', options: [
+  { key: 'A', text: 'A 192.168.10.1' }, { key: 'B', text: 'B 192.168.10.256' },
+  { key: 'C', text: 'C 192.168.10.1.1' }, { key: 'D', text: 'D 192.168.10' }] };
+assert.equal(parseAnswer(qIp, '{"answers":["A. 192.168.10.1"]}'), 'A');
+assert.equal(parseAnswer(qIp, '{"answers":["D. 192.168.10"]}'), 'D');
 /* 完整选项优先：同步通信不能同时命中半同步通信。 */
 const qSync = { type: 'choice', stem: '发送方和接收方严格按照时钟节拍传输的是哪种通信方式？', options: [
   { key: 'A', text: 'A 异步通信' }, { key: 'B', text: 'B 同步通信' },

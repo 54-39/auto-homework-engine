@@ -110,7 +110,7 @@
     let stem = stemBefore(block, firstInput);
     if (stem.length < 4) stem = norm(block.querySelector(STEM_SELECTORS)?.textContent || '');
     if (stem.length < 4) stem = norm(textWithBlanks(block));
-    return stem.slice(0, 500);
+    return stem.slice(0, 2000);
   }
 
   /* 块内可访问的 iframe 富文本编辑器（超星简答题用 UEditor：编辑区在 iframe 的 contenteditable body 里） */
@@ -226,7 +226,7 @@
             }
           }
           if (stem.length < 4) stem = richText(block.querySelector(STEM_SELECTORS)) || '';
-          const meta = { type, stem: stem.slice(0, 500) };
+          const meta = { type, stem: stem.slice(0, 2000) };
           meta.options = labels.map((l) => ({ key: l.key, text: l.text }));
           questions.push({ meta, el: { inputs: [], labels, stateInput: stateInput || undefined } });
         });
@@ -241,7 +241,7 @@
       });
       if (textInputs.length) {
         questions.push({
-          meta: { type: 'blank', stem: norm(textWithBlanks(block)).slice(0, 500), blanks: textInputs.length },
+          meta: { type: 'blank', stem: norm(textWithBlanks(block)).slice(0, 2000), blanks: textInputs.length },
           el: { inputs: textInputs, labels: [] }, // labels 统一存在（填空无选项）
         });
       }
@@ -257,7 +257,7 @@
         questions.push({
           meta: {
             type: 'blank',
-            stem: richText(block.querySelector('.Zy_TItle, .mark_name')) || norm(textWithBlanks(block)).slice(0, 500),
+            stem: richText(block.querySelector('.Zy_TItle, .mark_name')) || norm(textWithBlanks(block)).slice(0, 2000),
             blanks: blankEditors.length,
           },
           el: { inputs: [], labels: [], fields: blankEditors },
@@ -271,14 +271,14 @@
         editors.forEach((f, i) => {
           let stem = stemOf(block, f, {});
           if (editors.length > 1) stem = `${stem}（第${i + 1}小问）`;
-          questions.push({ meta: { type: 'subjective', stem: stem.slice(0, 500) }, el: { inputs: [], iframe: f, labels: [] } });
+          questions.push({ meta: { type: 'subjective', stem: stem.slice(0, 2000) }, el: { inputs: [], iframe: f, labels: [] } });
         });
       } else {
         const tas = [...block.querySelectorAll('textarea')].filter(isVisible);
         tas.forEach((ta, i) => {
           const stem =
             tas.length === 1 ? stemOf(block, ta, {}) : `${stemOf(block, ta, {})}（第${i + 1}小问）`;
-          questions.push({ meta: { type: 'subjective', stem: stem.slice(0, 500) }, el: { inputs: [ta], labels: [] } });
+          questions.push({ meta: { type: 'subjective', stem: stem.slice(0, 2000) }, el: { inputs: [ta], labels: [] } });
         });
       }
     });

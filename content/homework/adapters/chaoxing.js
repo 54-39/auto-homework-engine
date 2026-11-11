@@ -52,7 +52,7 @@
         const code = q.querySelector('input[name="answertype' + id + '"]')?.value;
         const type = TYPE_MAP[q.getAttribute('typename')] || { 0: 'choice', 1: 'multi', 2: 'blank', 3: 'judge', 4: 'subjective' }[code];
         if (!type) return null;
-        const stem = textOf(q.querySelector('.mark_name, .Zy_TItle') || q).slice(0, 300);
+        const stem = textOf(q.querySelector('.mark_name, .Zy_TItle') || q).slice(0, 2000);
         const stateInput = q.querySelector('input[name="answer' + id + '"]');
         if (type === 'subjective' || type === 'blank') {
           const tas = [...q.querySelectorAll('textarea')];

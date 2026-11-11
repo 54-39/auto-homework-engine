@@ -1449,7 +1449,7 @@
               return root === el || (q.type !== 'unknown' && root && (root.contains(el) || el.contains(root)));
             });
             if (containerId && !represented) items.push({ type: 'unknown', containerId,
-              stem: HW.AIDetection.textOf(el.querySelector('.mark_name,.Zy_TItle') || el).slice(0, 300), options: [], inputIds: [],
+              stem: HW.AIDetection.textOf(el.querySelector('.mark_name,.Zy_TItle') || el).slice(0, 2000), options: [], inputIds: [],
               reason: '页面题型暂未识别，可点「检测题目」调用 AI' });
           }
         }
