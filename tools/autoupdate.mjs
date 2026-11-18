@@ -27,9 +27,14 @@ export const isPayload = (p) =>
    下一轮会先把备份还原回去，把新版又冲掉。 */
 const TERMINAL_PHASES = ['complete', 'failed', 'rolled_back', 'confirmed'];
 
+const parseVersion = (v) => {
+  const parts = String(v).split('.').map((n) => parseInt(n, 10) || 0);
+  return parts.length === 3 ? [parts[0], 0, parts[1], parts[2]] : parts;
+};
 export const cmp = (a, b) => {
-  const A = String(a).split('.').map(Number), B = String(b).split('.').map(Number);
-  for (let i = 0; i < 3; i++) if ((A[i] || 0) !== (B[i] || 0)) return Math.sign((A[i] || 0) - (B[i] || 0));
+  const A = parseVersion(a), B = parseVersion(b);
+  const len = Math.max(A.length, B.length);
+  for (let i = 0; i < len; i++) if ((A[i] || 0) !== (B[i] || 0)) return Math.sign((A[i] || 0) - (B[i] || 0));
   return 0;
 };
 

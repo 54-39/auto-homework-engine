@@ -465,10 +465,15 @@ export async function hashKey(text) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 24);
 }
 
-/* 版本号比较（自动更新检查用）：a > b 返回 1，a < b 返回 -1，相等返回 0。支持 "1.2.10" 多段数字。 */
+/* 版本号比较（自动更新检查用）：a > b 返回 1，a < b 返回 -1，相等返回 0。
+   旧三段版本 1.x.y 视作 1.0.x.y，与新四段版本放在同一坐标系比较。 */
+const parseVersion = (v) => {
+  const parts = String(v).split('.').map((n) => parseInt(n, 10) || 0);
+  return parts.length === 3 ? [parts[0], 0, parts[1], parts[2]] : parts;
+};
 export function compareVersions(a, b) {
-  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
-  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
   const len = Math.max(pa.length, pb.length);
   for (let i = 0; i < len; i++) {
     const x = pa[i] || 0;
@@ -478,10 +483,9 @@ export function compareVersions(a, b) {
   return 0;
 }
 
-/* 是否功能更新（更新提示分级用）：主版本号或次版本号不同才算（如 0.4.x → 0.5.0），只动末位补丁号的修复更新不算。 */
+/* 是否功能更新（更新提示分级用）：主版本、次版本或 Edge 位不同才算；只动 GitHub 小版本末位不算。 */
 export function isMajorUpdate(a, b) {
-  const seg = (v) => String(v).split('.').map((n) => parseInt(n, 10) || 0);
-  const pa = seg(a);
-  const pb = seg(b);
-  return (pa[0] || 0) !== (pb[0] || 0) || (pa[1] || 0) !== (pb[1] || 0);
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  return (pa[0] || 0) !== (pb[0] || 0) || (pa[1] || 0) !== (pb[1] || 0) || (pa[2] || 0) !== (pb[2] || 0);
 }

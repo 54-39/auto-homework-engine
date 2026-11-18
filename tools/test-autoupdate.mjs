@@ -89,6 +89,11 @@ t('cmp 0.4.8 < 0.5.0', cmp('0.4.8', '0.5.0') < 0);
 t('cmp 0.10.0 > 0.9.0', cmp('0.10.0', '0.9.0') > 0);
 t('cmp 0.4.8 < 0.4.11', cmp('0.4.8', '0.4.11') < 0);
 t('cmp 相等', cmp('0.5.0', '0.5.0') === 0);
+t('cmp 旧三段映射到四段', cmp('1.2.0', '1.0.2.0') === 0);
+t('cmp 1.1.19 < 1.0.2.0', cmp('1.1.19', '1.0.2.0') < 0);
+t('cmp 1.0.2.0 < 1.0.3.0', cmp('1.0.2.0', '1.0.3.0') < 0);
+t('cmp 1.0.2.1 < 1.0.2.2', cmp('1.0.2.1', '1.0.2.2') < 0);
+t('cmp 1.0.2.10 > 1.0.2.9', cmp('1.0.2.10', '1.0.2.9') > 0);
 
 /* 2. 载荷过滤 */
 for (const p of ['manifest.json', 'settings.html', 'settings.js', 'install-updater.cmd', 'repair-updater.cmd', 'background/service-worker.js', 'content/homework/panel.js', 'options/options.js', 'options/release-notes.js', 'icons/icon16.png', 'tools/autoupdate.mjs', 'tools/native-host.mjs', 'tools/native-host-install-core.mjs', 'tools/install-native-host.mjs', 'tools/updater-setup-core.mjs', 'tools/updater-network.mjs', 'tools/updater-bootstrap.ps1', 'tools/updater-bootstrap.cmd', 'tools/make-offline-bundle.mjs']) {

@@ -1,6 +1,6 @@
 import { isUpdaterHostReady } from './tools/updater-setup-core.mjs';
 import { exportIssueHistory, ISSUE_PREFIX } from './background/issue-history.js';
-import { EDGE_BASELINE, NEXT_EDGE, EDGE_RELEASES } from './options/release-notes.js';
+import { PENDING_RELEASES, EDGE_RELEASES } from './options/release-notes.js';
 import './options/settings-controls.js';
 import './options/options.js';
 
@@ -293,21 +293,18 @@ import './options/options.js';
     }
   });
 
-  /* 更新内容：功能取最近 3 个 Edge 版本（含待上架），Bug 修复只取最新 1 个版本。 */
+  /* 更新内容：按小版本分组；功能取最近 3 个版本，Bug 修复只取最新 1 个版本。 */
   (() => {
     const featureList = $('#notesFeatures');
     const fixList = $('#notesFixes');
     if (!featureList || !fixList) return;
-    const base = $('#notesBase');
-    if (base) base.textContent = 'Edge 商店当前版本：v' + EDGE_BASELINE;
-    const pending = NEXT_EDGE.features.length || NEXT_EDGE.fixes.length;
-    const groups = pending ? [{ version: '待上架', ...NEXT_EDGE }, ...EDGE_RELEASES] : EDGE_RELEASES;
+    const groups = [...PENDING_RELEASES, ...EDGE_RELEASES];
     const row = (text, version) => {
       const li = document.createElement('li');
       li.append(text);
       const tag = document.createElement('span');
       tag.className = 'note-ver';
-      tag.textContent = version;
+      tag.textContent = 'v' + version;
       li.append(tag);
       return li;
     };
