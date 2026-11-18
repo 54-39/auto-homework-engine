@@ -47,7 +47,8 @@
       (root === document ? document.head : root).appendChild(s);
     }
     const popupParent = root === document ? document.body : root;
-    let cur = items.some((i) => i.id === value) ? value : items[0].id; // 脏值/缺省都落到第一项，控件不会变空
+    /* 允许空列表（题目下拉在检测前是空的）：先给一个占位项，setItems 会替换掉。 */
+    let cur = items.some((i) => i.id === value) ? value : (items[0]?.id ?? ''); // 脏值/缺省都落到第一项，控件不会变空
     let hot = null;
 
     const trig = document.createElement('button');
@@ -65,23 +66,29 @@
     const list = document.createElement('div');
     list.className = 'ddlist hidden';
     list.setAttribute('role', 'listbox');
-    const opts = items.map((it) => {
-      const o = document.createElement('div');
-      o.className = 'ddopt';
-      o.id = 'ddopt-' + ++seq;
-      o.dataset.id = it.id;
-      o.setAttribute('role', 'option');
-      o.textContent = it.label; // 单行：说明文字放控件下方，不进列表
-      o.addEventListener('mousedown', (e) => e.preventDefault()); // 别让焦点离开触发器，键盘流程才不断
-      o.addEventListener('click', () => pick(it.id));
-      o.addEventListener('mouseenter', () => setHot(o));
-      list.appendChild(o);
-      return o;
-    });
+    /* 选项 DOM 必须能重建：题目下拉的项随检测结果变化，只改 items 数组会让列表显示旧项。 */
+    let opts = [];
+    const buildOpts = () => {
+      list.replaceChildren();
+      opts = items.map((it) => {
+        const o = document.createElement('div');
+        o.className = 'ddopt';
+        o.id = 'ddopt-' + ++seq;
+        o.dataset.id = it.id;
+        o.setAttribute('role', 'option');
+        o.textContent = it.label; // 单行：说明文字放控件下方，不进列表
+        o.addEventListener('mousedown', (e) => e.preventDefault()); // 别让焦点离开触发器，键盘流程才不断
+        o.addEventListener('click', () => pick(it.id));
+        o.addEventListener('mouseenter', () => setHot(o));
+        list.appendChild(o);
+        return o;
+      });
+    };
+    buildOpts();
     popupParent.appendChild(list);
 
-    const optFor = (id) => opts.find((o) => o.dataset.id === id) || opts[0];
-    const label = (id) => (items.find((i) => i.id === id) || items[0]).label;
+    const optFor = (id) => opts.find((o) => o.dataset.id === id) || opts[0] || null;
+    const label = (id) => (items.find((i) => i.id === id) || items[0] || { label: '' }).label;
     const render = () => {
       name.textContent = label(cur);
       opts.forEach((o) => o.setAttribute('aria-selected', String(o.dataset.id === cur)));
@@ -127,6 +134,7 @@
 
     function open() {
       if (!list.classList.contains('hidden')) return;
+      if (!items.length) return; // 空列表（未检测到题目）不开空弹层
       const prev = byRoot.get(root);
       if (prev && prev !== close) prev();
       list.classList.remove('hidden');
@@ -190,6 +198,15 @@
           cur = v;
           render();
         }
+      },
+      /* 题目列表是动态的：重新检测后项会变，必须重建选项 DOM。 */
+      setItems(next) {
+        items = next.length ? next : [{ id: '', label: '暂无题目' }];
+        trig.disabled = !next.length;
+        if (!items.some((i) => i.id === cur)) cur = items[0].id;
+        hot = null;
+        buildOpts();
+        render();
       },
       get label() {
         return label(cur);

@@ -16,7 +16,7 @@ export async function captureQuestionImage(sender, payload, api = chrome) {
   const tab = sender?.tab;
   if (!tab?.id || !Number.isInteger(tab.windowId)) throw new Error('找不到当前作业标签页');
   const here = new URL(sender.url || 'about:blank');
-  if (!/^https?:$/.test(here.protocol) || !/(^|\.)chaoxing\.com$/i.test(here.hostname)) throw new Error('无效的题图截图请求');
+  if (!/^https?:$/.test(here.protocol) || !/(^|\.)(?:chaoxing\.com|yooc\.me)$/i.test(here.hostname)) throw new Error('无效的题图截图请求');
   const { rect, viewport } = payload || {};
   if (!rect || !viewport || ![rect.x, rect.y, rect.width, rect.height, viewport.width, viewport.height].every(Number.isFinite) ||
       rect.x < 0 || rect.y < 0 || rect.width < 1 || rect.height < 1 || viewport.width < 1 || viewport.height < 1 ||

@@ -42,6 +42,8 @@ function fixture(failure) {
     ensureCardRendered: async () => true, cardHasNoTasks: () => false, expandTaskCards: async () => {}, classify: () => failure === 'mixed' ? 'video' : 'quiz', bbsCard: () => false, surveyCard: () => false,
     videoJobsDone: () => true,
     textJobsDone: () => counts[active] === 0,
+    nudgeCards: async () => ({ clicked: 0, done: 0 }),
+    cardTreeRefreshed: () => true,
     readThrough: async () => { calls.push(active + ':read'); counts[active] = 0; return true; },
     quizDocument: () => null,
     docs: () => [],
@@ -131,6 +133,16 @@ for (const type of ['task', 'entry', 'incomplete', 'progress']) {
   assert.match(item?.message, /仍有 1 个任务点未完成.*66\.7\/100/);
   assert.ok(JSON.parse(item.details).process.some(text => text.includes('模型失败')));
   console.log('PASS 低分节点仍未完成时，收尾报告保留分数和失败原因');
+}
+{
+  const f = fixture('incomplete');
+  let left = 1;
+  f.context.unfinishedOf = () => left;
+  f.context.nudgeCards = async () => { f.calls.push('cards'); left = 0; return { clicked: 1, done: 1 }; };
+  await f.run();
+  assert.ok(f.calls.includes('cards'), '未完成章节没有走任务卡兜底');
+  assert.ok(!f.messages.some(message => message.type === 'HW_ISSUE_ADD' && /仍有 \d+ 个任务点未完成/.test(message.payload.message)), '兜底完成后仍按旧计数误报');
+  console.log('PASS 兜底点击任务卡后按站点新计数收尾，不再误报');
 }
 {
   const f = fixture('task'), original = f.context.unfinishedOf;

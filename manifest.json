@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extensionName__",
-  "version": "1.1.2",
+  "version": "1.1.19",
   "description": "__MSG_extensionDescription__",
   "default_locale": "en",
   "permissions": [
@@ -20,7 +20,9 @@
   },
   "host_permissions": [
     "*://*.chaoxing.com/*",
+    "*://*.yooc.me/*",
     "*://*.doubao.com/*",
+    "*://*.deepseek.com/*",
     "https://api.deepseek.com/*",
     "https://ark.cn-beijing.volces.com/*",
     "https://open.bigmodel.cn/*",
@@ -34,7 +36,9 @@
     "service_worker": "background/service-worker.js",
     "type": "module"
   },
-  "action": { "default_title": "作业助手：允许当前页面截图" },
+  "action": {
+    "default_title": "作业助手：允许当前页面截图"
+  },
   "content_scripts": [
     {
       "matches": [
@@ -60,10 +64,38 @@
     },
     {
       "matches": [
+        "*://*.yooc.me/*"
+      ],
+      "js": [
+        "content/homework/adapters/chaoxing.js",
+        "content/homework/dropdown.js",
+        "content/homework/diagnostics.js",
+        "content/homework/extractor.js",
+        "content/homework/font-decoder.js",
+        "content/homework/ai-extractor.js",
+        "content/homework/question-images.js",
+        "content/homework/filler.js",
+        "content/homework/panel.js",
+        "content/homework/content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    },
+    {
+      "matches": [
         "*://*.doubao.com/*"
       ],
       "js": [
         "content/doubao/doubao-bridge.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.deepseek.com/*"
+      ],
+      "js": [
+        "content/deepseek/deepseek-bridge.js"
       ],
       "run_at": "document_idle"
     }

@@ -186,7 +186,7 @@ $('clearKey').addEventListener('click', () => changeKey('SET_CONFIG', { api: { a
 $('appForm').addEventListener('submit', async event => {
   event.preventDefault();
   const api = apiFields();
-  const bridge = { delayMin: +$('delayMin').value, delayMax: +$('delayMax').value, newChat: false, viewMode: $('bridgeViewMode').value };
+  const bridge = { provider: $('bridgeProvider').value, delayMin: +$('delayMin').value, delayMax: +$('delayMax').value, newChat: false, viewMode: $('bridgeViewMode').value };
   if ($('engine').value === 'bridge' && bridge.delayMax < bridge.delayMin) {
     out('msg', '间隔上限不能小于下限，请调整后再保存', 'err'); $('delayMax').focus(); return;
   }
@@ -223,6 +223,7 @@ $('test').addEventListener('click', async () => {
   $('subjMode').value = config.subjMode || 'ask';
   $('rewriteConfirm').checked = config.rewriteConfirm !== false;
   showAPI(config.api || {});
+  $('bridgeProvider').value = config.bridge?.provider === 'deepseek' ? 'deepseek' : 'doubao';
   $('delayMin').value = config.bridge?.delayMin ?? 3000;
   $('delayMax').value = config.bridge?.delayMax ?? 8000;
   $('bridgeViewMode').value = config.bridge?.viewMode === 'window' ? 'window' : 'split';

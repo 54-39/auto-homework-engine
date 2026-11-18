@@ -11,7 +11,14 @@ export function startBatchQueue(items, request, isCurrent = () => true, concurre
   }));
   let next = 0;
   let stopped = false;
-  const active = () => !stopped && isCurrent();
+  const stop = () => {
+    stopped = true;
+    for (const entry of deferred.values()) entry.resolve({ error: new Error('答题已取消') });
+  };
+  const active = () => {
+    if (!stopped && !isCurrent()) stop();
+    return !stopped;
+  };
   async function process(batch) {
     let first;
     try {
@@ -28,10 +35,12 @@ export function startBatchQueue(items, request, isCurrent = () => true, concurre
             const again = refill.answers.get(item.id);
             if (again) {
               first.answers.set(item.id, again);
-              if (refill.raw) first.raw = (first.raw || '') + '\n补答：' + refill.raw;
             }
           }
-        } catch { /* 补问失败不拖垮已拿到的答案；缺的题仍按无答案走兜底 */ }
+          if (refill.raw) first.raw = (first.raw || '') + '\n补答：' + refill.raw;
+        } catch (error) {
+          for (const item of missing) deferred.get(item.id).resolve({ error });
+        }
         if (!active()) throw new Error('答题已取消');
       }
       for (const item of batch) {
@@ -65,5 +74,5 @@ export function startBatchQueue(items, request, isCurrent = () => true, concurre
     }
   }
   for (let i = 0; i < Math.max(1, Math.min(2, concurrency)); i++) void worker();
-  return { get(id) { return deferred.get(id)?.promise; }, stop() { stopped = true; } };
+  return { get(id) { return deferred.get(id)?.promise; }, stop };
 }

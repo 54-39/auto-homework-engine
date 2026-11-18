@@ -49,3 +49,60 @@ assert.match(panel,/if \(cfg\.engine === 'bridge' && opts\?\.wholePage\) \{/,'�
 assert.equal(/if \(cfg\.engine === 'bridge'\) \{/.test(panel),false,'不许留只判引擎的收起分支');
 assert.equal(/fromIndex: i,[\s\S]{0,80}?wholePage/.test(panel),false,'单题/右键重问不能带 wholePage');
 console.log('PASS 面板收起只由「开始」按钮触发，单题与右键重问不动面板');
+
+{
+  const at = sw.indexOf("} else if (type === 'CACHE_CLEAR') {") + "} else if (type === 'CACHE_CLEAR') {".length;
+  const body = sw.slice(at, sw.indexOf('\n      } else {', at));
+  for (const dryRun of [true, false]) {
+    let removed = [], response;
+    const ctx = vm.createContext({ payload: { dryRun }, sendResponse: r => { response = r; }, chrome: { storage: { local: {
+      get: async () => { throw Error('禁止加载所有诊断和配置'); },
+      getKeys: async () => ['c:answer', 'c:upd', 'config', 'savedKeys', 'issue:large'],
+      remove: async keys => { removed = Array.from(keys); },
+    } } } });
+    vm.runInContext('async function clear(){' + body + '\n}', ctx); await ctx.clear();
+    assert.equal(response.count, 1);
+    assert.deepEqual(removed, dryRun ? [] : ['c:answer']);
+  }
+  console.log('PASS 记忆统计和清理只枚举键，保留配置、诊断和更新缓存');
+}
+{
+  const source = fs.readFileSync(new URL('./make-edge-store-bundle.mjs', import.meta.url), 'utf8');
+  const files = new Map();
+  const read = file => files.get(file) ?? fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const ctx = vm.createContext({ read, write: (file, text) => files.set(file, text), version: JSON.parse(read('manifest.json')).version });
+  const helpers = source.slice(source.indexOf('function removeBetween('), source.indexOf('function copyDir('));
+  const transform = source.slice(source.indexOf('  const manifest = JSON.parse'), source.indexOf('  fs.mkdirSync(path.dirname(outPath)'));
+  vm.runInContext(helpers + transform, ctx);
+  const { spawnSync } = await import('node:child_process');
+  for (const [name, text] of files) {
+    if (!name.endsWith('.js')) continue;
+    const result = spawnSync(process.execPath, ['--check', '--input-type=module'], { input: text, encoding: 'utf8', timeout: 10000 });
+    assert.equal(result.status, 0, name + ': ' + result.stderr);
+  }
+  assert.ok(!JSON.parse(files.get('manifest.json')).permissions.includes('nativeMessaging'));
+  console.log('PASS 商店源码转换边界和转换后的语法（内存验证，不生成发布包）');
+}
+{
+  const manifest = JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
+  const files = [manifest.background.service_worker, manifest.options_page,
+    ...Object.values(manifest.icons || {}),
+    ...(manifest.content_scripts || []).flatMap(s => [...(s.js || []), ...(s.css || [])])];
+  for (const file of files) assert.ok(fs.existsSync(new URL('../' + file, import.meta.url)), 'manifest 资源缺失：' + file);
+  console.log('PASS manifest 所有显式资源引用存在');
+}
+for (const mode of ['idle', 'answer', 'detect', 'analyze', 'course', 'storage-error', 'late-start']) {
+  let starts = 0;
+  const ctx = vm.createContext({
+    run: mode === 'answer' ? { cancelled: false, items: [{ status: 'asking' }] } : null,
+    analyzingCount: mode === 'analyze' ? 1 : 0, detectingTabs: new Map(mode === 'detect' ? [[7, {}]] : []),
+    getConfig: async () => ({ autoUpdate: true }), checkUpdate: async () => ({ ok: true, hasUpdate: true, latest: '2.0.0' }),
+    loadQueue: async () => { if (mode === 'storage-error') throw Error('storage unavailable'); return mode === 'course' ? {} : null; },
+    runUpdateViaHost: async () => { starts++; return { started: true }; },
+    chrome: { storage: { local: { set: async () => { if (mode === 'late-start') ctx.analyzingCount++; }, remove: async () => {} } } },
+  });
+  vm.runInContext(sw.slice(sw.indexOf('const AUTO_UPDATE_INTERVAL'), sw.indexOf('setTimeout(autoUpdateTick')), ctx);
+  await ctx.autoUpdateTick();
+  assert.equal(starts, mode === 'idle' ? 1 : 0, '后台更新空闲保护：' + mode);
+}
+console.log('PASS 后台更新避开答题、识题、解析、刷课及未知存储状态');

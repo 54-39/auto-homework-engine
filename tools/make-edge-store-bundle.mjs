@@ -49,8 +49,8 @@ try {
     '/* 后台 Service Worker：引擎路由、题目队列、答案缓存、与作业页消息中转、热重载、自动更新检查 */',
     '/* 后台 Service Worker：引擎路由、题目队列、答案缓存、与作业页消息中转 */', 'service worker description');
   sw = replaceOnce(sw,
-    "import { hashKey, compareVersions, isMajorUpdate } from './engines/engine.js';",
-    "import { hashKey } from './engines/engine.js';", 'service worker imports');
+    "import { hashKey, compareVersions, isMajorUpdate, buildAnalyzeMessages } from './engines/engine.js';",
+    "import { hashKey, buildAnalyzeMessages } from './engines/engine.js';", 'service worker imports');
   sw = replaceOnce(sw,
     '  autoUpdate: true, // 后台定时检查，空闲时自动装新版（刷课中不打断）；设置页可关\n',
     '', 'updater configuration');
@@ -63,8 +63,8 @@ try {
     "      } else if (type === 'CHECK_UPDATE') {\n        sendResponse(await checkUpdate(payload.force, payload.cacheOnly));\n      } else if (type === 'HW_RUN_UPDATE') {\n        sendResponse(await runUpdateViaHost());\n      } else if (type === 'DIAG_UPDATE_HOST') {\n        /* 安装完成自检：只 ping 宿主，不启动更新 */\n        sendResponse(await diagUpdateHost());\n      } else if (type === 'UPDATE_PAGE_READY') {\n        sendResponse(await confirmUpdatePage(payload.transactionId, sender));\n      } else if (type === 'OPEN_SETTINGS') {",
     "      } else if (type === 'OPEN_SETTINGS') {", 'service worker updater message handlers');
   sw = replaceOnce(sw,
-    "        const keys = Object.keys(all).filter((k) => k.startsWith('c:') && k !== 'c:upd');",
-    "        const keys = Object.keys(all).filter((k) => k.startsWith('c:'));", 'update cache exclusion');
+    "        const keys = all.filter((k) => k.startsWith('c:') && k !== 'c:upd');",
+    "        const keys = all.filter((k) => k.startsWith('c:'));", 'update cache exclusion');
   sw = replaceOnce(sw,
     '        // c:upd 是更新检查缓存（非答题记忆），不计入条数也不删',
     '        // 答题记忆缓存以 c: 开头', 'update cache comment');
@@ -97,8 +97,8 @@ try {
     '/* 工具设置页（settings.html）：侧边栏收纳 应用设置 / 记忆 / 刷课 / 诊断 / 检测更新。',
     '/* 工具设置页（settings.html）：侧边栏收纳记忆与诊断。', 'settings page description');
   settings = replaceOnce(settings,
-    "  const secs = { app: $('#sec-app'), mem: $('#sec-mem'), watch: $('#sec-watch'), diag: $('#sec-diag'), upd: $('#sec-upd') };\n  let onSection = () => {};",
-    "  const secs = { app: $('#sec-app'), mem: $('#sec-mem'), watch: $('#sec-watch'), diag: $('#sec-diag') };", 'settings navigation state');
+    "  const secs = { app: $('#sec-app'), mem: $('#sec-mem'), watch: $('#sec-watch'), diag: $('#sec-diag'), notes: $('#sec-notes'), upd: $('#sec-upd') };\n  let onSection = () => {};",
+    "  const secs = { app: $('#sec-app'), mem: $('#sec-mem'), watch: $('#sec-watch'), diag: $('#sec-diag'), notes: $('#sec-notes') };", 'settings navigation state');
   settings = replaceOnce(settings, '    onSection(key);\n', '', 'settings update section callback');
   const updaterStart = settings.indexOf('  /* 检测更新：');
   const finalClose = settings.lastIndexOf('\n})();');

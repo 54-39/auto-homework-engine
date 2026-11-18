@@ -111,6 +111,27 @@ async function checks() {
       ok(!$('engine-trigger').disabled);
     } finally { select('engine', 'api'); }
   });
+  await check('分区按常用程度排序，点问号在设置项上方展开行内说明', async () => {
+    ok([...document.querySelectorAll('.side button')].map(b => b.dataset.sec).join(',') === 'app,watch,mem,upd,diag', '侧栏分区顺序不对');
+    ok(!document.querySelector('#sec-app p.hint'), '应用设置仍平铺大段说明');
+    select('engine', 'bridge');
+    const field = $('bridgeProvider').closest('.app-field'), help = field.querySelector('.help');
+    const at = help.getBoundingClientRect();
+    help.click();
+    const note = document.querySelector('.hw-note');
+    ok(note && note.textContent.includes('无需 API Key'), '点击问号未展开说明');
+    ok(field.contains(note) && note.previousElementSibling === field.querySelector('label'), '说明不在标签行与控件之间');
+    const now = help.getBoundingClientRect();
+    ok(now.top === at.top && now.left === at.left, '展开说明把问号挤离了原位');
+    help.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }));
+    ok(note.isConnected, '展开的说明被移开鼠标收起');
+    help.click(); ok(!document.querySelector('.hw-note'), '再次点击未收起说明');
+    const never = $('memNever'), before = never.checked;
+    const memHelp = document.querySelector('#sec-mem .help');
+    memHelp.click(); ok(never.checked === before, '点问号误触了复选框');
+    memHelp.click(); ok(!document.querySelector('.hw-note'), '记忆分区说明未收起');
+    select('engine', 'api');
+  });
   await check('默认进入应用设置，所有已保存Key仅显示尾号', () => {
     ok(location.hash === '#app' && !$('sec-app').hidden && $('sec-mem').hidden);
     ok($('savedKeys').children.length === 2 && $('apiKey').value === '');
@@ -223,6 +244,16 @@ try {
     const shot=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});fs.writeFileSync(path.join(output,`settings-default-${width}.png`),Buffer.from(shot.data,'base64'));
   }
   const interactionResults = [];
+  await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  await evaluate(`(()=>{const e=document.getElementById('engine');e.value='bridge';e.dispatchEvent(new Event('change'));document.getElementById('bridgeProvider').closest('.app-field').querySelector('.help').click();window.scrollTo(0,0);})()`);
+  await pause(100);
+  const noteShot = await call('Page.captureScreenshot', { format: 'png' });
+  fs.writeFileSync(path.join(output, 'settings-note-open-1280.png'), Buffer.from(noteShot.data, 'base64'));
+  await evaluate(`(()=>{document.getElementById('bridgeProvider').closest('.app-field').querySelector('.help').click();document.querySelector('[data-sec="diag"]').click();document.querySelector('#diagFeedbackHeading .help').click();window.scrollTo(0,0);})()`);
+  await pause(100);
+  const diagNoteShot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+  fs.writeFileSync(path.join(output, 'settings-note-diag-1280.png'), Buffer.from(diagNoteShot.data, 'base64'));
+  await evaluate(`(()=>{document.querySelector('#diagFeedbackHeading .help').click();document.querySelector('[data-sec="app"]').click();})()`);
   for (const width of [1280, 420]) {
     await call('Emulation.setDeviceMetricsOverride', { width, height:900, deviceScaleFactor:1, mobile:false });
     await evaluate(`testConfig.watchSections=0;document.querySelector('[data-sec="watch"]').click();document.getElementById('watchSections').value='0';document.getElementById('watchSections-trigger').scrollIntoView({block:'center'})`);

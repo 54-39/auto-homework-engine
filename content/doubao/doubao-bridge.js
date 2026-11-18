@@ -211,7 +211,7 @@
     const findSent = () => messageNodes('send_message').find(el => sentText(el).includes(requestId));
 
     await setInput(requestPrompt);
-    await attachImages(findEditor(), images);
+    if (!await attachImages(findEditor(), images)) throw new Error('题目图片上传未确认，已停止发送；请检查豆包附件后重试');
     await waitSendReady(requestPrompt);
     checkPageNotices();
     clickSend();

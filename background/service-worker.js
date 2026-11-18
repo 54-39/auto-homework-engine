@@ -1,9 +1,10 @@
 /* 后台 Service Worker：引擎路由、题目队列、答案缓存、与作业页消息中转、热重载、自动更新检查 */
 import { answerWithAPI, answerBatchWithAPI, testAPI, sanitizeKey, detectEndpoint, requestWithAPI } from './engines/api-engine.js';
 import { startBatchQueue } from './engines/batch-queue.js';
-import { answerWithBridge, answerBatchWithBridge, requestWithBridge, openBridgeView } from './engines/bridge-engine.js';
+import { answerWithBridge, answerBatchWithBridge, requestWithBridge, openBridgeView, PROVIDERS } from './engines/bridge-engine.js';
 import { detectQuestions } from './engines/detection-engine.js';
-import { hashKey, compareVersions, isMajorUpdate } from './engines/engine.js';
+import { hashKey, compareVersions, isMajorUpdate, buildAnalyzeMessages } from './engines/engine.js';
+import { attachImages } from './engines/batch.js';
 import { appendIssue, readIssuePage, clearIssueHistory } from './issue-history.js';
 import { readQuestionImage } from './engines/image-data.js';
 import { captureQuestionImage } from './engines/screenshot.js';
@@ -11,7 +12,7 @@ import { captureQuestionImage } from './engines/screenshot.js';
 const DEFAULT_CONFIG = {
   engine: 'api', // api | bridge
   api: { iface: 'auto', baseURL: '', model: '', apiKey: '' },
-  bridge: { newChat: false, delayMin: 3000, delayMax: 8000, viewMode: 'split' },
+  bridge: { provider: 'doubao', newChat: false, delayMin: 3000, delayMax: 8000, viewMode: 'split' },
   subjMode: 'ask', // 简答题策略：ask=每次弹窗询问 | keep=保留跳过 | rewrite=清空重写
   watchRate: 'auto', // 刷课倍速：'auto' 跟播放器菜单最高档 | '1'/'1.25'/'1.5'/'2' 固定档
   watchSections: 0, // 每门课从第一节起连续处理几节（0 = 整门课程）；设置页可改，面板不再写死 4
@@ -24,6 +25,7 @@ const DEFAULT_CONFIG = {
 
 let run = null; // { tabId, cancelled, items: [{ q, status, answer, error }] }
 const detectingTabs = new Map();
+let analyzingCount = 0;
 
 /* —— 多课程刷课队列 ——
    刷课脚本每跳一次页面就重新加载一遍，内存全丢，所以队列只能存在这里。
@@ -209,7 +211,7 @@ async function watchGo(index) {
 async function detectPage(payload, sender) {
   const tabId = sender.tab?.id;
   const host = new URL(sender.url || sender.tab?.url || 'about:blank').hostname;
-  if (tabId == null || !(host === 'chaoxing.com' || host.endsWith('.chaoxing.com'))) throw new Error('只支持在超星页面检测题目');
+  if (tabId == null || !/(^|\.)(?:chaoxing\.com|yooc\.me)$/i.test(host)) throw new Error('只支持在超星/优课页面检测题目');
   if (detectingTabs.has(tabId)) throw new Error('正在识别题目，请等待本次检测完成');
   const operation = { cancelled: false };
   detectingTabs.set(tabId, operation);
@@ -223,7 +225,7 @@ async function detectPage(payload, sender) {
       let result;
       try { result = await request(messages); }
       catch (error) {
-        if (cfg.engine === 'bridge' && !operation.cancelled) notify('豆包识题已暂停：' + String(error.message || error).slice(0, 90), true);
+        if (cfg.engine === 'bridge' && !operation.cancelled) notify('免费模式识题已暂停：' + String(error.message || error).slice(0, 90), cfg.bridge?.provider || 'doubao');
         throw error;
       }
       if (operation.cancelled) throw new Error('已取消识别，请重新检测');
@@ -249,7 +251,7 @@ function pauseRun(tabId, reason) {
       sendTab(tabId, { type: 'HW_ISSUE_WRITE_FAILED', payload: { error: String(e.message || e) } }, pausedRun?.frameId);
       notify('异常记录写入失败，已停止答题：' + String(e.message || e).slice(0, 100));
     });
-  notify('已暂停：' + reason.slice(0, 90), pausedRun?.engine === 'bridge');
+  notify('已暂停：' + reason.slice(0, 90), pausedRun?.engine === 'bridge' ? (pausedRun.provider || 'doubao') : null);
   return sendTab(tabId, { type: 'HW_DONE', payload: { paused: reason, requestId: pausedRun?.requestId } }, pausedRun?.frameId);
 }
 
@@ -275,13 +277,13 @@ chrome.action?.onClicked?.addListener(tab => sendTab(tab.id, { type: 'HW_CAPTURE
 const RISKY_RE = /风控|安全验证|人机验证|验证码|人脸验证|需要登录|登录墙/;
 const AUTH_RE = /HTTP 40[13]|authentication|invalid[_ ]?api[_ ]?key|认证|鉴权/i;
 let lastNotifyAt = 0;
-function notify(message, openDoubao = false) {
+function notify(message, attention = null) {
   const now = Date.now();
-  if (now - lastNotifyAt < 5000 && !openDoubao) return; // 需要处理登录/验证的通知不被普通状态通知挡住。
+  if (now - lastNotifyAt < 5000 && !attention) return; // 需要处理登录/验证的通知不被普通状态通知挡住。
   lastNotifyAt = now;
   try {
     chrome.notifications.create(
-      openDoubao ? 'hw-doubao-attention' : 'hw-status',
+      attention ? `hw-${attention}-attention` : 'hw-status',
       { type: 'basic', iconUrl: 'icons/icon128.png', title: '作业助手', message },
       () => void chrome.runtime.lastError,
     );
@@ -290,10 +292,11 @@ function notify(message, openDoubao = false) {
   }
 }
 chrome.notifications?.onClicked.addListener(async id => {
-  if (id !== 'hw-doubao-attention') return;
-  const tabs = await chrome.tabs.query({ url: '*://*.doubao.com/*' });
+  const provider = PROVIDERS[/^hw-(\w+)-attention$/.exec(id)?.[1]];
+  if (!provider) return;
+  const tabs = await chrome.tabs.query({ url: provider.match });
   const tab = tabs.length ? await chrome.tabs.update(tabs[0].id, { active: true })
-    : await chrome.tabs.create({ url: 'https://www.doubao.com/chat/', active: true });
+    : await chrome.tabs.create({ url: provider.url, active: true });
   try {
     await chrome.windows.update(tab.windowId, { focused: true });
   } catch {
@@ -346,6 +349,17 @@ async function checkUpdate(force, cacheOnly) {
 async function askEngine(cfg, q, auto = false) {
   if (cfg.engine === 'bridge') return answerWithBridge(q, cfg.bridge);
   return answerWithAPI(q, cfg.api, { auto });
+}
+
+/* 单题解析：只取文本，不填写、不入缓存。mode = answer | analysis | analysisOnly */
+async function analyzeOne(q, mode, cfg) {
+  const messages = buildAnalyzeMessages(q, mode);
+  const r = cfg.engine === 'bridge'
+    ? await requestWithBridge(attachImages(messages, q._images), cfg.bridge)
+    : await requestWithAPI(messages, cfg.api);
+  const text = String(r?.raw || '').trim();
+  if (!text) throw new Error('AI 未返回内容，请重试');
+  return { text };
 }
 
 const UPDATE_HOST = `com.homeworkhelper.autoupdate.${chrome.runtime.id}`;
@@ -447,9 +461,15 @@ async function autoUpdateTick() {
     if (cfg.autoUpdate === false) return;
     const r = await checkUpdate(false);
     if (!r?.ok || !r.hasUpdate) return;
-    const q = await loadQueue().catch(() => null);
-    if (q) return; // 有刷课队列：等它跑完再装
+    const occupied = () => analyzingCount > 0 || detectingTabs.size > 0 ||
+      (run && !run.cancelled && run.items.some(item => ['queued', 'asking', 'answered'].includes(item.status)));
+    const q = await loadQueue();
+    if (q || occupied()) return;
     await chrome.storage.local.set({ pendingAutoUpdate: r.latest });
+    if (occupied() || await loadQueue()) {
+      await chrome.storage.local.remove(['pendingAutoUpdate']);
+      return;
+    }
     const started = await runUpdateViaHost();
     if (!started?.started) await chrome.storage.local.remove(['pendingAutoUpdate']);
   } catch { /* 静默：设置页能看到具体状态 */ }
@@ -492,7 +512,7 @@ async function fillAnswer(activeRun, index, payload) {
   const item = activeRun.items[index];
   item.fillToken = crypto.randomUUID();
   item.status = 'answered';
-  sendTab(activeRun.tabId, { type: 'HW_ANSWER', payload: { ...payload, index, fillToken: item.fillToken, requestId: activeRun.requestId } }, activeRun.frameId);
+  sendTab(activeRun.tabId, { type: 'HW_ANSWER', payload: { ...payload, index, fillToken: item.fillToken, requestId: activeRun.requestId, forceAsk: item.q._refresh === true } }, activeRun.frameId);
   const deadline = Date.now() + 30000;
   while (item.status === 'answered' && !activeRun.cancelled && run === activeRun && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 50));
@@ -513,12 +533,13 @@ async function fillAnswer(activeRun, index, payload) {
 
 async function startRun(questions, tabId, sourceUrl, auto = false, requestId, frameId) {
   if (run) { run.cancelled = true; run.batchQueue?.stop(); }
-  const activeRun = { tabId, sourceUrl, requestId, frameId, engine: null, auto: false, cancelled: false,
+  const activeRun = { tabId, sourceUrl, requestId, frameId, engine: null, provider: null, auto: false, cancelled: false,
     items: questions.map((q) => ({ q, status: 'queued', answer: null, error: null })) };
   run = activeRun;
   const cfg = await getConfig();
   if (activeRun.cancelled || run !== activeRun) return { ok: false, error: '本次答题已取消' };
   activeRun.engine = cfg.engine;
+  activeRun.provider = cfg.bridge?.provider || 'doubao';
   activeRun.auto = auto && cfg.engine === 'api';
   if (cfg.engine === 'bridge') {
     try { await openBridgeView(tabId, cfg.bridge); }
@@ -543,7 +564,7 @@ async function startRun(questions, tabId, sourceUrl, auto = false, requestId, fr
   const preparedCache = new Map(cacheEntries);
   const batchItems = candidates.filter(item => !preparedCache.get(item.id));
   const batchQueue = batchItems.length ? startBatchQueue(batchItems,
-    batch => cfg.engine === 'bridge' ? answerBatchWithBridge(batch) : answerBatchWithAPI(batch, cfg.api),
+    batch => cfg.engine === 'bridge' ? answerBatchWithBridge(batch, cfg.bridge) : answerBatchWithAPI(batch, cfg.api),
     () => !activeRun.cancelled && run === activeRun, cfg.engine === 'bridge' ? 1 : 2) : null;
   activeRun.batchQueue = batchQueue;
   (async () => {
@@ -678,7 +699,7 @@ async function rerunOne(index, tabId, requestId, frameId) {
     const canBatch = ['choice', 'multi', 'judge', 'blank'].includes(item.q.type);
     const qid = String(index);
     const queued = canBatch ? startBatchQueue([{ id: qid, question: item.q, images: item.q._images || [] }],
-      batch => cfg.engine === 'bridge' ? answerBatchWithBridge(batch) : answerBatchWithAPI(batch, cfg.api), current, 1) : null;
+      batch => cfg.engine === 'bridge' ? answerBatchWithBridge(batch, cfg.bridge) : answerBatchWithAPI(batch, cfg.api), current, 1) : null;
     const r = queued ? await queued.get(qid) : await askEngine(cfg, item.q);
     if (r?.error) throw r.error;
     if (!current()) return stale();
@@ -729,7 +750,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, data: await captureQuestionImage(sender, payload) });
       } else if (type === 'HW_READ_QUESTION_IMAGE') {
         const here = new URL(sender.url || 'about:blank');
-        if (!/(^|\.)chaoxing\.com$/i.test(here.hostname) || !/^https?:$/.test(here.protocol)) throw new Error('无效的题图读取请求');
+        if (!/(^|\.)(?:chaoxing\.com|yooc\.me)$/i.test(here.hostname) || !/^https?:$/.test(here.protocol)) throw new Error('无效的题图读取请求');
         sendResponse({ ok: true, data: await readQuestionImage(payload.src) });
       } else if (type === 'HW_FONT_MAP') {
         const here = new URL(sender.url || 'about:blank');
@@ -754,6 +775,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true });
       } else if (type === 'HW_DETECT_QUESTIONS') {
         sendResponse(await detectPage(payload, sender));
+      } else if (type === 'HW_ANALYZE') {
+        analyzingCount++;
+        try {
+          const cfg = await getConfig();
+          if (cfg.engine === 'api' && !cfg.api?.apiKey) throw new Error('请先填写 API Key');
+          const r = await analyzeOne(payload.question, payload.mode || 'answer', cfg);
+          sendResponse({ ok: true, text: r.text });
+        } catch (e) {
+          sendResponse({ ok: false, error: String(e.message || e) });
+        } finally { analyzingCount--; }
       } else if (type === 'GET_CONFIG') {
         sendResponse({ ok: true, config: await getConfig() });
       } else if (type === 'SET_CONFIG') {
@@ -1078,9 +1109,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (type === 'CACHE_CLEAR') {
         // 清除答题记忆（AI 历史答案缓存，c: 前缀键）；dryRun 只计数不删除。
         // 不触碰：config（引擎/Key/提示标志）、savedKeys、apiEndpoint、面板位置。
-        const all = await chrome.storage.local.get(null);
+        const all = await chrome.storage.local.getKeys();
         // c:upd 是更新检查缓存（非答题记忆），不计入条数也不删
-        const keys = Object.keys(all).filter((k) => k.startsWith('c:') && k !== 'c:upd');
+        const keys = all.filter((k) => k.startsWith('c:') && k !== 'c:upd');
         if (!payload.dryRun && keys.length) await chrome.storage.local.remove(keys);
         sendResponse({ ok: true, count: keys.length });
       } else {

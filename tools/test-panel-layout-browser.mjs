@@ -108,6 +108,15 @@ try {
   await pause(150);
   const expanded = await measure();
   assert.ok(expanded.panel.width >= 600 && !expanded.overflowX && !expanded.overflowY, '展开模式异常');
+  await evaluate(`configure({engine:'bridge',panelMode:'homework'})`);
+  await pause(150);
+  const bridgeQ = await evaluate(`(()=>{const t=ui.querySelector('.qslot .ddtrig'),r=t.getBoundingClientRect();return{visible:r.width>0,text:t.textContent};})()`);
+  assert.ok(bridgeQ.visible && bridgeQ.text.includes('1.'), '免费模式展开态选题下拉不可见或没有题目');
+  const bshot = await call('Page.captureScreenshot', { format: 'png' });
+  fs.writeFileSync(path.join(output, 'expanded-bridge-1280.png'), Buffer.from(bshot.data, 'base64'));
+  console.log('PASS 免费模式展开态选题下拉可见且含检测到的题目');
+  await evaluate(`configure({engine:'api',panelMode:'homework'})`);
+  await pause(150);
   await evaluate(`ui.querySelector('.expandbtn').click();ui.querySelector('.keyinput').focus()`);
   assert.equal(await evaluate(`ui.activeElement===ui.querySelector('.keyinput')`), true);
   await evaluate(`ui.querySelector('.btn-collapse').click();ui.querySelector('.fab').click()`);

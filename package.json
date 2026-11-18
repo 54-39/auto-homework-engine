@@ -1,9 +1,11 @@
 {
   "name": "homework-helper-extension",
   "private": true,
-  "version": "1.1.2",
+  "version": "1.1.19",
   "type": "module",
   "scripts": {
+    "test": "node tools/run-tests.mjs",
+    "test:ui": "node tools/serve-audit-fixtures.mjs",
     "watch": "node tools/watch.mjs"
   }
 }

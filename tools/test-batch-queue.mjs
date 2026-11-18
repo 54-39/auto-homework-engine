@@ -39,6 +39,12 @@ const stoppedQueue = startBatchQueue(items, batch => new Promise(resolve => {
   release = () => resolve({ answers: new Map(batch.map(x => [x.id, 'A'])), raw: 'ok' });
 }), () => true, 1);
 stoppedQueue.stop();
+const allStopped = await Promise.race([
+  Promise.all(items.map(item => stoppedQueue.get(item.id))),
+  new Promise(resolve => setImmediate(() => resolve(null))),
+]);
+assert.ok(allStopped, '停止必须立即结束未发送批次和仍在等待网络的批次');
+assert.ok(allStopped.every(result => /取消/.test(result.error?.message)));
 release();
 await new Promise(r => setImmediate(r));
 await new Promise(r => setImmediate(r));
@@ -56,5 +62,21 @@ assert.equal(started, 1, 'stop 后不再发起后续批次');
   assert.equal(got.answer, 'B', '补问到的答案应被采用');
   assert.equal(got.verified, true);
   assert.deepEqual(calls.map(x => x.length), [2, 1], '首答 2 题 → 只补缺的 1 题，不再整批复核');
+}
+for (const message of ['HTTP 401 invalid API key', '需要安全验证', '图片上传未确认']) {
+  let calls = 0;
+  const sub = items.slice(0, 2);
+  const q = startBatchQueue(sub, async () => {
+    if (++calls === 1) return { answers: new Map([[sub[0].id, 'A']]) };
+    throw new Error(message);
+  });
+  assert.equal((await q.get(sub[0].id)).answer, 'A');
+  const error = (await q.get(sub[1].id)).error;
+  assert.equal(error.message, message);
+  assert.notEqual(error.code, 'HW_ANSWER_UNAVAILABLE', '补问服务错误不能转换成可猜选的无答案');
+}
+{
+  const q = startBatchQueue(items, () => { throw Error('不应请求'); }, () => false);
+  assert.ok((await Promise.all(items.map(item => q.get(item.id)))).every(r => /取消/.test(r.error.message)));
 }
 console.log('batch queue checks passed');

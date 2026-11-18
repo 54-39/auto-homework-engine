@@ -56,7 +56,8 @@ function copyTree(from, to) {
     if (entry.isDirectory()) {
       if (SKIP_DIRS.has(entry.name)) continue;
       copyTree(source, target);
-    } else if (!SKIP_FILES.has(entry.name) && !entry.name.endsWith('.download-')) {
+    } else if (!SKIP_FILES.has(entry.name) && !SKIP_FILES.has(path.relative(ROOT, source).split(path.sep).join('/')) &&
+        !/^HANDOFF|^TASK-.*\.md$|^REPORT-.*\.md$/.test(entry.name) && !entry.name.endsWith('.download-')) {
       fs.copyFileSync(source, target);
     }
   }
@@ -64,7 +65,7 @@ function copyTree(from, to) {
 
 function compress(sourceDir, zipPath, level = 'Optimal') {
   execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
-    `Compress-Archive -LiteralPath '${sourceDir}' -DestinationPath '${zipPath}' -CompressionLevel ${level} -Force`],
+    `Compress-Archive -LiteralPath '${sourceDir.replace(/'/g, "''")}' -DestinationPath '${zipPath.replace(/'/g, "''")}' -CompressionLevel ${level} -Force`],
   { stdio: 'inherit' });
 }
 

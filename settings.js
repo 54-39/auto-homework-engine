@@ -1,5 +1,6 @@
 import { isUpdaterHostReady } from './tools/updater-setup-core.mjs';
 import { exportIssueHistory, ISSUE_PREFIX } from './background/issue-history.js';
+import { EDGE_BASELINE, NEXT_EDGE, EDGE_RELEASES } from './options/release-notes.js';
 import './options/settings-controls.js';
 import './options/options.js';
 
@@ -41,7 +42,7 @@ import './options/options.js';
 
   /* 侧边栏：切换分区，并把当前分区同步到 URL hash（刷新、前进后退都停在原分区） */
   const navBtns = [...document.querySelectorAll('.side button')];
-  const secs = { app: $('#sec-app'), mem: $('#sec-mem'), watch: $('#sec-watch'), diag: $('#sec-diag'), upd: $('#sec-upd') };
+  const secs = { app: $('#sec-app'), mem: $('#sec-mem'), watch: $('#sec-watch'), diag: $('#sec-diag'), notes: $('#sec-notes'), upd: $('#sec-upd') };
   let onSection = () => {};
   const goto = (id, push) => {
     const key = secs[id] ? id : 'app';
@@ -248,88 +249,83 @@ import './options/options.js';
     diagBtn.disabled = true;
     out(diagMsg, '正在导出页面结构…');
     try {
-      const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+      const tabs = (await chrome.tabs.query({}))
+        .filter(tab => tab.id != null && /^https?:/i.test(tab.url || ''))
+        .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
       if (!diagnosticsEnabled) return out(diagMsg, '诊断记录已关闭，已取消页面结构导出', 'err');
-      if (!tabs.length) return out(diagMsg, '没有找到已打开的网页，请先打开作业页面，再回到这里导出', 'err');
-      // 取最近访问过的那个网页（＝打开设置页之前停留的作业页）：tabs.query 按标签栏顺序返回，最后一个未必是作业页
-      const tab = tabs.reduce((a, b) => ((b.lastAccessed || 0) >= (a.lastAccessed || 0) ? b : a));
-      const [res] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        // 章节题在 #iframe 里，只导顶层文档会丢掉真正的题目 DOM；同源 iframe 就地展开
-        func: () => {
-          const copy = document.documentElement.cloneNode(true);
-          // 动态字体规则可能只在CSSOM里，outerHTML不会保存insertRule的内容。
-          const fontInfo = (doc, target) => {
-            const rules = [];
-            const unreadable = [];
-            const read = list => {
-              for (const rule of list) {
-                if (rule.type === CSSRule.FONT_FACE_RULE || /font-cxsecret/.test(rule.selectorText || '')) rules.push(rule.cssText);
-                else if (rule.cssRules) read(rule.cssRules);
-              }
-            };
-            for (const sheet of doc.styleSheets) {
-              try { read(sheet.cssRules); } catch { if (sheet.href) unreadable.push(sheet.href); }
-            }
-            const data = doc.createElement('script');
-            data.type = 'application/json';
-            data.setAttribute('data-hw-font-diagnostic', '');
-            data.textContent = JSON.stringify({ baseURI: doc.baseURI, rules, unreadable,
-              fonts: [...doc.fonts].map(font => ({ family: font.family, status: font.status })) }).replace(/</g, '\\u003c');
-            target.appendChild(data);
-          };
-          const fill = (live, clone) => {
-            const lc = [...live.children];
-            [...clone.children].forEach((c, i) => {
-              const l = lc[i];
-              if (!l) return;
-              if (l.tagName === 'IFRAME') {
-                let doc = null;
-                try { doc = l.contentDocument; } catch { /* 跨域读不到，保留 <iframe> */ }
-                if (!doc?.body) return;
-                const box = document.createElement('div');
-                box.setAttribute('data-iframe', l.src || 'about:blank');
-                [...doc.body.childNodes].forEach((n) => box.appendChild(n.cloneNode(true)));
-                c.replaceWith(box);
-                fill(doc.body, box);
-                // 内嵌测验的字体定义在head，正文展开后也要保留诊断所需的头部。
-                const head = document.createElement('template');
-                head.setAttribute('data-hw-frame-head', '');
-                if (doc.head) head.content.appendChild(doc.head.cloneNode(true));
-                fontInfo(doc, head.content);
-                box.prepend(head);
-                return;
-              }
-              fill(l, c);
-            });
-          };
-          fill(document.documentElement, copy);
-          fontInfo(document, copy.querySelector('head') || copy);
-          return '<!DOCTYPE html>\n' + copy.outerHTML;
-        },
-      });
+      if (!tabs.length) return out(diagMsg, '没有找到可导出的网页（仅支持 http/https），请先打开要排查的页面，再回到这里导出', 'err');
+      /* 悬浮球能打开的页面都已注入采集脚本：按最近使用顺序试到第一个能响应的页面。
+         都不响应时才退回最近页面，按需申请站点权限后临时注入。 */
+      let tab = null;
+      let scene = null;
+      for (const candidate of tabs.slice(0, 12)) {
+        try {
+          const result = await chrome.tabs.sendMessage(candidate.id, { type: 'HW_DIAGNOSTIC_CAPTURE' }, { frameId: 0 });
+          if (result?.documents?.length) { tab = candidate; scene = result; break; }
+        } catch { /* 该页面没有采集脚本，继续找下一个 */ }
+      }
+      if (!scene) {
+        tab = tabs[0];
+        const url = new URL(tab.url);
+        if (url.protocol !== 'https:') throw new Error('该页面不是 HTTPS，无法临时注入采集脚本；请在支持 HTTPS 的页面导出');
+        const granted = await chrome.permissions.request({ origins: [url.origin + '/*'] });
+        if (!granted) throw new Error('未获得该站点的访问权限，无法导出页面结构');
+        await chrome.scripting.executeScript({ target: { tabId: tab.id, frameId: 0 }, files: ['content/homework/diagnostics.js'] });
+        scene = await chrome.tabs.sendMessage(tab.id, { type: 'HW_DIAGNOSTIC_CAPTURE' }, { frameId: 0 });
+      }
+      if (!scene?.documents?.length) throw new Error(scene?.reason || '未取得页面结构');
       if (!diagnosticsEnabled) return out(diagMsg, '诊断记录已关闭，已取消页面结构导出', 'err');
       const host = tab.url ? new URL(tab.url).hostname.replace(/[^a-z0-9.-]/gi, '_') : 'page';
-      const blob = new Blob([res.result], { type: 'text/html' });
+      const blob = new Blob([JSON.stringify(scene, null, 2)], { type: 'application/json;charset=utf-8' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `hw-debug-${host}-${Date.now()}.html`;
+      a.download = `hw-debug-${host}-${Date.now()}.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-      out(diagMsg, `已导出 ${host} 的页面结构（发给开发者即可适配该站点）`, 'ok');
+      out(diagMsg, `已导出 ${host} 的脱敏页面结构${scene.truncated ? '（内容超限，已截断）' : ''}；发送前请检查文件内容`, 'ok');
     } catch (e) {
-      out(diagMsg, '导出失败：' + (e.message || e) + '，请刷新作业页面后重试', 'err');
+      out(diagMsg, '导出失败：' + (e.message || e) + '，请刷新页面后重试', 'err');
     } finally {
       diagnosticsExporting = false;
       syncDiagnosticsUI();
     }
   });
 
-  /* 检测更新：打开「检测更新」分区自动检查一次（走 1 小时缓存），「立即检查」绕过缓存；
-     发现新版出现「更新」按钮——用户点了才执行（后台经原生宿主拉起本机脚本同步 GitHub），
-     更新永不强制——不点不装、不阻断使用 */
+  /* 更新内容：功能取最近 3 个 Edge 版本（含待上架），Bug 修复只取最新 1 个版本。 */
+  (() => {
+    const featureList = $('#notesFeatures');
+    const fixList = $('#notesFixes');
+    if (!featureList || !fixList) return;
+    const base = $('#notesBase');
+    if (base) base.textContent = 'Edge 商店当前版本：v' + EDGE_BASELINE;
+    const pending = NEXT_EDGE.features.length || NEXT_EDGE.fixes.length;
+    const groups = pending ? [{ version: '待上架', ...NEXT_EDGE }, ...EDGE_RELEASES] : EDGE_RELEASES;
+    const row = (text, version) => {
+      const li = document.createElement('li');
+      li.append(text);
+      const tag = document.createElement('span');
+      tag.className = 'note-ver';
+      tag.textContent = version;
+      li.append(tag);
+      return li;
+    };
+    for (const group of groups.slice(0, 3)) {
+      for (const text of group.features || []) featureList.append(row(text, group.version));
+    }
+    const latest = groups[0];
+    for (const text of latest?.fixes || []) fixList.append(row(text, latest.version));
+    for (const [list, empty] of [[featureList, '暂无功能记录'], [fixList, '暂无修复记录']]) {
+      if (list.children.length) continue;
+      const li = document.createElement('li');
+      li.className = 'notes-empty';
+      li.textContent = empty;
+      list.append(li);
+    }
+  })();
+
+  /* 检测更新：手动操作与后台空闲更新共用原生宿主事务。 */
   const updCurrent = $('#updCurrent');
   const updLatest = $('#updLatest');
   const updLink = $('#updLink');

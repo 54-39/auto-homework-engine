@@ -92,3 +92,9 @@ function fixture(){
  assert.equal(f.messages.find(m=>m.type==='HW_ANSWER').payload.requestId,'retry-round');
  console.log('PASS 重问回显本次请求轮次，不误用原答题轮次');
 }
+{
+ const f=fixture();await f.context.startRun([{type:'choice',_refresh:true}],7,'page',false,'confirm');await flush();
+ assert.equal(f.messages.find(m=>m.type==='HW_ANSWER').payload.forceAsk,true,'单题重问必须传确认标记');
+ f.context.run.cancelled=true;
+ console.log('PASS 单题重问经 HW_START 路由仍触发覆盖确认');
+}

@@ -159,16 +159,14 @@ try {
     const badRoot = path.join(temp, 'Edge Data', '坏包插件目录');
     const badId = makeExtension(badRoot);
     fs.writeFileSync(path.join(badRoot, 'node-v24.21.0-win-x64.zip'), 'not a zip at all', 'utf8');
-    // 这一步故意掐断（不掐断就会真去下载 93MB）。机器忙时 PowerShell 还没打印就被掐掉，
-    // 管道里拿到的 stdout 会是空的——空输出算这次没测到，重跑，最多三次。
-    let bad = null;
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      bad = spawnSync(path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-        ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(TOOLS, 'updater-bootstrap.ps1'),
-          '-Root', badRoot, '-ExpectedId', badId, '-ExpectedVersion', '0.6.9'],
-        { encoding: 'utf8', env: { ...process.env, LOCALAPPDATA: path.join(temp, 'Edge Data') }, timeout: 4000 });
-      if (bad.stdout && /离线压缩包不可用/.test(bad.stdout) && /正在下载并校验/.test(bad.stdout)) break;
-    }
+    const bad = spawnSync(path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+      ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+        `Add-Type -TypeDefinition 'public class BlockNetwork : System.Net.IWebRequestCreate { public System.Net.WebRequest Create(System.Uri uri) { throw new System.InvalidOperationException("NETWORK_DISABLED_FOR_TEST"); } }'; if (-not [Net.WebRequest]::RegisterPrefix('https://', (New-Object BlockNetwork))) { throw 'network stub registration failed' }; & $env:HW_TEST_BOOTSTRAP -Root $env:HW_TEST_ROOT -ExpectedId $env:HW_TEST_ID -ExpectedVersion 0.6.9`],
+      { encoding: 'utf8', env: { ...process.env, LOCALAPPDATA: path.join(temp, 'Edge Data'),
+        HW_TEST_BOOTSTRAP: path.join(TOOLS, 'updater-bootstrap.ps1'), HW_TEST_ROOT: badRoot, HW_TEST_ID: badId }, timeout: 20000 });
+    assert.equal(bad.error, undefined);
+    assert.equal(bad.status, 1);
+    assert.match(bad.stdout + bad.stderr, /NETWORK_DISABLED_FOR_TEST/);
     assert.match(bad.stdout, /离线压缩包不可用/);
     assert.match(bad.stdout, /正在下载并校验/);
     console.log('Offline Node bundle is unpacked without network; a broken bundle falls back to download PASS');

@@ -1,13 +1,14 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import { PROVIDERS } from '../background/engines/bridge-engine.js';
 
 const source = fs.readFileSync(new URL('../background/service-worker.js', import.meta.url), 'utf8');
 const start = source.indexOf('const RISKY_RE');
 const block = source.slice(start, source.indexOf('\n/*', start));
 const notifications = [], opened = [], focused = [];
 let click, tabs = [];
-const context = vm.createContext({ Date,
+const context = vm.createContext({ Date, PROVIDERS,
   chrome: { runtime: {}, notifications: {
     create: (id, options, callback) => { notifications.push({ id, ...options }); callback(); },
     onClicked: { addListener: fn => { click = fn; } },
@@ -24,7 +25,7 @@ assert.equal(vm.runInContext('RISKY_RE.test("豆包需要安全验证")',context
 assert.equal(vm.runInContext('RISKY_RE.test("豆包需要登录")',context),true);
 console.log('PASS 普通页面故障不再误归类风控，真实登录和安全验证仍识别');
 context.notify('普通状态');
-context.notify('豆包需要登录，请点击处理', true);
+context.notify('豆包需要登录，请点击处理', 'doubao');
 assert.equal(notifications.length, 2, '登录通知被普通状态通知的间隔限制挡住');
 assert.equal(notifications[1].id, 'hw-doubao-attention');
 assert.equal(opened.length, 0, '仅提示异常就自动打开了网页');

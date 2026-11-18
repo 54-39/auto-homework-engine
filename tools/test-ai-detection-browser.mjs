@@ -752,10 +752,10 @@ async function browserChecks() {
     ok(ui.querySelector('.btnrow').getBoundingClientRect().height > 0);
     ok(ui.querySelector('.watchview').getBoundingClientRect().height === 0);
   });
-  await check('模式直接在解题API、刷课API和豆包之间切换并保存引擎', async () => {
+  await check('模式直接在解题API、刷课API和免费模式之间切换并保存引擎', async () => {
     await setPanelMode('bridge');
     ok(testStore.config.engine === 'bridge' && testStore.config.panelMode === 'homework');
-    ok(ui.querySelector('.modeslot .ddname').textContent === '豆包');
+    ok(ui.querySelector('.modeslot .ddname').textContent === '免费模式');
     await setPanelMode('watch');
     ok(testStore.config.engine === 'api' && testStore.config.panelMode === 'watch');
     ok(ui.querySelector('.modeslot .ddname').textContent === '刷课（API）');
@@ -791,10 +791,10 @@ async function browserChecks() {
       setExternalConfig({ panelMode: 'watch' });
       await until(() => ui.querySelector('.watchview').getBoundingClientRect().height > 0);
       setExternalConfig({ engine: 'bridge', api: { apiKey: '' } });
-      await until(() => ui.querySelector('.badge').textContent.includes('豆包'));
+      await until(() => ui.querySelector('.badge').textContent.includes('免费模式'));
       ok(ui.querySelector('.watchview').getBoundingClientRect().height === 0, '豆包引擎仍显示仅 API 支持的刷课界面');
       ok(ui.querySelector('.moderow').getBoundingClientRect().height > 0);
-      ok(ui.querySelector('.modeslot .ddname').textContent === '豆包');
+      ok(ui.querySelector('.modeslot .ddname').textContent === '免费模式');
       ok(ui.querySelector('.apisec').getBoundingClientRect().height === 0, '豆包引擎仍显示 API 配置');
       setExternalConfig({ engine: 'api', panelMode: 'homework', api: { apiKey: 'fixture-only' } });
       await until(() => ui.querySelector('.badge').textContent === 'API' && ui.querySelector('.moderow').getBoundingClientRect().height > 0);

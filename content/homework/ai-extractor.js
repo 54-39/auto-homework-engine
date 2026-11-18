@@ -297,9 +297,18 @@
             const row = candidate.closest('.answerBg,[role="radio"],[role="checkbox"]');
             const el = row && container.contains(row) ? row : candidate;
             const native = el.matches('input[type="radio"],input[type="checkbox"]') ? el : el.control || el.querySelector('input[type="radio"],input[type="checkbox"]');
-            if (native && (native.disabled || (item.type === 'multi' ? native.type !== 'checkbox' : native.type !== 'radio'))) throw new Error('题型与页面选项控件不一致');
+            if (native) {
+              if (native.disabled) throw new Error('选项不可用');
+              /* 单选/判断在通用页面里常用 checkbox + 脚本互斥实现，控件类型不能作为题型唯一依据。
+                 多选仍必须能多选：单选组（radio）无法表达多个答案。 */
+              if (item.type === 'multi' ? native.type !== 'checkbox' : !['radio', 'checkbox'].includes(native.type)) throw new Error('题型与页面选项控件不一致');
+            }
             const clickEl = el.matches('input') ? null : el;
-            let text = textOf(native?.closest('label') || native?.labels?.[0] || el);
+            /* 选项文字可能在紧邻的 label 里：label 未用 for 关联时 input.labels 为空。 */
+            const optionLabel = native && (native.closest('label') || native.labels?.[0] ||
+              (native.nextElementSibling?.matches?.('label') ? native.nextElementSibling : null) ||
+              (native.previousElementSibling?.matches?.('label') ? native.previousElementSibling : null));
+            let text = textOf(optionLabel || el);
             const pageKey = norm(el.querySelector('[class*="num_option"]')?.textContent) || text.match(/^([A-H])[.、．:：)）\s]+/)?.[1];
             if (item.type !== 'judge' && /^[A-H]$/.test(pageKey || '') && option.key !== pageKey) throw new Error('AI 返回的选项编号与页面不一致');
             if (item.type === 'judge') {

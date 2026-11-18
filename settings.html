@@ -46,7 +46,6 @@
   h2{margin:0 0 16px;font-size:18px;font-weight:650;letter-spacing:-.015em;line-height:1.35;text-wrap:balance}
   .card{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:20px 22px}
   .hint{margin:0 0 10px;color:var(--text-2);text-wrap:pretty}
-  .hint:last-of-type{margin-bottom:16px}
   .issue-list{list-style:none;margin:12px 0 24px;padding:0}
   .issue-history{margin-top:12px}
   .issue-history>summary{cursor:pointer;padding:10px 0;color:var(--text);font-weight:500}
@@ -56,8 +55,6 @@
   .issue-list small{display:block;margin:4px 0;color:var(--text-2);font-variant-numeric:tabular-nums}
   .issue-list pre{margin:10px 0 0;font:12px/1.7 system-ui,'Microsoft YaHei',sans-serif;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text-2)}
   .diag-heading{margin:24px 0 10px;font-size:15px;font-weight:600}
-  .diag-steps{margin:0 0 12px;padding-left:20px;color:var(--text-2)}
-  .diag-steps li+li{margin-top:6px}
   .diag-feedback a{color:var(--accent);text-underline-offset:3px;overflow-wrap:anywhere}
   #issueMsg:empty{display:none}
   .issue-pages{display:flex;gap:8px;align-items:center;margin-top:12px}
@@ -67,6 +64,9 @@
   .count{margin:0 0 14px;color:var(--text);font-variant-numeric:tabular-nums}
   .check{display:flex;align-items:flex-start;gap:8px;margin:0 0 4px;cursor:pointer;color:var(--text-2)}
   .check input{margin:3px 0 0;cursor:pointer}
+  .check-row{display:flex;align-items:flex-start;gap:6px;margin:10px 0}
+  .check-row .check{flex:0 1 auto;margin:0}
+  .check-row>.help{margin-top:2px}
 
   .kv{margin:0 0 18px;padding:0}
   .kv>div{display:flex;gap:14px;padding:4px 0}
@@ -76,6 +76,7 @@
   /* 刷课分区的下拉：与按钮同尺寸，原生控件只换边框和圆角 */
   .field{display:flex;align-items:center;gap:14px;margin:0 0 14px}
   .field label{flex:none;width:132px;color:var(--text-2)}
+  .field>.help{margin:0 -8px}
   .field select{font:inherit;color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:7px 10px;min-width:180px;cursor:pointer;touch-action:manipulation}
   .field select:hover{border-color:#c9d0da}
   .field select:focus-visible{border-color:#64748b;outline:none;box-shadow:none}
@@ -99,9 +100,22 @@
   a{color:var(--accent);text-underline-offset:2px;border-radius:4px}
   a:hover{color:var(--accent-hover)}
 
+  /* 问号悬浮提示：说明默认收起，悬停/聚焦问号才出现 */
+  button.help{display:inline-flex;align-items:center;justify-content:center;flex:none;width:16px;height:16px;margin-left:6px;padding:0;border:1px solid var(--line);border-radius:50%;background:var(--surface);color:var(--muted);font-size:11px;font-weight:600;line-height:1;vertical-align:middle;cursor:help;transition:none}
+  button.help:hover,button.help:active{background:var(--surface);border-color:var(--accent);color:var(--accent)}
+  button.help:disabled:hover{background:var(--surface)}
+  .hw-note{margin:0 0 12px;padding:10px 14px;border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;background:var(--side);color:var(--text-2);font-size:12px;line-height:1.9;white-space:pre-line;overflow-wrap:anywhere}
+
   .msg{margin-top:12px;min-height:20px;color:var(--text-2)}
   .msg.ok{color:var(--ok)}
   .msg.err{color:var(--err)}
+  .notes-heading{display:flex;align-items:baseline;gap:10px;margin:18px 0 8px;font-size:14px}
+  .notes-base{margin:4px 0 0;color:var(--text-2)}
+  .notes-range{font-weight:400;color:var(--text-2);font-size:12px}
+  .notes-list{margin:0;padding-left:20px}
+  .notes-list li{margin:5px 0;line-height:1.6}
+  .note-ver{margin-left:8px;color:var(--text-2);font-size:12px;white-space:nowrap}
+  .notes-empty{color:var(--text-2);list-style:none}
   .update-progress{display:flex;align-items:center;gap:10px;margin-top:14px}
   .update-progress[hidden]{display:none}
   .update-progress progress{appearance:none;display:block;flex:1;min-width:0;width:100%;height:8px;border:0;border-radius:999px;overflow:hidden;background:var(--ghost)}
@@ -121,8 +135,9 @@
   .app-form fieldset{min-width:0;margin:24px 0 0;padding:0;border:0}
   .app-form legend{padding:0;margin-bottom:12px;font-size:14px;font-weight:600}
   .app-form .app-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-  .app-form .app-field{min-width:0;margin-bottom:14px}
+  .app-form .app-field{position:relative;min-width:0;margin-bottom:14px}
   .app-form .app-field>label{display:block;margin-bottom:5px;color:var(--text-2)}
+  .app-form .app-field>.help{position:absolute;top:1px;right:0;margin-left:0}
   .app-form input:not([type=checkbox]),.app-form select{width:100%;min-height:36px;padding:7px 10px;border:1px solid #cbd2dc;border-radius:8px;background:var(--surface);color:var(--text);font:inherit}
   .app-form input:not([type=checkbox]):hover,.app-form select:hover{border-color:#9ba7b7}
   .app-form input:not([type=checkbox]):focus,.app-form select:focus{border-color:#64748b;outline:none;box-shadow:none}
@@ -143,7 +158,6 @@
   .app-form .input-field .dd.settings-select+label{top:var(--input-top);transform:translateY(-100%) scale(.9);transform-origin:left bottom;color:#374151}
   .app-form .check{margin:10px 0}
   .app-form .app-note{margin:6px 0 0;color:var(--text-2);font-size:12px;overflow-wrap:anywhere}
-  .app-form .app-risk{margin:14px 0 0;color:var(--text-2);font-size:12px}
   .app-form .app-detail{margin-top:18px;padding-top:14px;border-top:1px solid var(--line-soft)}
   .app-form .app-detail>summary{cursor:pointer;font-weight:500}
   .app-form .app-detail[open]>summary{margin-bottom:14px}
@@ -168,8 +182,9 @@
     .brand p{display:none}
     .main{padding:20px 16px 40px}
     .app-form .app-grid{grid-template-columns:1fr;gap:0}
-    .field{flex-direction:column;align-items:stretch;gap:6px}
+    .field{position:relative;flex-direction:column;align-items:stretch;gap:6px}
     .field label{width:auto}
+    .field>.help{position:absolute;top:1px;right:0;margin:0}
     .field .settings-select{max-width:none}
     .app-form .app-keys li{gap:8px}
     .app-form .actions{gap:8px}
@@ -185,23 +200,24 @@
       <p>工具设置</p>
     </div>
     <button type="button" data-sec="app" aria-controls="sec-app" aria-current="true">应用设置</button>
-    <button type="button" data-sec="mem" aria-controls="sec-mem">记忆</button>
     <button type="button" data-sec="watch" aria-controls="sec-watch">刷课</button>
-    <button type="button" data-sec="diag" aria-controls="sec-diag">诊断</button>
+    <button type="button" data-sec="mem" aria-controls="sec-mem">记忆</button>
+    <button type="button" data-sec="notes" aria-controls="sec-notes">更新内容</button>
     <button type="button" data-sec="upd" aria-controls="sec-upd">检测更新</button>
+    <button type="button" data-sec="diag" aria-controls="sec-diag">诊断</button>
   </nav>
   <main class="main" id="main">
     <div class="content">
       <section id="sec-app" class="card" aria-labelledby="h-app">
-        <h2 id="h-app">应用设置</h2>
-        <p class="hint">设置答题引擎、API Key 与答题偏好。题目会发送至所选 AI 服务，请核对参考答案后自行提交。</p>
+        <h2 id="h-app">应用设置<button type="button" class="help" aria-label="说明" data-tip="设置答题引擎、API Key 与答题偏好。
+题目会发送至所选 AI 服务，请核对参考答案后自行提交。">?</button></h2>
         <form id="appForm" class="app-form">
           <fieldset id="appFields" disabled>
             <legend>答题偏好</legend>
             <div class="app-grid">
               <div class="app-field">
                 <label for="engine">答题引擎</label>
-                <select id="engine"><option value="api">API</option><option value="bridge">豆包网页桥接（免费）</option></select>
+                <select id="engine"><option value="api">API（需 Key）</option><option value="bridge">免费模式（网页版）</option></select>
               </div>
               <div class="app-field">
                 <label for="subjMode">简答题已有内容时</label>
@@ -212,15 +228,16 @@
                 </select>
               </div>
             </div>
-            <label class="check"><input type="checkbox" id="rewriteConfirm" checked> 单题重问时先确认：新答案与页面已填不同时只提示，再点一次重问才覆盖</label>
 
             <fieldset id="apiFields">
               <legend>接口与 API Key</legend>
               <div class="app-field">
                 <div class="input-field">
-                  <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder=" " aria-describedby="keyStatus keyRisk">
+                  <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder=" " aria-describedby="keyStatus">
                   <label for="apiKey">粘贴 API Key</label>
                 </div>
+                <button type="button" class="help" aria-label="说明" data-tip="Key 会保存在本机插件存储中，能读取浏览器数据或操作本机的人、程序可能获得它。
+临时使用不会加入已保存列表，当前 Key 仍会写入本机配置。">?</button>
                 <p class="app-note" id="keyStatus">正在读取当前 Key…</p>
                 <p class="app-note">还没有 API Key？可前往 <a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">DeepSeek 平台</a>获取。</p>
               </div>
@@ -229,7 +246,6 @@
                 <button type="button" class="ghost" id="tempKey">临时使用</button>
                 <button type="button" class="ghost" id="clearKey">停用当前 Key</button>
               </div>
-              <p class="app-risk" id="keyRisk">Key 会保存在本机插件存储中，能读取浏览器数据或操作本机的人、程序可能获得它。临时使用不会加入已保存列表，当前 Key 仍会写入本机配置。</p>
               <div class="confirm" id="keyConfirm" hidden>
                 <p>确认了解上面的存储风险后，可识别并记住 Key；也可以只临时使用。</p>
                 <div class="actions">
@@ -241,8 +257,8 @@
               <div class="msg" id="keyMsg" role="status" aria-live="polite"></div>
               <ul class="app-keys" id="savedKeys" aria-label="已保存的 API Key"></ul>
               <details class="app-detail" id="apiDetails">
-                <summary>手动配置接口</summary>
-                <p class="hint">通常只需粘贴 Key 后点「识别并记住」，插件会自动匹配接口与模型。自定义接口在这里填写，再点下方「保存设置」。</p>
+                <summary>手动配置接口<button type="button" class="help" aria-label="说明" data-tip="通常只需粘贴 Key 后点「识别并记住」，插件会自动匹配接口与模型。
+自定义接口在这里填写，再点下方「保存设置」。">?</button></summary>
                 <div class="app-grid">
                   <div class="app-field">
                     <label for="provider">接口类型</label>
@@ -260,49 +276,40 @@
             </fieldset>
 
             <fieldset id="bridgeFields" hidden>
-              <legend>豆包网页桥接</legend>
-              <p class="hint">连续题目沿用当前豆包对话，每次读取本题的新回复。如遇登录或验证，请在豆包页面手动处理；每题约 10～40 秒。</p>
+              <legend>免费模式（网页版）<button type="button" class="help" aria-label="说明" data-tip="连续题目沿用当前对话，每次读取本题的新回复。
+如遇登录或验证，请在对应 AI 页面手动处理；每题约 10～40 秒。">?</button></legend>
+              <div class="app-field">
+                <label for="bridgeProvider">提供方</label>
+                <select id="bridgeProvider"><option value="doubao">豆包（网页版）</option><option value="deepseek">DeepSeek（网页版）</option></select>
+                <button type="button" class="help" aria-label="说明" data-tip="两者都免费，都用你自己已登录的网页会话，无需 API Key。">?</button>
+              </div>
               <div class="app-field">
                 <label for="bridgeViewMode">打开方式</label>
                 <select id="bridgeViewMode"><option value="split">分屏模式</option><option value="window">新窗口模式</option></select>
-                <p class="app-note">点击「开始」时自动打开并复用豆包页面；浏览器不支持自动分屏时使用新窗口。</p>
+                <button type="button" class="help" aria-label="说明" data-tip="点击「开始」时自动打开并复用所选 AI 页面。
+浏览器不支持自动分屏时使用新窗口。">?</button>
               </div>
               <div class="app-grid">
                 <div class="app-field"><div class="input-field"><input id="delayMin" type="number" min="1000" step="500" value="3000" placeholder=" " required><label for="delayMin">每题间隔下限（毫秒）</label></div></div>
                 <div class="app-field"><div class="input-field"><input id="delayMax" type="number" min="1500" step="500" value="8000" placeholder=" " required><label for="delayMax">每题间隔上限（毫秒）</label></div></div>
               </div>
             </fieldset>
+            <div class="check-row">
+              <label class="check"><input type="checkbox" id="rewriteConfirm" checked> 单题重问时先确认</label>
+              <button type="button" class="help" aria-label="说明" data-tip="新答案与页面已填不同时只提示，再点一次重问才覆盖。">?</button>
+            </div>
             <div class="actions app-save"><button type="submit" id="save">保存设置</button></div>
           </fieldset>
           <div class="msg" id="msg" role="status" aria-live="polite">正在读取设置…</div>
         </form>
       </section>
 
-      <section id="sec-mem" class="card" aria-labelledby="h-mem" hidden>
-        <h2 id="h-mem">记忆</h2>
-        <p class="hint">插件会把每道题的 AI 答案记在本机（答题记忆），同一题再次作答时直接使用；某道题一直答错时，清除后重新作答。</p>
-        <p class="hint">清除只删答题记忆，不改动页面上已填写的答案，也不影响 API Key 与接口配置。</p>
-        <p class="count" id="memCount" role="status" aria-live="polite">正在读取记忆条数…</p>
-        <label class="check"><input id="memNever" type="checkbox"> 以后不再提示（点「清除答题记忆」直接清除，不显示确认）</label>
-        <div class="actions">
-          <button type="button" id="memClear">清除答题记忆</button>
-        </div>
-        <div class="msg" id="memMsg" role="status" aria-live="polite"></div>
-        <div class="confirm" id="memConfirm" hidden>
-          <p id="memConfirmBody"></p>
-          <div class="actions">
-            <button type="button" class="ghost" id="memCancel">取消</button>
-            <button type="button" class="danger" id="memGo">立即清除</button>
-          </div>
-        </div>
-      </section>
-
       <section id="sec-watch" class="card" aria-labelledby="h-watch" hidden>
         <h2 id="h-watch">刷课</h2>
-        <p class="hint">面板里的「开始刷课」按这里设置的节数执行，不用再在面板上勾选项。</p>
-        <p class="hint">选「前 N 节」时只处理进度低于 35% 的课程，每门从第一节起连续完成 N 节；口语小节按例外单列。</p>
         <div class="field">
           <label for="watchSections">每门课程处理节数</label>
+          <button type="button" class="help" aria-label="说明" data-tip="面板里的「开始刷课」按这里设置的节数执行，不用再在面板上勾选项。
+选「前 N 节」时只处理进度低于 35% 的课程，每门从第一节起连续完成 N 节；口语小节按例外单列。">?</button>
           <select id="watchSections">
             <option value="0">整门课程（不限定节数）</option>
             <option value="1">前 1 节</option>
@@ -320,47 +327,45 @@
         <div class="msg" id="watchMsg" role="status" aria-live="polite"></div>
       </section>
 
-      <section id="sec-diag" class="card" aria-labelledby="h-diag" hidden>
-        <h2 id="h-diag">诊断</h2>
-        <p class="check"><label><input type="checkbox" id="diagnosticsEnabled" disabled> 记录诊断</label></p>
-        <p class="hint">默认关闭。开启后才记录异常与页面现场；关闭后不再新增，已有记录仍可查看和导出。</p>
-        <div class="msg" id="diagnosticsMsg" role="status" aria-live="polite"></div>
-        <div class="diag-feedback" aria-labelledby="diagFeedbackHeading">
-          <h3 class="diag-heading" id="diagFeedbackHeading">题目问题反馈</h3>
-          <ol class="diag-steps">
-            <li>先勾选上方「记录诊断」，再回到出错的作业页面。</li>
-            <li>对做错或填写异常的题目重新作答一遍，让问题再次出现。</li>
-            <li>回到这里，点击「导出异常记录」，将导出的 JSON 文件作为附件发送至 <a href="mailto:477158632@qq.com">477158632@qq.com</a>，并说明哪道题出错、预期答案是什么。</li>
-            <li>最好同时附上题目截图，包含完整题干、选项、插件填写的答案，以及平台显示的正确答案（如有）。截图请自行添加到邮件附件。</li>
-          </ol>
-          <p class="hint">发送前请检查文件和截图，遮挡姓名、学号、手机号、密码、API Key 等个人或敏感信息。诊断在本机记录，是否发送由你决定。</p>
+      <section id="sec-mem" class="card" aria-labelledby="h-mem" hidden>
+        <h2 id="h-mem">记忆<button type="button" class="help" aria-label="说明" data-tip="插件会把每道题的 AI 答案记在本机（答题记忆），同一题再次作答时直接使用；某道题一直答错时，清除后重新作答。
+清除只删答题记忆，不改动页面上已填写的答案，也不影响 API Key 与接口配置。">?</button></h2>
+        <p class="count" id="memCount" role="status" aria-live="polite">正在读取记忆条数…</p>
+        <div class="check-row">
+          <label class="check"><input id="memNever" type="checkbox"> 以后不再提示</label>
+          <button type="button" class="help" aria-label="说明" data-tip="点「清除答题记忆」直接清除，不显示确认。">?</button>
         </div>
-        <p class="count" id="issueCount" role="status" aria-live="polite">正在读取异常记录…</p>
         <div class="actions">
-          <button type="button" id="issueExport">导出异常记录</button>
-          <button type="button" class="ghost" id="issueRefresh">刷新</button>
-          <button type="button" class="ghost" id="issueClear">清空记录</button>
+          <button type="button" id="memClear">清除答题记忆</button>
         </div>
-        <div class="msg" id="issueMsg" role="status" aria-live="polite"></div>
-        <details class="issue-history">
-          <summary>查看异常记录</summary>
-          <ol class="issue-list" id="issueList" aria-label="异常记录"></ol>
-        </details>
-        <div class="issue-pages" id="issuePages" hidden><button type="button" class="ghost" id="issuePrev">上一页</button><span id="issuePageLabel"></span><button type="button" class="ghost" id="issueNext">下一页</button></div>
-        <h3 class="diag-heading">页面结构</h3>
-        <p class="hint">把最近打开的作业页面结构导出为 HTML 文件；站点适配失败时，把这个文件发给开发者即可排查。</p>
-        <p class="hint">导出读取的是你最近访问过的那个网页，所以请先打开作业页面，再回到这里导出。</p>
-        <div class="actions">
-          <button type="button" id="diagExport">导出页面结构</button>
+        <div class="msg" id="memMsg" role="status" aria-live="polite"></div>
+        <div class="confirm" id="memConfirm" hidden>
+          <p id="memConfirmBody"></p>
+          <div class="actions">
+            <button type="button" class="ghost" id="memCancel">取消</button>
+            <button type="button" class="danger" id="memGo">立即清除</button>
+          </div>
         </div>
-        <div class="msg" id="diagMsg" role="status" aria-live="polite"></div>
+      </section>
+
+      <section id="sec-notes" class="card" aria-labelledby="h-notes" hidden>
+        <h2 id="h-notes">更新内容<button type="button" class="help" aria-label="说明" data-tip="按 Edge 版本分组：功能增加展示最近 3 个版本（含待上架版本），Bug 修复只展示最新 1 个版本。
+待上架版本的修复只包含 Edge 商店当前版本已有的问题；新功能带出来的问题不算商店版本的 Bug。">?</button></h2>
+        <p class="notes-base" id="notesBase">Edge 商店当前版本：…</p>
+        <h3 class="notes-heading">功能增加<span class="notes-range">最近 3 个 Edge 版本</span></h3>
+        <ul class="notes-list" id="notesFeatures"></ul>
+        <h3 class="notes-heading">Bug 修复<span class="notes-range">最新 1 个 Edge 版本</span></h3>
+        <ul class="notes-list" id="notesFixes"></ul>
       </section>
 
       <section id="sec-upd" class="card" aria-labelledby="h-upd" hidden>
-        <h2 id="h-upd">检测更新</h2>
-        <p class="hint">打开本分区会自动检查一次（1 小时内不重复联网）。检查出新版后，点「更新」即可下载、校验并替换；失败会自动重试一次，再失败恢复旧版（作业页面需 F5）。</p>
-        <p class="hint">点「更新」提示“更新组件尚未连接”时，说明这台电脑还没装更新组件：点「运行」看安装步骤，按提示运行插件目录里的 <code>install-updater.cmd</code>，只做一次。</p>
-        <p class="hint"><label><input type="checkbox" id="updAuto" checked> 后台每小时检查一次，刷课空闲时自动装上新版（刷课中不打断；失败不弹窗）。</label></p>
+        <h2 id="h-upd">检测更新<button type="button" class="help" aria-label="说明" data-tip="打开本分区会自动检查一次（1 小时内不重复联网）。
+检查出新版后，点「更新」即可下载、校验并替换；失败会自动重试一次，再失败恢复旧版（作业页面需 F5）。
+点「更新」提示“更新组件尚未连接”时，说明这台电脑还没装更新组件：点「运行」看安装步骤，按提示运行插件目录里的 install-updater.cmd，只做一次。">?</button></h2>
+        <div class="check-row">
+          <label class="check"><input type="checkbox" id="updAuto" checked> 后台自动更新</label>
+          <button type="button" class="help" aria-label="说明" data-tip="后台每小时检查一次，任务空闲时自动装上新版（答题、识题、解析和刷课中暂缓；失败不弹窗）。">?</button>
+        </div>
         <dl class="kv">
           <div><dt>当前版本</dt><dd id="updCurrent">…</dd></div>
           <div><dt>最新版本</dt><dd id="updLatest">尚未检查</dd></div>
@@ -390,6 +395,43 @@
             <button type="button" class="ghost" id="updGuideClose">知道了</button>
           </div>
         </div>
+      </section>
+
+      <section id="sec-diag" class="card" aria-labelledby="h-diag" hidden>
+        <h2 id="h-diag">诊断</h2>
+        <div class="check-row">
+          <label class="check"><input type="checkbox" id="diagnosticsEnabled" disabled> 记录诊断</label>
+          <button type="button" class="help" aria-label="说明" data-tip="默认关闭。开启后才记录异常与页面现场。
+关闭后不再新增，已有记录仍可查看和导出。">?</button>
+        </div>
+        <div class="msg" id="diagnosticsMsg" role="status" aria-live="polite"></div>
+        <div class="diag-feedback" aria-labelledby="diagFeedbackHeading">
+          <h3 class="diag-heading" id="diagFeedbackHeading">题目问题反馈<button type="button" class="help" aria-label="说明" data-tip="1. 先勾选「记录诊断」，再回到出错的作业页面。
+2. 对做错或填写异常的题目重新作答一遍，让问题再次出现。
+3. 回到这里点「导出异常记录」，将导出的 JSON 文件作为附件发送至反馈邮箱，并说明哪道题出错、预期答案是什么。
+4. 最好同时附上题目截图，包含完整题干、选项、插件填写的答案，以及平台显示的正确答案（如有），截图自行添加到邮件附件。
+发送前请检查文件和截图，遮挡姓名、学号、手机号、密码、API Key 等个人或敏感信息。诊断在本机记录，是否发送由你决定。">?</button></h3>
+          <p class="hint">反馈邮箱：<a href="mailto:477158632@qq.com">477158632@qq.com</a></p>
+        </div>
+        <p class="count" id="issueCount" role="status" aria-live="polite">正在读取异常记录…</p>
+        <div class="actions">
+          <button type="button" id="issueExport">导出异常记录</button>
+          <button type="button" class="ghost" id="issueRefresh">刷新</button>
+          <button type="button" class="ghost" id="issueClear">清空记录</button>
+        </div>
+        <div class="msg" id="issueMsg" role="status" aria-live="polite"></div>
+        <details class="issue-history">
+          <summary>查看异常记录</summary>
+          <ol class="issue-list" id="issueList" aria-label="异常记录"></ol>
+        </details>
+        <div class="issue-pages" id="issuePages" hidden><button type="button" class="ghost" id="issuePrev">上一页</button><span id="issuePageLabel"></span><button type="button" class="ghost" id="issueNext">下一页</button></div>
+        <h3 class="diag-heading">页面结构<button type="button" class="help" aria-label="说明" data-tip="将最近访问的页面结构导出为 JSON，保留题目结构、同源框架和字体诊断信息，过滤脚本、表单内容及网址参数。
+请先打开需要排查的页面（悬浮球能打开即可），再回到这里导出；没有悬浮球的站点会请求该站点的访问权限，用于临时注入采集脚本。
+脱敏无法识别所有个人信息，发送前请检查文件内容。">?</button></h3>
+        <div class="actions">
+          <button type="button" id="diagExport">导出页面结构</button>
+        </div>
+        <div class="msg" id="diagMsg" role="status" aria-live="polite"></div>
       </section>
     </div>
   </main>

@@ -43,4 +43,17 @@ function fixture({ existing = false, preview = true, multiple = true, hasInput =
   const f = fixture({ hasInput: false });
   assert.equal(await f.ctx.attachImages(f.editor, [png]), false, '找不到 file input 时必须走粘贴兜底');
 }
+{
+  let sends = 0;
+  const ctx = vm.createContext({
+    checkPageNotices() {}, findEditor: () => ({}), messageNodes: () => [],
+    crypto: { randomUUID: () => 'fixture' }, setInput: async () => {},
+    attachImages: async () => false, waitSendReady: async () => {}, clickSend: () => { sends++; throw Error('不应发送'); },
+  });
+  const start = source.indexOf('  async function askOne(');
+  const end = source.indexOf('    // 只发送一次', start);
+  vm.runInContext(source.slice(start, end) + '\n}', ctx);
+  await assert.rejects(ctx.askOne('图片题', [png]), /图片.*上传/);
+  assert.equal(sends, 0, '图片上传未确认时禁止发送不完整题目');
+}
 console.log('doubao image upload checks passed');

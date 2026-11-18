@@ -46,6 +46,10 @@ assert.ok(latexMsg.includes('A. P(X=3)'), '选项不应重复字母前缀');
 assert.ok(latexMsg.includes('P(X ≤ 3)'), '公式应转成 Unicode');
 assert.equal(readableMath('$P(X = x_i, Y = y_j) = p_{11}$'), 'P(X = xᵢ, Y = yⱼ) = p₁₁', '上下标转成 Unicode');
 assert.throws(() => buildBatchMessages([...items, ...items]), /题号/);
+for (const text of ['Apple', 'HTTP', 'Binary', 'B. different label']) {
+  const prompt = buildBatchMessages([{ id: 'english', question: { type: 'choice', stem: '保留选项', options: [{ key: 'A', text }] } }])[1].content[1].text;
+  assert.ok(prompt.includes('A. ' + text), '不得剥掉英文首字母或其他选项标记：' + text);
+}
 const oldFetch = globalThis.fetch;
 try {
   for (const iface of ['openai', 'anthropic']) {

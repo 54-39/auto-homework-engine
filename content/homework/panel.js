@@ -72,6 +72,8 @@
     button.act.ghost{background:#fff;color:#374151;border:1px solid #CCD2D9;font-weight:400}
     button.act:disabled{opacity:.45;cursor:not-allowed}
     .panel.watchmode .homework-only{display:none}
+    /* 刷课没有单题解析，隐藏入口 */
+    .panel.watchmode .expandbtn{display:none}
     .watchview{display:flex;flex-direction:column;gap:8px;flex:1.6 0 auto;min-height:min-content}
     .watchview>*{flex:none}
     .watchview .courselist{flex:1 1 140px;min-height:80px}
@@ -147,8 +149,23 @@
     .loghd{display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:500;color:#374151;flex:none}
     .issuewarn{flex:none;padding:8px;border-radius:6px;background:#FEF2F2;color:#B91C1C;font-size:11px;line-height:1.6;overflow-wrap:anywhere}
     .log{font-size:10.5px;color:#7C848C;flex:1 1 0;min-height:60px;overflow:auto;line-height:1.6;white-space:pre-wrap}
+    /* 单题解析区：只在展开态出现，替代题目列表与日志 */
+    .analyzebox{display:none;flex-direction:column;gap:8px;flex:1 1 0;min-height:0}
+    .analyzebox .arow{display:flex;align-items:center;gap:8px;flex:none}
+    .analyzebox .arow>label{flex:none;width:34px;font-size:12px;color:#374151}
+    .analyzebox .qslot,.analyzebox .mslot{flex:1 1 0;min-width:0}
+    .analyzebox .qnum{flex:none;width:64px;height:30px;padding:0 8px;border:1px solid #CCD2D9;border-radius:6px;font-size:12px;color:#111827;background:#fff;box-sizing:border-box}
+    .analyzebox .qnum::-webkit-outer-spin-button,.analyzebox .qnum::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+    .analyzebox .abtns{display:flex;align-items:center;gap:10px;flex:none}
+    .analyzebox .aline{font-size:11px;color:#6B7280;overflow-wrap:anywhere}
+    .analyzebox .aresult{flex:1 1 0;min-height:0;overflow:auto;border:1px solid #CCD2D9;background:#fff;border-radius:8px;padding:10px;font-size:12px;line-height:1.75;color:#1F2937;white-space:pre-wrap;overflow-wrap:anywhere}
+    .panel.expanded .logwrap,.panel.expanded .btnrow{display:none}
+    .panel.expanded .analyzebox{display:flex}
+    /* 刷课模式永远没有解析区（applyMode 会退出展开态，这条是双保险） */
+    .panel.watchmode .analyzebox{display:none}
+    /* 展开态整块留给题目解析：隐藏底部题目列表与汇总，结果区撑满面板 */
+    .panel.expanded .list,.panel.expanded .summary{display:none}
     .panel.expanded{--hw-panel-width:640px;--hw-panel-ratio:1.25;--hw-panel-space-x:94vw;--hw-panel-space-y:92vh;left:50%!important;top:3vh!important;transform:translateX(-50%)}
-    .panel.expanded .item{min-height:34px}
     @media (max-height:600px){.panel{--hw-panel-space-y:calc(100vh - 108px);--hw-panel-fit:min(var(--hw-panel-width),var(--hw-panel-space-x));height:min(calc(var(--hw-panel-fit) * var(--hw-panel-ratio)),var(--hw-panel-space-y))}.list{flex:none;height:120px}.watchview{flex:none}.logwrap{flex:none}.log{max-height:96px}}
     .modal{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:2147483647;display:flex;align-items:center;justify-content:center}
     .mbox{background:#fff;border:1px solid #CCD2D9;border-radius:12px;padding:16px;width:300px;font-size:12px;line-height:1.7;color:#1f2328;box-shadow:0 16px 36px -8px rgba(15,23,42,.2)}
@@ -228,7 +245,7 @@
       <div class="tip hidden" role="tooltip"></div>
       <section class="panel hidden">
         <header><b>作业助手</b><span class="badge"></span><span class="spacer"></span>
-          <button class="tbtn expandbtn" data-tip="切换大/小面板（题目多时更清晰）">展开</button>
+          <button class="tbtn expandbtn" data-tip="选一道题单独解析，不填写页面">解析</button>
           <button class="tbtn settingsbtn" data-tip="打开应用设置、刷课、记忆、诊断和检测更新">设置</button>
           <button class="tbtn btn-collapse" data-tip="收起面板">收起</button>
         </header>
@@ -267,7 +284,7 @@
             <p>若您的 Key 有大量余额，建议不要保存，改为每次答题时临时粘贴使用。</p>
             <div class="mbtns">
               <button class="act ghost mcancel">取消</button>
-              <button class="act ghost mtemp">仅本次使用</button>
+              <button class="act ghost mtemp" title="保存在当前配置，关闭浏览器后仍生效，但不加入历史列表">使用但不存列表</button>
               <button class="act msave">保存并记住</button>
             </div>
           </div>
@@ -277,6 +294,12 @@
           <button class="act ghost detect" data-tip="题目未识别时，点击调用 AI 检测题目">检测题目</button>
           <button class="act start" disabled>开始</button>
           <button class="act ghost stop" disabled>停止</button>
+        </div>
+        <div class="analyzebox">
+          <div class="arow qrow"><label>题目</label><div class="dd qslot"></div><input class="qnum" type="number" min="1" placeholder="题号" aria-label="直接输入题号"></div>
+          <div class="arow"><label>模式</label><div class="dd mslot"></div></div>
+          <div class="abtns"><button class="act abtn" disabled>解析本题</button><span class="aline" role="status" aria-live="polite"></span></div>
+          <div class="aresult" hidden></div>
         </div>
         <div class="watchview hidden">
           <div class="watchintro"><div class="watchtitle"><h2 class="watchheading">课程学习</h2><button type="button" class="lbtn plain courserefresh">刷新课程</button></div><p class="watchcontext">打开课程或勾选清单，继续未完成的章节。</p><div class="watchmeta"></div>
@@ -324,12 +347,14 @@
       moderow: $('.moderow'), watchview: $('.watchview'), watchheading: $('.watchheading'), watchcontext: $('.watchcontext'), watchmeta: $('.watchmeta'), watchempty: $('.watchempty'),
       watchprogress: $('.watchprogress'), wpvalue: $('.wpvalue'), wptrack: $('.wptrack'), wpfill: $('.wpfill'),
       summary: $('.summary'), smsg: $('.smsg'), shint: $('.shint'), list: $('.list'), log: $('.log'),
+      analyzebox: $('.analyzebox'), qslot: $('.qslot'), mslot: $('.mslot'), qnum: $('.qnum'), abtn: $('.abtn'), aline: $('.aline'), aresult: $('.aresult'),
       updline: $('.updline'),
     };
     let engine = 'api';
+    let bridgeProvider = 'doubao';
     els.mode = HW.Dropdown.create({
       into: $('.modeslot'),
-      items: [{ id: 'homework', label: '解题（API）' }, { id: 'watch', label: '刷课（API）' }, { id: 'bridge', label: '豆包' }],
+      items: [{ id: 'homework', label: '解题（API）' }, { id: 'watch', label: '刷课（API）' }, { id: 'bridge', label: '免费模式' }],
       value: 'homework',
       onChange: async (panelMode) => {
         const nextEngine = panelMode === 'bridge' ? 'bridge' : 'api';
@@ -344,6 +369,9 @@
       els.moderow.classList.remove('hidden');
       els.panel.classList.toggle('watchmode', watch);
       els.watchview.classList.toggle('hidden', !watch);
+      /* 刷课模式没有题目解析区：留着展开态会让 .analyzebox 顶在空白面板里。
+         切到刷课就退出展开，回到普通尺寸（展开按钮仍是「展开」，用户想回来再点）。 */
+      if (watch) setExpanded(false);
       if (watch) loadCourseTimes();
       updateWatchContext();
     }
@@ -560,7 +588,7 @@
     let answerEpoch = 0;
     let answerIndexes = [];
     /* 单题重问的待确认答案：新答案与页面已填不同时先只提示，再点一次重问才覆盖。 */
-    let rewritePending = new Map();
+    const rewritePending = new WeakMap();
     let rewriteConfirm = true; // 设置页「重问时先确认」；关掉后重问直接覆盖
     let detectionSnapshot = null;
     /* 上一次「页面读取」失败的真实原因：刷课日志只转发一句「没识别成功」，
@@ -653,25 +681,8 @@
     const requireCurrentPage = () => {
       if (autoRun) return true; // 无人值守填写中，签名变化是自己点出来的，不算页面被换
       if (HW.AIDetection.isCurrent(detectionSnapshot)) return true;
-      /* 运行中结构变了：绝大多数是刚才填答案改的 DOM（勾选态、已答标记、填空展开编辑器）。
-         以前这里直接 invalidateDetection，把整轮清空、剩下的题全不答（用户 2026-10-28
-         反复遇到「后面总是剩题」）。现在改成热重读：重新读题目、保留已答与猜选标记，
-         只让当前这一次操作失败，队列继续往后走。真正换页由 isCurrent 的元素身份判定挡住。 */
-      if (!els.stop.disabled) {
-        const before = (HW.questions || []).map((q) => ({ status: q._status, guessed: q._guessed }));
-        detectionSnapshot = null;
-        const reread = nativeDetection ? readPageQuestions() : false;
-        if (reread && HW.questions.length === before.length) {
-          HW.questions.forEach((q, idx) => { q._status = before[idx].status; q._guessed = before[idx].guessed; });
-          rows.forEach((r, idx) => {
-            const prev = before[idx];
-            if (prev?.status) setRow(idx, prev.status, r.dataset.tip || '', !!prev.guessed);
-          });
-        }
-        log('页面结构变化，已重新读取题目，继续后面的题');
-        return false;
-      }
-      invalidateDetection('页面已变化，请重新检测题目');
+      // 控件身份已失效，旧答案不能按题号接到重新读取的题目上。
+      invalidateDetection('页面已变化，已停止答题，请重新检测题目');
       if (nativeDetection) readPageQuestions();
       return false;
     };
@@ -1126,7 +1137,7 @@
       }
       els.courselist.classList.add('hidden');
     }
-    const engineName = () => engine === 'bridge' ? '豆包桥接' : 'API';
+    const engineName = () => engine === 'bridge' ? '免费模式·' + (bridgeProvider === 'deepseek' ? 'DeepSeek' : '豆包') : 'API';
     const refreshBadge = () => (els.badge.textContent = engineName());
 
     /* 可拖动：面板按标题栏拖、悬浮球直接拖（移动 ≥4px 判定为拖动，否则算点击）。
@@ -1248,12 +1259,13 @@
       refreshKeyRow();
     });
 
-    /* 展开模式：大面板（题目多时清晰），紧凑模式可拖动；展开时禁用拖动避免定位冲突 */
-    const isExpanded = () => els.panel.classList.contains('expanded');
-    const setExpanded = (on) => {
+    /* 展开模式：大面板（题目多时清晰），紧凑模式可拖动；展开时禁用拖动避免定位冲突。
+       用 function 声明而非 const 箭头：applyMode 定义在前面且会调用它，const 会踩 TDZ。 */
+    function isExpanded() { return els.panel.classList.contains('expanded'); }
+    function setExpanded(on) {
       els.panel.classList.toggle('expanded', on);
-      els.expandbtn.textContent = on ? '收起面板' : '展开';
-      els.expandbtn.dataset.tip = on ? '恢复小面板（可拖动）' : '切换大面板（题目多时更清晰）';
+      els.expandbtn.textContent = on ? '收起面板' : '解析';
+      els.expandbtn.dataset.tip = on ? '收起单题解析，回到面板' : '选一道题单独解析，不填写页面';
       if (on) {
         els.panel.style.left = '';
         els.panel.style.top = '';
@@ -1268,10 +1280,95 @@
         } catch {}
       }
     };
-    els.expandbtn.addEventListener('click', () => setExpanded(!isExpanded()));
-    try {
-      if (sessionStorage.getItem('hwExpanded') === '1') setExpanded(true);
-    } catch {}
+    els.expandbtn.addEventListener('click', () => { setExpanded(!isExpanded()); paintAnalyzeSelection(); });
+    const restoredExpanded = (() => { try { return sessionStorage.getItem('hwExpanded') === '1'; } catch { return false; } })();
+    if (restoredExpanded) setExpanded(true);
+
+    /* 单题解析：展开态专用。选一题 → 选模式 → 解析，结果只显示在面板里，不写页面、不入缓存。 */
+    let analyzeIndex = 0;
+    let analyzing = false;
+    const ANALYZE_MODES = [
+      { id: 'answer', label: '先答案后解析' },
+      { id: 'analysis', label: '先解析后答案' },
+      { id: 'analysisOnly', label: '只展示解析' },
+    ];
+    let analyzeMode = 'answer';
+    els.mq = HW.Dropdown.create({
+      into: els.mslot, items: ANALYZE_MODES, value: 'answer',
+      onChange: (v) => { analyzeMode = v; },
+    });
+    els.qd = HW.Dropdown.create({
+      into: els.qslot, items: [], value: '',
+      onChange: (v) => { analyzeIndex = Number(v) || 0; els.qnum.value = ''; paintAnalyzeSelection(); },
+    });
+
+    /* 展开态已隐藏题目列表，选题走顶部下拉或题号框；此处仅同步选中态 */
+    const paintAnalyzeSelection = () => {
+      (rows || []).forEach((r, i) => r.classList.toggle('sel', isExpanded() && i === analyzeIndex));
+    };
+    const syncAnalyzeRows = () => {
+      const qs = HW.questions || [];
+      els.qd.setItems(qs.map((q, i) => ({ id: String(i), label: `${i + 1}. ${q.meta.stem.replace(/_{2,}/g, '＿＿').slice(0, 28)}` })));
+      if (qs.length) { analyzeIndex = Math.min(analyzeIndex, qs.length - 1); els.qd.value = String(analyzeIndex); }
+      els.abtn.disabled = !qs.length || analyzing;
+      els.qnum.disabled = !qs.length;
+      paintAnalyzeSelection();
+    };
+    const selectAnalyzeRow = (i) => {
+      analyzeIndex = i;
+      els.qd.value = String(i);
+      els.qnum.value = '';
+      els.abtn.disabled = analyzing;
+      paintAnalyzeSelection();
+    };
+    if (restoredExpanded) syncAnalyzeRows();
+    els.qnum.addEventListener('input', () => {
+      const n = Number(els.qnum.value);
+      const qs = HW.questions || [];
+      if (!Number.isInteger(n) || n < 1 || n > qs.length) { els.abtn.disabled = true; return; }
+      analyzeIndex = n - 1;
+      els.qd.value = String(analyzeIndex);
+      els.abtn.disabled = analyzing;
+      paintAnalyzeSelection();
+    });
+    const collectQuestionImages = q => HW.QuestionImages.collect(q, async src => {
+      const result = await send('HW_READ_QUESTION_IMAGE', { src });
+      if (!result?.ok) throw new Error(result?.error || '题图读取失败');
+      return result.data;
+    }, async bounds => {
+      const result = await send('HW_CAPTURE_QUESTION_IMAGE', bounds);
+      if (!result?.ok) throw new Error(result?.error || '题图截图失败');
+      return result.data;
+    });
+    els.abtn.addEventListener('click', async () => {
+      const qs = HW.questions || [];
+      const q = qs[analyzeIndex];
+      if (!q || analyzing) return;
+      if (HW.isReviewPage?.()) { els.aline.textContent = '当前是查看页，题目只读'; return; }
+      analyzing = true;
+      els.abtn.disabled = true;
+      els.abtn.textContent = '解析中…';
+      els.aline.textContent = '';
+      els.aresult.hidden = true;
+      els.aresult.textContent = '';
+      try {
+        /* 只传纯数据：q 上挂着 DOM 引用（el/inputs），跨 sendMessage 序列化会失败。 */
+        const images = await collectQuestionImages(q);
+        if (HW.questions?.[analyzeIndex] !== q || !requireCurrentPage()) throw new Error('题目已变化，请重新选择后解析');
+        const payload = { ...q.meta, _images: images };
+        const r = await send('HW_ANALYZE', { question: payload, mode: analyzeMode });
+        if (HW.questions?.[analyzeIndex] !== q || !requireCurrentPage()) throw new Error('题目已变化，请重新选择后解析');
+        if (!r?.ok) throw new Error(r?.error || '解析失败');
+        els.aresult.textContent = r.text;
+        els.aresult.hidden = false;
+      } catch (e) {
+        els.aline.textContent = String(e.message || e);
+      } finally {
+        analyzing = false;
+        els.abtn.textContent = '解析本题';
+        els.abtn.disabled = !(HW.questions || []).length;
+      }
+    });
 
     els.collapse.addEventListener('click', () => els.panel.classList.add('hidden'));
     // 内容脚本通过后台打开统一设置页。
@@ -1343,7 +1440,7 @@
           refreshKeyRow();
         } else log('保存失败：' + (res?.error || '未知错误'));
       } else {
-        // 仅本次：Key 生效但不入列表；接口类型 auto 时答题时自动探测
+        // 当前配置与历史 Key 列表分别保存。
         const res = await send('SET_CONFIG', { api: { apiKey: clean, iface } });
         if (res?.ok) {
           els.keyinput.value = '';
@@ -1381,6 +1478,7 @@
     });
     function syncConfig(cfg) {
       engine = cfg.engine || 'api';
+      bridgeProvider = cfg.bridge?.provider === 'deepseek' ? 'deepseek' : 'doubao';
       els.mode.value = engine === 'bridge' ? 'bridge' : cfg.panelMode || 'homework';
       els.panel.classList.toggle('bridgemode', engine === 'bridge');
       refreshKeyRow(cfg);
@@ -1515,7 +1613,7 @@
         if (!cfg) throw new Error(configResult?.error || '无法读取引擎配置，请刷新页面后重新检测');
         if (cfg.engine === 'api' && !cfg.api?.apiKey) {
           syncConfig(cfg);
-          throw new Error('请先在「设置 → 应用设置」配置 API Key，或切换豆包桥接后重新检测');
+          throw new Error('请先在「设置 → 应用设置」配置 API Key，或切换免费模式后重新检测');
         }
         await HW.FontDecoder?.prepare(autoDocument || document);
         if (requestId !== detectionRequest) return;
@@ -1604,15 +1702,23 @@
         r.innerHTML = `<span class="no">${i + 1}</span><span class="type t-${q.meta.type}"></span><span class="stem"></span><span class="st">待机</span>`;
         r.querySelector('.type').textContent = TYPE_NAME[q.meta.type] || q.meta.type;
         r.querySelector('.stem').textContent = q.meta.stem.replace(/_{2,}/g, '＿＿').slice(0, 60);
-        r.dataset.tip = '单击仅答本题；右键从本题开始。键盘 Enter 答本题，Shift+Enter 从本题开始';
+        r.dataset.tip = '单击选中本题（展开面板可解析）；右键从本题开始答题';
         r.tabIndex = 0;
         r.setAttribute('role', 'button');
-        r.setAttribute('aria-label', `第 ${i + 1} 题：${q.meta.stem}。单击仅答本题，右键从本题开始`);
-        r.addEventListener('click', () => rerun(i));
+        r.setAttribute('aria-label', `第 ${i + 1} 题：${q.meta.stem}。单击选中，右键从本题开始`);
+        r.addEventListener('click', () => {
+          /* 展开态＝单题解析：点列表只选中该题并加深背景，不答题、不填页。 */
+          if (isExpanded()) { selectAnalyzeRow(i); return; }
+          rerun(i);
+        });
         r.addEventListener('contextmenu', e => { e.preventDefault(); fromHere(i); });
         r.addEventListener('mousedown', e => { if (e.button === 2) fromHere(i); });
         r.addEventListener('keydown', e => {
-          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); rerun(i, e.shiftKey); }
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            if (isExpanded()) { selectAnalyzeRow(i); return; }
+            rerun(i, e.shiftKey);
+          }
         });
         els.list.appendChild(r);
         return r;
@@ -1642,6 +1748,7 @@
       if (!autoRun && !quietRead && !emptyRead && (source !== '页面读取' || sig !== lastReadSig)) log(`${source}完成：可处理 ${qs.length} 题，待确认 ${pending.length} 题`);
       lastReadSig = sig;
       els.start.disabled = !qs.length;
+      syncAnalyzeRows();
     }
 
     els.start.addEventListener('click', () => startAnswering({ wholePage: true }));
@@ -1664,7 +1771,7 @@
       const force = opts?.force === true;
       const epoch = ++answerEpoch;
       answerIndexes = selected.map((_, i) => from + i);
-      rewritePending.clear();
+      if (!force) selected.forEach(q => rewritePending.delete(q));
       stopRequested = false;
       const isCurrent = () => epoch === answerEpoch && !stopRequested;
       try {
@@ -1702,15 +1809,7 @@
           if (!isCurrent()) return false;
           let images = [], imageError = '';
           try {
-            images = await HW.QuestionImages.collect(q, async src => {
-              const result = await send('HW_READ_QUESTION_IMAGE', { src });
-              if (!result?.ok) throw new Error(result?.error || '题图读取失败');
-              return result.data;
-            }, async bounds => {
-              const result = await send('HW_CAPTURE_QUESTION_IMAGE', bounds);
-              if (!result?.ok) throw new Error(result?.error || '题图截图失败');
-              return result.data;
-            });
+            images = await collectQuestionImages(q);
           } catch (e) { imageError = String(e.message || e); }
           if (!isCurrent()) return false;
           const pageAnswer = force ? '' : HW.Extractor.currentAnswer(q); // 硬证据（input.checked / 学习类 / 文本值）
@@ -1898,7 +1997,7 @@
 
     function setBusy(busy) {
       els.detect.disabled = busy;
-      els.start.disabled = busy || !HW.questions?.length;
+      els.start.disabled = busy || !HW.questions?.length || !!HW.isReviewPage?.();
       els.stop.disabled = !busy;
     }
 
@@ -1970,6 +2069,7 @@
             const live = HW.Extractor.currentAnswer(q);
             const guessed = payload.fallback && /猜选/.test(payload.note || '');
             if (answersMatch(q.meta.type, live, payload.answer)) {
+              rewritePending.delete(q);
               setRow(i, 'skipped', '答案：' + payload.answer + (guessed ? '｜' + payload.note : '（与 AI 参考答案一致，保持不动）'), guessed);
               if (guessed) log(`第 ${i + 1} 题保留原选项｜${payload.note}`);
               else if (!autoRun) log(`第 ${i + 1} 题已写且与 AI 参考答案一致，无需改写${payload.fromCache ? '（缓存命中）' : ''}`);
@@ -1979,15 +2079,17 @@
             }
             /* 单题重问不立即覆盖已填答案：换模型重问时，新答案与页面已有答案不同只提示，
                再点一次重问才采用（避免错误的 API 答案覆盖正确的豆包答案，2026-11-09）。 */
-            if (rewriteConfirm && payload.forceAsk && String(live || '').trim() && rewritePending.get(i) !== payload.answer) {
-              rewritePending.set(i, payload.answer);
+            const pendingRewrite = rewritePending.get(q);
+            if (rewriteConfirm && payload.forceAsk && String(live || '').trim() &&
+                (pendingRewrite?.answer !== payload.answer || pendingRewrite.live !== live)) {
+              rewritePending.set(q, { answer: payload.answer, live });
               setRow(i, 'skipped', `原 ${live} ｜ AI 新答案 ${payload.answer}（未覆盖，再点重问采用）`, false);
               log(`第 ${i + 1} 题 AI 新答案「${payload.answer}」与已填「${live}」不同，未覆盖；再点一次重问将采用 AI 答案`);
               if (!isCurrent()) return;
               chrome.runtime.sendMessage({ type: 'HW_FILLED', payload: { index: payload.index, fillToken: payload.fillToken, ok: true } });
               return;
             }
-            rewritePending.delete(i);
+            rewritePending.delete(q);
             // 缓存命中只负责"快速拿到答案"，填写永远真实执行：
             // 已选中的选项由 clickOption 的状态保护自动跳过，不会重复点击/取消。
             await HW.Filler.fill(q, payload.answer);            if (!isCurrent()) return;

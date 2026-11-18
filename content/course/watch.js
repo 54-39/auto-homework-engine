@@ -293,6 +293,53 @@
     return clicked;
   }
 
+  /* 任务卡通用兜底（2026-11-17 异常记录：外链阅读卡永远计不上）。站点把「完成」绑在
+     卡片自己的入口上：外链模块点 #hyperlink /「打开链接」时自己调 finishJob 记账，
+     成功才给父卡片挂 .ans-job-finished。新题型只会越来越多，与其一门门适配，不如在
+     卡片自己的同源框架里点站点自己的主入口，只认这个回执。视频/音频/讨论/问卷/测验
+     有各自流程，这里不碰；点过没回执的卡本节不再点。 */
+  const CARD_FLOW_MODULE = /\/ananas\/modules\/(video|audio|insertbbs|zt\/vote|work)\//;
+  const cardTried = new WeakSet();
+  async function nudgeCards() {
+    const chapter = activeChapterId();
+    let clicked = 0, done = 0;
+    for (const d of docs()) {
+      let cards = [];
+      try { cards = [...d.querySelectorAll('.ans-attach-ct:not(.ans-job-finished)')]; } catch { continue; }
+      for (const card of cards) {
+        if (!on || clicked >= 5 || (chapter && activeChapterId() !== chapter)) return { clicked, done };
+        if (cardTried.has(card)) continue;
+        const frame = card.querySelector('iframe');
+        if (!frame || CARD_FLOW_MODULE.test(frame.src || '')) continue;
+        let fd = null;
+        try { fd = frame.contentDocument; } catch { fd = null; }
+        if (!fd) continue;
+        const entry = fd.querySelector('#hyperlink, a.previewUrlPath, .taskCard a[href], a.ed_btn[href]');
+        if (!entry) continue;
+        cardTried.add(card);
+        /* 拦掉链接默认跳转（target=_blank 会另开标签页），站点自己的点击处理照常执行 */
+        const stop = (e) => e.preventDefault();
+        fd.addEventListener('click', stop, true);
+        try { entry.click(); } catch { continue; } finally {
+          setTimeout(() => { try { fd.removeEventListener('click', stop, true); } catch { /* 已换页 */ } }, 0);
+        }
+        clicked++;
+        for (let i = 0; i < 16 && on; i++) {
+          if (card.classList.contains('ans-job-finished')) break;
+          await step(500);
+        }
+        if (card.classList.contains('ans-job-finished')) { done++; live('任务卡已由站点记完成'); }
+      }
+    }
+    return { clicked, done };
+  }
+  /* 站点记账成功后不重画目录树：按旧计数记「仍有 N 个未完成」就是误报。
+     刷新一次让下一轮拿到平台真实计数（和问卷流程同款）。 */
+  const CARD_TREE_KEY = 'hwCardTreeChecked';
+  const cardTreeRefreshed = (id) => {
+    try { return sessionStorage.getItem(CARD_TREE_KEY) === String(id); } catch { return true; }
+  };
+
   /* 站点在「本节还有任务点没完成」时会弹一个「提示」框挡住整页：
      「去学习」＝留在本节继续做，「下一节」＝直接跳走。
      脚本以前不认这个框：要么干等，要么被后面的点击顺手带成「下一节」——用户 2026-10-21
@@ -2350,8 +2397,9 @@
           if (await readThrough(45000)) live(`阅读任务点已完成：${shortName(cur.name)}`);
           else {
             const nudged = await nudgeCard();
+            const swept = await nudgeCards();
             if (textJobsDone()) live(`阅读任务点已完成：${shortName(cur.name)}`);
-            else note(`阅读任务点还没计上，留给收尾复查：${shortName(cur.name)}${nudged ? `（已试点 ${nudged} 个入口）` : ''}`);
+            else note(`阅读任务点还没计上，留给收尾复查：${shortName(cur.name)}${nudged ? `（已试点 ${nudged} 个入口）` : ''}${swept.clicked ? `（已点 ${swept.clicked} 张任务卡）` : ''}`);
           }
         }
         } catch (e) {
@@ -2389,7 +2437,25 @@
         }
         leftNow = unfinishedOf(cur.id);
       }
-      if (leftNow > 0) {
+      let treeRefreshPending = false;
+      if (leftNow > 0 && on && activeChapterId() === cur.id) {
+        /* 收尾通用兜底：还挂着未完成时，逐张点未完成任务卡里站点自己的入口（外链卡的
+           「打开链接」、模块自己的主按钮），只认卡片真挂 .ans-job-finished 的回执。
+           站点记账后目录树不重画，刷新一次核对平台计数，不按旧计数记假失败。 */
+        const swept = await nudgeCards();
+        if (swept.done) {
+          if (cardTreeRefreshed(cur.id)) leftNow = unfinishedOf(cur.id);
+          else {
+            try { sessionStorage.setItem(CARD_TREE_KEY, String(cur.id)); } catch { /* 下轮再核 */ }
+            live('任务卡已完成，刷新目录核对平台计数');
+            setTimeout(() => { if (on && my === gen && activeChapterId() === cur.id) location.reload(); }, 600);
+            treeRefreshPending = true;
+          }
+        }
+      }
+      if (treeRefreshPending) {
+        /* 按旧目录树记账会误报；刷新后的下一轮如实核对 */
+      } else if (leftNow > 0) {
         /* 测验低分是「剩 1 个任务点」的主因（2026-10-24 异常记录 41 组）：交卷了但站点
            不认低分卷为完成。分数、剩余任务点的类型与本节的过程性跳过轨迹都写进原因，
            导出记录即可看到「为什么没完成」的完整链条。 */

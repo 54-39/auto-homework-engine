@@ -476,10 +476,10 @@ try {
   await test('刷课无法确定的题猜选兜底，等待回执后继续后续题', async () => {
     const before = sentMessages.length;
     let calls = 0;
-    // 批量契约：首批两道题（第 0 题空、第 1 题可解），复核只带第 1 题。
+    // 只补问缺失的第 0 题；合法空答与服务返回错误必须区分。
     globalThis.fetch = async () => success(JSON.stringify({ results: calls++ === 0
       ? [{ id: '0', answers: [] }, { id: '1', answers: ['乙'] }]
-      : [{ id: '1', answers: ['乙'] }] }));
+      : [{ id: '0', answers: [] }] }));
     await call('HW_START', { auto: true, questions: ['无法确定答案时的回归题', '后续可解题'].map(stem => ({ type: 'choice', stem, options: [{ key: 'A', text: '甲' }, { key: 'B', text: '乙' }] })) });
     for (let i = 0; i < 200 && !sentMessages.slice(before).some(m => m.type === 'HW_ANSWER'); i++) await new Promise(r => originalTimeout(r, 5));
     const answer = sentMessages.slice(before).find(m => m.type === 'HW_ANSWER');

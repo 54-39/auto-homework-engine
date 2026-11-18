@@ -51,3 +51,24 @@ function enhance(select) {
 
 HW.SettingsControls = { enhance };
 for (const select of document.querySelectorAll('select')) enhance(select);
+
+/* 问号说明：点击在设置项上方展开为行内文本块，再点同一个收起；同时只展开一条。
+   不用悬浮气泡：长说明要能停留细读，行内块随页面滚动、排版与正文一致。 */
+let openHelp = null;
+const note = document.createElement('p');
+note.className = 'hw-note';
+const closeNote = () => { note.remove(); openHelp?.setAttribute('aria-expanded', 'false'); openHelp = null; };
+document.addEventListener('click', e => {
+  const el = e.target.closest('.help');
+  if (!el) return;
+  e.preventDefault(); // 问号在 label/summary 里时，不能连带勾选复选框或折叠详情
+  if (openHelp === el) return closeNote();
+  closeNote();
+  openHelp = el;
+  el.setAttribute('aria-expanded', 'true');
+  note.textContent = el.dataset.tip;
+  const anchor = el.closest('.app-field,.check-row,.field,details') || el.parentElement;
+  /* 字段内插在标签行后、控件前：问号绝对定位在字段右上角，展开说明不会移动问号 */
+  if (anchor.classList.contains('app-field')) anchor.firstElementChild.after(note);
+  else anchor.after(note);
+});
