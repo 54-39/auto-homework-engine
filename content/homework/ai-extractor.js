@@ -5,9 +5,11 @@
   const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
   const esc = (s) => String(s).replace(/[&<>"\n]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\n': ' ' }[c]));
   const OMIT = 'script,style,noscript,nav,footer,[role="navigation"],[role="banner"],[role="search"],#hw-panel-host,.newTopic1,#posDiscussScroll,#searchChapterListByName,.topicDetail_replyWrap,.topicDetail_info';
-  const TYPES = new Set(['choice', 'multi', 'judge', 'blank', 'subjective']);
+  const TYPES = new Set(['choice', 'multi', 'judge', 'blank', 'subjective', 'discuss']);
+  /* 讨论（话题回复）与简答同属自由文本作答，只是题型标签与页面来源不同 */
+  const TEXT_TYPES = new Set(['subjective', 'discuss']);
   const questionRoot = el => el?.closest('.questionLi,.TiMu,.mark_item,.q-item,.question-item,.question,.exam-question,.topic-item,fieldset') ||
-    (el?.matches('.topicDetail_editContainer textarea[placeholder="回复话题"]') ? el.closest('.topicDetail_editContainer') : null);
+    (el?.matches('.topicDetail_editContainer textarea') ? el.closest('.topicDetail_editContainer') : null);
   // 页面混用 encodeURIComponent 与旧 escape 的 %uXXXX；先展开旧 Unicode 编码，再按 JSON 读取。
   const formulaData = img => JSON.parse(decodeURIComponent((img.getAttribute('data') || '')
     .replace(/%u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))));
@@ -256,9 +258,9 @@
         if (!TYPES.has(item.type)) throw new Error(item.reason || '暂不支持此题型或题目资料不完整');
         const container = snapshot.refs.get(item.containerId)?.el;
         if (!container) throw new Error('AI 返回的题目容器不存在');
-        const replyBox = item.type === 'subjective' && item.inputIds.length === 1
+        const replyBox = TEXT_TYPES.has(item.type) && item.inputIds.length === 1
           ? snapshot.refs.get(item.inputIds[0])?.el : null;
-        const discussion = replyBox?.matches('.topicDetail_editContainer textarea[placeholder="回复话题"]')
+        const discussion = replyBox?.matches('.topicDetail_editContainer textarea')
           && replyBox.ownerDocument.querySelector('.topicDetail_title');
         // 话题标题与回复框分处两个容器；公共祖先还包含头像、回复列表和可选附件工具栏。
         const contentAreas = discussion
@@ -331,7 +333,7 @@
             if (labels.some((l, j) => j !== i && (a.contains(l.clickEl || l.input) || (labels[i].input && labels[i].input === l.input)))) throw new Error('选项位置重复或相互嵌套');
           }
         } else {
-          if (item.options.length || !item.inputIds.length || (item.type === 'subjective' && item.inputIds.length !== 1)) throw new Error('文本答题位置数量无法确认');
+          if (item.options.length || !item.inputIds.length || (TEXT_TYPES.has(item.type) && item.inputIds.length !== 1)) throw new Error('文本答题位置数量无法确认');
           for (const id of item.inputIds) {
             const el = get(id, item.type === 'blank' ? ['text', 'editable', 'editor', 'select'] : ['text', 'editable', 'editor']);
             fields.push(el);
@@ -376,7 +378,7 @@
             slotOptions: item.type === 'blank' ? fields.map((el) => el.tagName === 'SELECT'
               ? [...el.options].filter((o) => !o.disabled && o.value !== '').map((o) => norm(o.textContent))
               : (sharedOptions(el) || []).map((o) => o.text)) : [] },
-          el: { root: container, inputs, labels, stateInput, contexts: (item.contextIds || []).map(id => snapshot.refs.get(id)?.el).filter(Boolean), fields: item.type === 'blank' ? fields : [], iframes: item.type === 'blank' ? iframes : [], iframe: item.type === 'subjective' ? iframes[0] : null },
+          el: { root: container, inputs, labels, stateInput, contexts: (item.contextIds || []).map(id => snapshot.refs.get(id)?.el).filter(Boolean), fields: item.type === 'blank' ? fields : [], iframes: item.type === 'blank' ? iframes : [], iframe: TEXT_TYPES.has(item.type) ? iframes[0] : null },
           _targetIds: targetIds,
         };
         ready.set(key, q);
@@ -404,5 +406,22 @@
     return { questions, pending };
   }
 
-  HW.AIDetection = { collect, bind, isCurrent, sharedOptions, imageText, textOf, questionRoot };
+  /* 题干信息不全：指的课本页码、课堂内容、单元词汇，或依赖没下发的材料。
+     这类题 AI 只能编，必须拦下来让人确认（用户 2026-11-20 明确要求）。 */
+  const INCOMPLETE = [
+    [/(?:第\s*\d+\s*页|p\.?\s*\d+)/i, '题干指到课本页码'],
+    [/(课本|教材|练习册|讲义|导学案|书本)/, '题干指到课本/教材内容'],
+    [/(今天|上课|课上|课堂)(所学|学的|讲过的?|讲的)/, '题干指到课堂所讲内容'],
+    [/(本|这|该|第[一二三四五六七八九十\d]+)\s*(单元|章节|课|讲)?\s*(的)?\s*(单词|词汇|短语|语法|课文)/, '题干指到单元里的词汇/课文'],
+    [/(完成|做完|做)\s*(课后|书后|教材上|书上)?\s*(练习|习题)/, '题干要求完成课本练习'],
+    [/(根据|结合)\s*(所学|附件|附录)/, '题干依赖没有下发的材料'],
+  ];
+  function incomplete(stem) {
+    const t = norm(stem);
+    if (!t) return '题干为空';
+    for (const [re, why] of INCOMPLETE) if (re.test(t)) return why;
+    return '';
+  }
+
+  HW.AIDetection = { collect, bind, isCurrent, sharedOptions, imageText, textOf, questionRoot, incomplete };
 })();

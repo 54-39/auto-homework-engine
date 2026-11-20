@@ -15,10 +15,13 @@
   const CX = {
     discussion(doc = document) {
       const title = doc.querySelector('.topicDetail_detail .topicDetail_title');
-      const box = doc.querySelector('.topicDetail_editContainer textarea[placeholder="回复话题"]');
+      const box = doc.querySelector('.topicDetail_editContainer textarea');
       if (!title || !box) return null;
       // 按用户指定的页面状态：出现同学回复记录后，不再列为待答讨论题。
-      const completed = !!doc.querySelector('.topicDetail_replyList .topicDetail_replyItem');
+      /* 只有自己的回复项才有「编辑/删除」，别人的只有「举报」；
+         不能把"页面上有任何一个同学的回复"当成自己已完成——那会让班级讨论永远识别成 0 题。 */
+      const completed = [...doc.querySelectorAll('.topicDetail_replyList .topicDetail_replyItem')]
+        .some((item) => /编辑|删除/.test(item.querySelector('.operate_con')?.textContent || ''));
       return { title, box, completed, body: title.closest('.topicDetail_detail')?.querySelector('.richText') };
     },
     match(doc = document) {
@@ -42,9 +45,11 @@
       }
       const topic = CX.discussion(doc);
       if (topic) {
-        if (topic.completed || !topic.box.getClientRects().length || topic.box.disabled || topic.box.readOnly) return [];
+        /* 自绘输入框的 textarea 常被判无 rects，外层 .textareawrap 可见即算展开 */
+        const shown = topic.box.getClientRects().length || topic.box.closest('.textareawrap')?.getClientRects().length;
+        if (topic.completed || !shown || topic.box.disabled || topic.box.readOnly) return [];
         const stem = [textOf(topic.title), topic.body && textOf(topic.body)].filter(Boolean).join('\n');
-        return [{ meta: { index: 0, type: 'subjective', stem, options: [], blanks: 0 },
+        return [{ meta: { index: 0, type: 'discuss', stem, options: [], blanks: 0 },
           el: { inputs: [topic.box], labels: [], contexts: [topic.title, topic.body].filter(Boolean) } }];
       }
       return [...doc.querySelectorAll('.questionLi')].map((q, i) => {

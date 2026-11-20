@@ -297,6 +297,14 @@
               <label class="check"><input type="checkbox" id="rewriteConfirm" checked> 单题重问时先确认</label>
               <button type="button" class="help" aria-label="说明" data-tip="新答案与页面已填不同时只提示，再点一次重问才覆盖。">?</button>
             </div>
+            <div class="check-row">
+              <label class="check"><input type="checkbox" id="taskGrab"> 任务跟进时自动处理抢答题（先填答案再点「抢」）</label>
+              <button type="button" class="help" aria-label="说明" data-tip="默认关闭。开启后遇到抢答题：页面上有题就先填答案再点「抢」，没有题就直接点「抢」。签到仍需人工。">?</button>
+            </div>
+            <div class="app-grid">
+              <div class="app-field"><div class="input-field"><input id="taskHostMin" type="number" min="1" max="30" step="1" value="2" placeholder=" " required><label for="taskHostMin">任务托管：每几分钟刷新一次（分钟）</label></div></div>
+              <div class="app-field"><div class="input-field"><input id="taskHostEnd" type="number" min="0" max="600" step="5" value="45" placeholder=" " required><label for="taskHostEnd">任务托管总时长（分钟，0 = 只跑一轮）</label></div></div>
+            </div>
             <div class="actions app-save"><button type="submit" id="save">保存设置</button></div>
           </fieldset>
           <div class="msg" id="msg" role="status" aria-live="polite">正在读取设置…</div>
@@ -409,7 +417,7 @@
 3. 回到这里点「导出异常记录」，将导出的 JSON 文件作为附件发送至反馈邮箱，并说明哪道题出错、预期答案是什么。
 4. 最好同时附上题目截图，包含完整题干、选项、插件填写的答案，以及平台显示的正确答案（如有），截图自行添加到邮件附件。
 发送前请检查文件和截图，遮挡姓名、学号、手机号、密码、API Key 等个人或敏感信息。诊断在本机记录，是否发送由你决定。">?</button></h3>
-          <p class="hint">反馈邮箱：<a href="mailto:477158632@qq.com">477158632@qq.com</a></p>
+          <p class="hint">反馈邮箱：<a href="mailto:wantoecho545@gmail.com">wantoecho545@gmail.com</a></p>
         </div>
         <p class="count" id="issueCount" role="status" aria-live="polite">正在读取异常记录…</p>
         <div class="actions">

@@ -44,7 +44,8 @@ for(const busy of [true,false]){
 /* 面板自动收起的作用域（用户 2026-10-28 两次强调）：只有点顶部「开始」按钮才收起，
    左键单题 / 右键从本题往后 / Shift+Enter 一律不动面板，否则用户会以为卡死。 */
 assert.equal((panel.match(/wholePage:\s*true/g)||[]).length,1,'只有开始按钮能传 wholePage');
-assert.match(panel,/els\.start\.addEventListener\('click', \(\) => startAnswering\(\{ wholePage: true \}\)\)/);
+assert.match(panel,/els\.start\.addEventListener\('click', \(\) => \{[\s\S]{0,200}?startAnswering\(\{ wholePage: true \}\)/,'开始按钮仍走答题流程');
+assert.match(panel,/openTaskFollow\(\)/,'任务跟进模式有自己的入口');
 assert.match(panel,/if \(cfg\.engine === 'bridge' && opts\?\.wholePage\) \{/,'收起分支必须要求 wholePage');
 assert.equal(/if \(cfg\.engine === 'bridge'\) \{/.test(panel),false,'不许留只判引擎的收起分支');
 assert.equal(/fromIndex: i,[\s\S]{0,80}?wholePage/.test(panel),false,'单题/右键重问不能带 wholePage');

@@ -21,6 +21,9 @@ const DEFAULT_CONFIG = {
   panelMode: 'homework', // API 面板：写题 / 刷课
   diagnosticsEnabled: false, // 用户打开诊断记录开关后才采集和写入新异常
   rewriteConfirm: true, // 单题重问时新答案与页面已填不同，先提示再点一次才覆盖
+  taskGrab: false, // 任务跟进遇到抢答题时是否自动处理（默认关，签到始终留给人工）
+  taskHostMin: 2, // 任务托管刷新间隔（分钟）
+  taskHostEnd: 45, // 任务托管总时长（分钟，0 = 只跑一轮）
 };
 
 let run = null; // { tabId, cancelled, items: [{ q, status, answer, error }] }
@@ -785,6 +788,67 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         } catch (e) {
           sendResponse({ ok: false, error: String(e.message || e) });
         } finally { analyzingCount--; }
+      } else if (type === 'HW_TASK_ASK') {
+        /* 任务跟进：单题作答，只回答案文字；填写和提交都在 task-follow.js 里做 */
+        const q = payload?.q;
+        if (!q || typeof q.stem !== 'string' || !q.stem.trim()) return sendResponse({ ok: false, error: '题目为空' });
+        try {
+          const cfg = await getConfig();
+          if (cfg.engine === 'api' && !cfg.api?.apiKey) throw new Error('请先填写 API Key');
+          const r = await askEngine(cfg, {
+            type: q.type || 'choice', stem: q.stem.slice(0, 12000),
+            options: Array.isArray(q.options) ? q.options.slice(0, 8) : [], blanks: Number(q.blanks) || 0,
+          });
+          sendResponse({ ok: true, answer: r?.answer || '', raw: r?.raw || '' });
+        } catch (e) {
+          /* 明确给了 {"answers":["B"]} 却过不了严格校验时，字母就是答案本身，直接采用 */
+          const preview = String(e.answerPreview || '');
+          const hit = /"answers"\s*:\s*\[([^\]]*)\]/.exec(preview);
+          const letters = hit ? [...new Set((hit[1].match(/[A-Ha-h]/g) || []).map((c) => c.toUpperCase()))].sort().join('') : '';
+          if (letters && /^(choice|multi|judge)$/.test(q.type || '')) return sendResponse({ ok: true, answer: letters, raw: preview.slice(0, 200) });
+          sendResponse({ ok: false, error: String(e.message || e), raw: preview.slice(0, 400) });
+        }
+      } else if (type === 'HW_TASK_SCAN') {
+        /* 就地重新识别：扫当前标签所有框架（任务列表在 mobilelearn 的 iframe 里） */
+        try {
+          const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+          const tab = tabs[0];
+          if (!tab?.id) return sendResponse({ ok: false, error: '找不到当前标签页' });
+          const frames = await chrome.scripting.executeScript({
+            target: { tabId: tab.id, allFrames: true },
+            func: () => [...document.querySelectorAll('.bottomList li')]
+              .filter((li) => li.getAttribute('activestatus') === '1')
+              .map((li) => ({
+                id: li.getAttribute('activeid'),
+                type: li.getAttribute('activetype'),
+                title: (li.querySelector('.right-content p')?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+              })),
+          });
+          const seen = new Set();
+          const tasks = [];
+          for (const f of frames) for (const t of (f.result || [])) if (t.id && !seen.has(t.id)) { seen.add(t.id); tasks.push(t); }
+          const stored = await chrome.storage.local.get('hwTaskState');
+          const st = stored.hwTaskState || { active: false, round: 0, permanent: {} };
+          if (tasks.length) st.queue = tasks;
+          await chrome.storage.local.set({ hwTaskState: st });
+          sendResponse({ ok: true, count: tasks.length });
+        } catch (e) {
+          sendResponse({ ok: false, error: String(e.message || e) });
+        }
+      } else if (type === 'HW_TASK_BACK') {
+        /* 任务页自己会把导航顶回去（如投票详情），用 tabs.update 强制回列表 */
+        const u = String(payload?.url || '');
+        if (!/^https:\/\/mobilelearn\.chaoxing\.com\//.test(u) || !sender.tab?.id) return sendResponse({ ok: false });
+        await chrome.tabs.update(sender.tab.id, { url: u }).catch(() => {});
+        sendResponse({ ok: true });
+      } else if (type === 'HW_TASK_OPEN') {
+        /* 打开任务列表页，托管由 content/course/task-follow.js 在列表页里跑 */
+        const p = payload || {};
+        const u = new URL('https://mobilelearn.chaoxing.com/page/active/stuActiveList');
+        for (const [k, v] of Object.entries(p)) if (v) u.searchParams.set(k, String(v));
+        if (!u.searchParams.get('fid')) u.searchParams.set('fid', '270');
+        const tab = await chrome.tabs.create({ url: u.href, active: true });
+        sendResponse({ ok: true, tabId: tab.id });
       } else if (type === 'GET_CONFIG') {
         sendResponse({ ok: true, config: await getConfig() });
       } else if (type === 'SET_CONFIG') {
@@ -938,12 +1002,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
            例外：讨论任务点开出来的 groupweb 话题页（bbs.js 要在里头回帖），
            凭 URL 识别，不算「别人的页面」。 */
         const q = await loadQueue();
-        const helper = q?.topic?.tabId === tabId && q.topic.url === sender.url && (() => {
-          try {
-            const u = new URL(sender.url || '');
-            return u.hostname === 'groupweb.chaoxing.com' && u.pathname.startsWith('/course/topic/');
-          } catch { return false; }
-        })();
+        /* 只认插件自己打开的那个话题标签页；不比对完整 URL（会重定向到 v3），
+           但必须还是同一个话题，防止标签页被导航到别的话题。 */
+        const tid = (raw) => { try { const u = new URL(raw || ''); const m = u.pathname.match(/([0-9a-f]{16,})_topicDiscuss/); return (u.hostname === 'groupweb.chaoxing.com' ? '' : 'x:') + (m ? m[1] : u.pathname); } catch { return ''; } };
+        const helper = !!(q?.topic?.tabId === tabId && tid(q.topic.url) === tid(sender.url));
         if (q && tabId != null && q.tabId != null && q.tabId !== tabId && !helper) {
           sendResponse({ ok: true, queue: null });
         } else {
@@ -1030,11 +1092,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (type === 'HW_BBS_REPLIED') {
         /* 话题页回帖成功（但没有 opener 可收 completeTopic 消息）——转发给学习页补发。 */
         const q = await loadQueue();
-        if (q && !q.paused && q.topic?.tabId === tabId && q.topic.url === sender.url) {
-          const topicUrl = new URL(q.topic.url);
+        /* 同上：按标签页 + 同一话题认（重定向后完整 URL 会变） */
+        const tid = (raw) => { try { const u = new URL(raw || ''); const m = u.pathname.match(/([0-9a-f]{16,})_topicDiscuss/); return (u.hostname === 'groupweb.chaoxing.com' ? '' : 'x:') + (m ? m[1] : u.pathname); } catch { return ''; } };
+        const topicUrl = q?.topic?.tabId === tabId && tid(q.topic.url) === tid(sender.url) ? (() => {
+          try { return new URL(sender.url || ''); } catch { return null; }
+        })() : null;
+        if (q && !q.paused && topicUrl) {
           sendTab(q.tabId, { type: 'HW_BBS_NOTIFY', payload: {
-            jobId: topicUrl.searchParams.get('jobid') || '',
-            knowledgeId: topicUrl.searchParams.get('knowledgeid') || '' } });
+            jobId: topicUrl.searchParams.get('jobid') || new URL(q.topic.url).searchParams.get('jobid') || '',
+            knowledgeId: topicUrl.searchParams.get('knowledgeid') || new URL(q.topic.url).searchParams.get('knowledgeid') || '' } });
           delete q.topic;
           await saveQueue(q);
         }

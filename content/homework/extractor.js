@@ -369,7 +369,7 @@
           HW.AIDetection?.sharedOptions(el)?.find((o) => o.clickEl.classList.contains('check_answer'))?.text || norm(el.isContentEditable ? el.textContent : el.value));
         return values.some(Boolean) ? values.some((value) => /[;；\n]/.test(value)) ? JSON.stringify(values) : values.join(';') : '';
       }
-      if (t === 'subjective') {
+      if (t === 'subjective' || t === 'discuss') {
         if (q.el.iframe) {
           const b = q.el.iframe.contentDocument && q.el.iframe.contentDocument.body;
           return b ? norm(b.textContent).slice(0, 80) : '';

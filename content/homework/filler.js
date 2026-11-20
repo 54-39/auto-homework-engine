@@ -7,6 +7,8 @@
 
   const JUDGE_TRUE = /^(对|正确|√|✔|✓|是|真|T|True|TRUE)$/;
   const JUDGE_FALSE = /^(错|错误|误|×|✘|✗|否|假|F|False|FALSE)$/;
+  /* 讨论（话题回复）和简答一样是自由文本，按原文写入 */
+  const TEXT_TYPES = new Set(['subjective', 'discuss']);
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const plainLabel = (t) => norm(t).replace(/^[A-Za-z]?[\s.、．:：)）]*/, '').trim();
 
@@ -169,8 +171,7 @@
        只统一 CRLF，不做 norm()（那会把作文压成一行，0.4.6 及以前的第二个压平点）。
        Markdown 已由引擎 parseAnswer 清掉；这里不重复处理，保证所见即所写。 */
     const ans =
-      type === 'subjective' ? String(answer ?? '').replace(/\r\n?/g, '\n') : norm(String(answer ?? ''));
-    if (!ans.trim()) throw new Error('答案为空');
+      TEXT_TYPES.has(type) ? String(answer ?? '').replace(/\r\n?/g, '\n') : norm(String(answer ?? ''));    if (!ans.trim()) throw new Error('答案为空');
 
     // 超星：以"可见标记"为准做"点击 → 等待 → 复查"纠偏循环（最多 3 轮）。
     // 超星点击后可能异步重绘覆盖我们此前的直写，同步比对会误判；循环结束后
@@ -303,7 +304,7 @@
       return;
     }
 
-    if (type === 'subjective') {
+    if (TEXT_TYPES.has(type)) {
       if (q.el.iframe) {
         fillRichEditor(q.el.iframe, ans);
         return;
@@ -422,7 +423,7 @@
           return norm(value) === parts[i];
         });
       }
-      if (type === 'subjective') {
+      if (TEXT_TYPES.has(type)) {
         if (q.el.iframe) {
           const body = q.el.iframe.contentDocument?.body;
           return !!body && squash(body.textContent) === squash(ans);

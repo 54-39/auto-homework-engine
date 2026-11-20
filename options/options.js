@@ -197,7 +197,9 @@ $('appForm').addEventListener('submit', async event => {
   if ($('engine').value === 'api' && api.baseURL && !(await requestAPIHostPermission(api.baseURL, 'msg'))) return;
   $('appFields').disabled = true;
   out('msg', '正在保存设置…');
-  const payload = { engine: $('engine').value, subjMode: $('subjMode').value, rewriteConfirm: $('rewriteConfirm').checked, api, bridge };
+  const payload = { engine: $('engine').value, subjMode: $('subjMode').value, rewriteConfirm: $('rewriteConfirm').checked, taskGrab: $('taskGrab').checked,
+    taskHostMin: Math.min(30, Math.max(1, Number($('taskHostMin').value) || 2)),
+    taskHostEnd: Math.min(600, Math.max(0, Number($('taskHostEnd').value) || 0)), api, bridge };
   const result = await send('SET_CONFIG', payload);
   $('appFields').disabled = false;
   if (result?.ok) {
@@ -222,6 +224,9 @@ $('test').addEventListener('click', async () => {
   $('engine').value = config.engine || 'api';
   $('subjMode').value = config.subjMode || 'ask';
   $('rewriteConfirm').checked = config.rewriteConfirm !== false;
+  $('taskGrab').checked = config.taskGrab === true;
+  $('taskHostMin').value = config.taskHostMin ?? 2;
+  $('taskHostEnd').value = config.taskHostEnd ?? 45;
   showAPI(config.api || {});
   $('bridgeProvider').value = config.bridge?.provider === 'deepseek' ? 'deepseek' : 'doubao';
   $('delayMin').value = config.bridge?.delayMin ?? 3000;

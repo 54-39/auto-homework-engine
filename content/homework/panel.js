@@ -103,6 +103,17 @@
     .watchline{min-height:36px;padding:9px 0 0;border-top:1px solid #DCE3ED;font-size:12px;color:#2563EB;font-weight:500;line-height:1.6;overflow-wrap:anywhere}
     .watchline.warn{color:#DC2626}
     .watchview .watchbtn{flex:none;width:100%;height:36px}
+    .taskview .taskbtn{flex:none;width:100%;height:36px;min-height:36px;max-height:36px}
+    .item .st.s-fail{color:#DC2626}
+    .item .st.s-skip{color:#9CA3AF}
+    .taskmiss{font-size:11.5px;line-height:1.7;color:#B91C1C;max-height:130px;overflow:auto;overflow-wrap:anywhere}
+    .taskmiss:empty{display:none}
+    .panel.taskmode .homework-only:not(.list){display:none}
+    .panel.taskmode .apitoggle,.panel.taskmode .apisec{display:none}
+    .taskopts{gap:10px;flex-wrap:wrap}
+    .taskopts .tasknum{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#374151}
+    .taskopts .tasknum input{width:54px;height:26px;border:1px solid #CBD5E1;border-radius:6px;padding:0 6px;font-size:12px;color:#111827}
+    .taskopts .tasksave{height:26px;padding:0 12px;font-size:12px;border-radius:6px}
     .watchempty{margin:0;padding:16px 10px;text-align:center;color:#4B5563;line-height:1.7;border:1px dashed #C7D0DB;border-radius:8px}
     /* 课程清单占的是题目列表那一格（同样的高度），有课时替换掉它，
        面板外框尺寸不变（用户硬要求）。 */
@@ -138,6 +149,7 @@
     .item .type.t-judge{background:#64748B}
     .item .type.t-blank{background:#0EA5E9}
     .item .type.t-subjective{background:#2563EB}
+    .item .type.t-discuss{background:#0F766E}
     .item .stem{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#374151;font-size:11.5px}
     .item .st{flex:none;font-size:11px;font-weight:500;width:36px;text-align:right;color:#C0C6CD}
     .item .st.s-asking{color:#6B7280}
@@ -179,7 +191,7 @@
     .guessbody{max-height:40vh;overflow:auto;overflow-wrap:anywhere}
   `;
 
-  const TYPE_NAME = { choice: '单选', multi: '多选', judge: '判断', blank: '填空', subjective: '简答' };
+  const TYPE_NAME = { choice: '单选', multi: '多选', judge: '判断', blank: '填空', subjective: '简答', discuss: '讨论' };
 
   /* 行尾纯文字状态（设计稿无图标方案） */
   const STATUS_TEXT = { asking: '获取中', filled: '填入', fixed: '改对', skipped: '保留', failed: '失败' };
@@ -319,6 +331,21 @@
           <div class="watchline" role="status" aria-live="polite">准备就绪</div>
           <button class="act watchbtn" data-tip="按所选倍速播放视频，播完自动进入下一节">开始刷课</button>
         </div>
+        <div class="watchview taskview hidden">
+          <div class="watchintro">
+            <div class="watchtitle"><h2 class="watchheading">任务跟进</h2><button type="button" class="lbtn plain taskrefresh">刷新</button><button type="button" class="lbtn plain taskretry">重试未完成</button></div>
+            <p class="watchcontext">逐个完成「进行中」的任务，一轮结束列出未完成项；签到需人工。</p>
+          </div>
+          <div class="watchrow taskopts">
+            <label class="muteopt" data-tip="开启后遇到抢答题：页面上有题就先填答案再点「抢」，没题直接抢。签到始终留给人工"><input class="taskgrab" type="checkbox">抢答题</label>
+            <label class="tasknum" data-tip="到点自动停止托管，0 = 只跑一轮">接管<input class="taskend" type="number" min="0" max="600" step="5">分钟</label>
+            <label class="tasknum" data-tip="每隔几分钟重新识别一次任务">每<input class="taskmin" type="number" min="1" max="30" step="1">分钟刷新</label>
+            <button type="button" class="lbtn tasksave">保存</button>
+          </div>
+          <div class="watchline taskline" role="status" aria-live="polite">准备就绪</div>
+          <div class="taskmiss"></div>
+          <button class="act taskbtn" data-tip="按设置的间隔自动刷新任务列表，有新任务继续处理">开始跟进</button>
+        </div>
         <div class="summary homework-only" role="status" aria-live="polite"><span class="smsg">正在读取页面题目…</span><span class="shint hidden">列表可滚动</span></div>
         <div class="list homework-only"></div>
         <div class="logwrap"><div class="loghd">日志</div><div class="log"></div></div>
@@ -343,6 +370,8 @@
       guessmodal: $('.guessmodal'), guessbody: $('.guessbody'),
       detect: $('.detect'), start: $('.start'), stop: $('.stop'),
       watch: $('.watchbtn'), watchmute: $('.watchmute'), watchline: $('.watchline'), courselist: $('.courselist'), courserefresh: $('.courserefresh'),
+      taskview: $('.taskview'), taskline: $('.taskline'), taskmiss: $('.taskmiss'), taskbtn: $('.taskbtn'), taskretry: $('.taskretry'), taskrefresh: $('.taskrefresh'),
+      taskgrab: $('.taskgrab'), taskmin: $('.taskmin'), taskend: $('.taskend'), tasksave: $('.tasksave'),
       watchqueue: $('.watchqueue'), wqnow: $('.wqnow'), wqrest: $('.wqrest'), wqtime: $('.wqtime'),
       moderow: $('.moderow'), watchview: $('.watchview'), watchheading: $('.watchheading'), watchcontext: $('.watchcontext'), watchmeta: $('.watchmeta'), watchempty: $('.watchempty'),
       watchprogress: $('.watchprogress'), wpvalue: $('.wpvalue'), wptrack: $('.wptrack'), wpfill: $('.wpfill'),
@@ -354,11 +383,11 @@
     let bridgeProvider = 'doubao';
     els.mode = HW.Dropdown.create({
       into: $('.modeslot'),
-      items: [{ id: 'homework', label: '解题（API）' }, { id: 'watch', label: '刷课（API）' }, { id: 'bridge', label: '免费模式' }],
+      items: [{ id: 'homework', label: '解题（API）' }, { id: 'watch', label: '刷课（API）' }, { id: 'task', label: '任务跟进（预览）' }, { id: 'bridge', label: '免费模式' }],
       value: 'homework',
       onChange: async (panelMode) => {
         const nextEngine = panelMode === 'bridge' ? 'bridge' : 'api';
-        const r = await send('SET_CONFIG', { engine: nextEngine, panelMode: panelMode === 'watch' ? 'watch' : 'homework' });
+        const r = await send('SET_CONFIG', { engine: nextEngine, panelMode });
         if (r?.ok) syncConfig(r.config || { engine: nextEngine, panelMode });
         if (!r?.ok) log('模式保存失败：' + (r?.error || '请重试'));
       },
@@ -366,6 +395,7 @@
     function applyMode() {
       const isApi = engine === 'api';
       const watch = isApi && els.mode.value === 'watch';
+      const task = isApi && els.mode.value === 'task';
       els.moderow.classList.remove('hidden');
       els.panel.classList.toggle('watchmode', watch);
       els.watchview.classList.toggle('hidden', !watch);
@@ -373,7 +403,154 @@
          切到刷课就退出展开，回到普通尺寸（展开按钮仍是「展开」，用户想回来再点）。 */
       if (watch) setExpanded(false);
       if (watch) loadCourseTimes();
+      if (task) setExpanded(false);
+      els.panel.classList.toggle('taskmode', task);
+      els.taskview.classList.toggle('hidden', !task);
+      if (task) refreshTaskUI();
+      els.start.textContent = task ? '打开任务页' : '开始';
       updateWatchContext();
+    }
+
+    /* 任务跟进：状态存在 storage，页面侧由 content/course/task-follow.js 执行 */
+    const TASK_KEY = 'hwTaskState';
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    async function refreshTaskUI() {
+      if (!els.taskline) return;
+      const st = (await chrome.storage.local.get(TASK_KEY))[TASK_KEY] || null;
+      if (!st) {
+        els.taskline.textContent = '准备就绪';
+        els.taskbtn.textContent = '开始跟进';
+        const err = (await chrome.storage.local.get('hwTaskLastError')).hwTaskLastError || '';
+      els.taskmiss.textContent = err ? '最后错误：' + err : '';
+        return;
+      }
+      const left = st.endAt ? Math.max(0, Math.round((st.endAt - Date.now()) / 60000)) : 0;
+      const round = st.report ? ' · 第 ' + st.round + ' 轮完成 ' + st.report.done : '';
+      els.taskline.textContent = st.active ? ('托管中' + (left ? ' · 剩 ' + left + ' 分钟' : '') + round) : ('已停止' + round);
+      els.taskbtn.textContent = st.active ? '停止托管' : '开始跟进';
+      const err = (await chrome.storage.local.get('hwTaskLastError')).hwTaskLastError || '';
+      els.taskmiss.textContent = err ? '最后错误：' + err : '';
+      /* 任务列表按解题模式那种行展示：类型标签 + 标题 + 状态；原因放行上 title */
+      if (els.list) {
+        const NAME = { 2: '签到', 4: '抢答', 5: '讨论', 42: '练习', 43: '投票', 14: '问卷' };
+        const CLS = { 2: 't-judge', 4: 't-multi', 5: 't-discuss', 42: 't-choice', 43: 't-blank', 14: 't-subjective' };
+        const frag = document.createDocumentFragment();
+        (st.queue || []).forEach((t, i) => {
+          const r = st.permanent?.[t.id];
+          const state = !r ? '未开始' : r.status === 'done' ? '完成' : r.status === 'skip' ? '跳过' : '失败';
+          const row = document.createElement('div');
+          row.className = 'item';
+          row.dataset.tip = '单击：只做这一题；右键：从这题开始依次做' + (r?.reason ? '。' + r.reason : '');
+          row.tabIndex = 0;
+          row.setAttribute('role', 'button');
+          row.innerHTML = '<span class="no">' + (i + 1) + '</span><span class="type ' + (CLS[t.type] || 't-choice') + '">' +
+            esc(NAME[t.type] || t.type) + '</span><span class="stem">' + esc(t.title || '') + '</span><span class="st' + (r?.status === 'fail' ? ' s-fail' : r?.status === 'skip' ? ' s-skip' : '') + '">' + state + '</span>';
+          row.addEventListener('click', () => startAt(t.id, false));
+          row.addEventListener('contextmenu', (e) => { e.preventDefault(); startAt(t.id, true); });
+          frag.appendChild(row);
+        });
+        els.list.replaceChildren(frag);
+      }
+    }
+
+    /* 任务设置直接放面板里：抢答开关、刷新间隔、托管时长 */
+    (async () => {
+      const cfg = (await chrome.storage.local.get('config')).config || {};
+      if (els.taskgrab) els.taskgrab.checked = cfg.taskGrab === true;
+      if (els.taskmin) els.taskmin.value = cfg.taskHostMin ?? 2;
+      if (els.taskend) els.taskend.value = cfg.taskHostEnd ?? 45;
+    })();
+    const saveTaskCfg = async () => {
+      const r = await send('SET_CONFIG', {
+        taskGrab: !!els.taskgrab?.checked,
+        taskHostMin: Math.min(30, Math.max(1, Number(els.taskmin?.value) || 2)),
+        taskHostEnd: Math.min(600, Math.max(0, Number(els.taskend?.value) || 0)),
+      });
+      if (!r?.ok) log('任务设置保存失败：' + (r?.error || '请重试'));
+    };
+    els.taskrefresh?.addEventListener('click', async () => {
+      const r = await send('HW_TASK_SCAN');
+      log(r?.ok ? '已重新识别：' + r.count + ' 个进行中任务' : '刷新失败：' + (r?.error || '请刷新页面后重试'));
+      refreshTaskUI();
+    });
+    /* 单击：只做这一题；右键：从这题开始依次做 */
+    async function startAt(id, fromHere) {
+      const st = (await chrome.storage.local.get(TASK_KEY))[TASK_KEY] || { queue: [], permanent: {}, round: 0, active: false };
+      st.queue ||= [];
+      st.permanent ||= {};
+      const idx = st.queue.findIndex((t) => t.id === id);
+      if (idx < 0) { log('任务列表已变化，请点「刷新」后重试'); return; }
+      delete st.permanent[id];
+      if (fromHere) {
+        st.queue = st.queue.slice(idx).concat(st.queue.slice(0, idx));
+        delete st.onlyId;
+      } else {
+        st.queue = [st.queue[idx]].concat(st.queue.filter((_, i) => i !== idx));
+        st.onlyId = id;
+      }
+      if (!st.active) {
+        const cfg = (await chrome.storage.local.get('config')).config || {};
+        const end = Math.max(0, Number(cfg.taskHostEnd) || 0);
+        st.active = true;
+        st.listUrl = location.href;
+        st.endAt = end > 0 ? Date.now() + end * 60000 : 0;
+      }
+      await chrome.storage.local.set({ [TASK_KEY]: st });
+      refreshTaskUI();
+      log(fromHere ? '从这一题开始处理' : '只处理这一题');
+      if (isTaskPage()) location.reload(); else openTaskFollow();
+    }
+    els.tasksave?.addEventListener('click', async () => {
+      await saveTaskCfg();
+      log('任务设置已保存：接管 ' + (Number(els.taskend?.value) || 0) + ' 分钟，每 ' + (Number(els.taskmin?.value) || 2) + ' 分钟刷新');
+    });
+    const isTaskPage = () => /\/page\/active\/stuActiveList/.test(location.href);
+    chrome.storage.onChanged?.addListener((ch, area) => { if (area === 'local' && ch[TASK_KEY] && els.mode.value === 'task') refreshTaskUI(); });
+    els.taskbtn?.addEventListener('click', async () => {
+      const st = (await chrome.storage.local.get(TASK_KEY))[TASK_KEY];
+      if (st?.active) { st.active = false; await chrome.storage.local.set({ [TASK_KEY]: st }); refreshTaskUI(); return; }
+      /* 保留已有进度：直接重建会把讨论等「已完成」的记录清掉，导致重复提交 */
+      const cfg = (await chrome.storage.local.get('config')).config || {};
+      const end = Math.max(0, Number(cfg.taskHostEnd) || 0);
+      const prev = (await chrome.storage.local.get(TASK_KEY))[TASK_KEY] || {};
+      await chrome.storage.local.set({ [TASK_KEY]: {
+        ...prev, active: true,
+        startedAt: prev.startedAt || Date.now(),
+        endAt: end > 0 ? Date.now() + end * 60000 : 0,
+        listUrl: location.href,
+        queue: prev.queue || [], permanent: prev.permanent || {}, round: prev.round || 0,
+        report: prev.report || null, onlyId: undefined,
+      } });
+      refreshTaskUI();
+      if (isTaskPage()) location.reload(); else openTaskFollow();
+    });
+    els.taskretry?.addEventListener('click', async () => {
+      const st = (await chrome.storage.local.get(TASK_KEY))[TASK_KEY];
+      if (!st) return;
+      for (const [id, r] of Object.entries(st.permanent || {})) if (r.status !== 'done') delete st.permanent[id];
+      st.active = true;
+      if (!st.endAt) {
+        const cfg = (await chrome.storage.local.get('config')).config || {};
+        const end = Math.max(0, Number(cfg.taskHostEnd) || 0);
+        st.endAt = end > 0 ? Date.now() + end * 60000 : 0;
+      }
+      await chrome.storage.local.set({ [TASK_KEY]: st });
+      refreshTaskUI();
+      if (isTaskPage()) location.reload(); else openTaskFollow();
+    });
+
+    /* 任务跟进：拆到 mobilelearn 列表页执行，托管逻辑在 content/course/task-follow.js */
+    async function openTaskFollow() {
+      const p = new URLSearchParams(location.search);
+      const payload = {
+        courseid: p.get('courseid') || p.get('courseId') || '',
+        clazzid: p.get('clazzid') || p.get('classId') || '',
+        cpi: p.get('cpi') || '', ut: 's',
+        stuenc: p.get('enc') || p.get('stuenc') || '',
+      };
+      if (!payload.courseid || !payload.clazzid) { log('请先进入具体课程页，再开始任务跟进'); return; }
+      const r = await send('HW_TASK_OPEN', payload);
+      log(r?.ok ? '已打开任务列表页：在右下角点「开始跟进」' : '打开任务页失败：' + (r?.error || '请重试'));
     }
     /* 每门课处理几节由设置页决定（用户 2026-10-23 要求：不要再写死在面板里）。
        0 = 整门课程；N>0 = 从第一节起连续完成 N 节，只处理进度低于 35% 的课。 */
@@ -699,6 +876,7 @@
        无人值守期间（autoRun）跳过这套守卫，换节时由 watch.js 重新检测。 */
     let autoRun = false;
     let autoDocument = null;
+    let readRetry = 0;
     let answerPauseReason = '';
     const watchPage = (snapshot) => {
       stopWatching();
@@ -1487,6 +1665,8 @@
     }
     /* 默认只在本地读取；复用绑定校验，无法确认的区域留给手动 AI 检测。 */
     function readPageQuestions() {
+      /* 任务跟进模式下没有「题目」概念，页面读取会把任务列表清空 */
+      if (engine === 'api' && els.mode?.value === 'task') return false;
       if (detecting || !els.stop.disabled) return false;
       const sourceDocument = autoDocument || document;
       nativeDetection = true;
@@ -1551,8 +1731,26 @@
               reason: '页面题型暂未识别，可点「检测题目」调用 AI' });
           }
         }
-        const bound = HW.AIDetection.bind(snapshot, items);
+        /* 题干信息不全（指课本页码、课堂内容、单元词汇等）：不当作可答题，直接交给人工 */
+        const blockedItems = [];
+        const usable = items.filter((it) => {
+          const why = HW.AIDetection?.incomplete?.(it.stem);
+          if (!why) return true;
+          blockedItems.push({ type: 'unknown', stem: it.stem, containerId: it.containerId,
+            reason: '题干信息不全（' + why + '），需要你补充材料或自己作答' });
+          return false;
+        });
+        const bound = HW.AIDetection.bind(snapshot, usable);
+        blockedItems.forEach((b) => bound.pending.unshift(b));
         bound.pending.forEach(q => { q.reason = q.reason.replace('AI 未能识别', '页面未能识别'); });
+        /* 页面刚打开就自动读取时，异步渲染的答题区可能还没铺开（编辑框 0 高被跳过），
+           表现为「可处理 0 题」且之后再不动。有可填控件却没识别成题时，稍后自动重读，
+           最多两次；识别成功后计数清零。 */
+        if (items.length) readRetry = 0;
+        else if (bound.pending.length && readRetry < 2 && !detecting) {
+          readRetry++;
+          setTimeout(() => { if (nativeDetection && !detecting && els.stop.disabled) readPageQuestions(); }, 1500);
+        }
         detectionSnapshot = snapshot;
         renderDetected(bound.questions, bound.pending, '页面读取');
         watchPage(snapshot);
@@ -1751,7 +1949,10 @@
       syncAnalyzeRows();
     }
 
-    els.start.addEventListener('click', () => startAnswering({ wholePage: true }));
+    els.start.addEventListener('click', () => {
+      if (engine === 'api' && els.mode.value === 'task') return openTaskFollow();
+      return startAnswering({ wholePage: true });
+    });
 
     /* 开始答题：按钮直接调它，刷课在测验页也调它（auto=true 表示没人盯着，
        简答题策略「ask」不能在刷课时弹窗，按「保留跳过」处理）。 */
@@ -1789,7 +1990,7 @@
         let subjMode = cfg.subjMode || 'ask';
         if (subjMode === 'ask' && auto) subjMode = 'keep';
         if (subjMode === 'ask') {
-          const n = force ? 0 : selected.filter((q) => q.meta.type === 'subjective' && substantive(HW.Extractor.currentAnswer(q))).length;
+          const n = force ? 0 : selected.filter((q) => (q.meta.type === 'subjective' || q.meta.type === 'discuss') && substantive(HW.Extractor.currentAnswer(q))).length;
           if (n > 0) subjMode = await askSubjMode(n);
           if (!isCurrent()) return false;
           if (subjMode === null) {
@@ -1819,7 +2020,7 @@
           let refAnswer = null;
           let skipNote = '';
           if (pageAnswer) {
-            if (q.meta.type === 'subjective') {
+            if (q.meta.type === 'subjective' || q.meta.type === 'discuss') {
               // 主观题：乱码/占位短文本视为没写 → 生成；像样内容按策略 keep=保留跳过 / rewrite=清空重写
               if (substantive(pageAnswer)) {
                 if (subjMode === 'rewrite') {
